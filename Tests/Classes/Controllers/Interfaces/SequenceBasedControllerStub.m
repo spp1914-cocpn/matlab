@@ -1,0 +1,46 @@
+ classdef (Sealed) SequenceBasedControllerStub < SequenceBasedController
+    % This class represents a dummy sequence-based controller which is used for testing
+    % purposes.
+       
+    %    This program is free software: you can redistribute it and/or modify
+    %    it under the terms of the GNU General Public License as published by
+    %    the Free Software Foundation, either version 3 of the License, or
+    %    (at your option) any later version.
+    %
+    %    This program is distributed in the hope that it will be useful,
+    %    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    %    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    %    GNU General Public License for more details.
+    %
+    %    You should have received a copy of the GNU General Public License
+    %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+     
+     methods (Access = public)
+         %% SequenceBasedControllerStub
+         function this = SequenceBasedControllerStub(dimX, dimU, sequenceLength)
+             this@SequenceBasedController(dimX, dimU, sequenceLength);
+         end
+         
+         function reset(~)
+         end
+         
+         %% getProperties
+         function [dimX, dimU, seqLength] = getProperties(this)
+             dimX = this.dimPlantState;
+             dimU = this.dimPlantInput;
+             seqLength = this.sequenceLength;
+         end
+     end
+    
+      methods (Access = protected)
+          %% doControlSequenceComputation
+         function inputSequence = doControlSequenceComputation(this, ~, ~)
+             inputSequence = ones(this.dimPlantInput * this.sequenceLength, 1);
+         end
+         
+         %% doCostsComputation
+         function costs = doCostsComputation(~, ~, ~)
+             costs = 0;
+         end
+    end
+end   
