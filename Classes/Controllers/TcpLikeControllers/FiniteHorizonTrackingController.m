@@ -1,4 +1,4 @@
-classdef FiniteHorizonTrackingController < SequenceBasedController
+classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     % Implementation of the optimal finite horizon linear sequence-based LQG tracking controller for
     % NCS with a TCP-like network connecting the controller and the
     % actuator.
@@ -67,8 +67,6 @@ classdef FiniteHorizonTrackingController < SequenceBasedController
         % dimension of the augmented system state; 
         % (positive integer <dimX+dimU*sequenceLength*(sequenceLength-1)/2>)
         dimState = -1;
-        Z;
-        dimRef;
     end
 
     properties (SetAccess = private, GetAccess = protected)
@@ -79,7 +77,6 @@ classdef FiniteHorizonTrackingController < SequenceBasedController
     end
     
     properties (SetAccess = immutable, GetAccess = public)
-        refTrajectory;
         horizonLength;
     end
     
@@ -122,32 +119,18 @@ classdef FiniteHorizonTrackingController < SequenceBasedController
             %      with the reference plant outputs column-wise arranged.
             %
             % Returns:
-            %   << obj (FiniteHorizonTrackingController)
+            %   << this (FiniteHorizonTrackingController)
             %      A new FiniteHorizonTrackingController instance.
             %
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
-            
             Validator.validateHorizonLength(horizonLength);
+            this = this@SequenceBasedTrackingController(dimX, dimU, sequenceLength, Z, referenceTrajectory, horizonLength + 1);
+                        
             this.horizonLength = horizonLength;
-            
-            if ~Checks.isFixedColMat(Z, dimX) || any(~isfinite(Z(:)))
-                error('FiniteHorizonTrackingController:InvalidZMatrix', ...
-                    '** Input parameter <Z> (Plant output/performance maxtrix) must be a real-valued matrix with %d cols **', ...
-                    dimX); 
-            end
-            this.dimRef = size(Z, 1);
-            this.Z = Z;
-            if ~Checks.isMat(referenceTrajectory, this.dimRef, horizonLength + 1) || any(~isfinite(referenceTrajectory(:)))
-                error('FiniteHorizonTrackingController:InvalidReferenceTrajectory', ...
-                    '** Reference trajectory <referenceTrajectory> must be a real-valued %d-by-%d matrix **',...
-                    this.dimRef, horizonLength + 1);
-            end
-            this.refTrajectory = referenceTrajectory;
-            
+                       
             % Q, R
             Validator.validateCostMatrices(Q, R, this.dimRef, dimU);
             this.Q = Q;
@@ -181,36 +164,6 @@ classdef FiniteHorizonTrackingController < SequenceBasedController
            this.sysState = zeros(this.dimState,1);
         end % function reset
         
-        %% getDeviationFromRefForState
-        function deviation = getDeviationFromRefForState(this, trueState, timestep)
-            % Compute deviation of the performance output for a given true
-            % state from the reference at a given time step.
-            %
-            % Parameters:
-            %   >> trueState (Vector dimension dimPlantState)
-            %      The plant true state at the given time step
-            %
-            %   >> timestep (Positive integer)
-            %      The time step for which to retrieve the deviation from the
-            %      reference trajectory.
-            %
-            % Returns:
-            %   << costs (Nonnegative scalar)
-            %      The deviation of the performance output of the given
-            %      true state and the reference, i.e., Z * x_true -z_ref.
-            %
-            if ~Checks.isVec(trueState, this.dimPlantState)
-                 error('FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTrueState', ...
-                   ['** Input parameter <trueState>  must be ' ...
-                   'a %d-dimensional vector **'], this.dimPlantState);
-            end
-            if ~Checks.isScalarIn(timestep, 1, this.horizonLength) || mod(timestep, 1) ~= 0
-              error('FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTimestep', ...
-                  '** Input parameter <timestep> must be in {1, ... %d} **', ...
-                  this.horizonLength);
-            end
-            deviation = this.Z * trueState(:) - this.refTrajectory(:, timestep);
-        end
     end
      
     methods (Access = protected)
@@ -248,6 +201,16 @@ classdef FiniteHorizonTrackingController < SequenceBasedController
             % trajectory
             diff = bsxfun(@minus, this.Z * stateTrajectory, this.refTrajectory);
             lQGCosts = Utility.computeLQGCosts(this.horizonLength, diff, appliedInputs, this.Q, this.R);
+        end
+        
+        %% doGetDeviationFromRefForState
+        function deviation = doGetDeviationFromRefForState(this, state, timestep)
+            if ~Checks.isScalarIn(timestep, 1, this.horizonLength) || mod(timestep, 1) ~= 0
+              error('FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTimestep', ...
+                  '** Input parameter <timestep> must be in {1, ... %d} **', ...
+                  this.horizonLength);
+            end
+            deviation = this.Z * state - this.refTrajectory(:, timestep);
         end
     end
      

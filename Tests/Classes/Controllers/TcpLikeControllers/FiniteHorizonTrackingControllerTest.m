@@ -166,39 +166,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
                 this.delayProbs, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
         end
-        
-        %% testFiniteHorizonTrackingControllerInvalidPerformanceMatrix
-        function testFiniteHorizonTrackingControllerInvalidPerformanceMatrix(this)
-            expectedErrId = 'FiniteHorizonTrackingController:InvalidZMatrix';
-            
-            invalidZ = eye(5, this.dimX +1); % invalid number of cols
-            this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, invalidZ, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
-            
-            invalidZ = eye(5, this.dimX); 
-            invalidZ(end, end) = inf; % correct dims, but inf
-            this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, invalidZ, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
-        end
-        
-        %% testFiniteHorizonTrackingControllerInvalidRefTrajectory
-        function testFiniteHorizonTrackingControllerInvalidRefTrajectory(this)
-            expectedErrId = 'FiniteHorizonTrackingController:InvalidReferenceTrajectory';
-            
-            invalidZref = ones(this.dimRef + 1, this.horizonLength + 1); % invalid number of rows
-            this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, invalidZref), expectedErrId);
-            
-            invalidZref = ones(this.dimRef, this.horizonLength); % invalid number of cols
-            this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, invalidZref), expectedErrId);
-            
-            invalidZref = ones(this.dimRef, this.horizonLength + 1); % correct dims, but nan
-            invalidZref(end, 1) = nan;
-            this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, invalidZref), expectedErrId);
-        end
-        
+                                        
         %% testFiniteHorizonTrackingControllerInvalidCostMatrices
         function testFiniteHorizonTrackingControllerInvalidCostMatrices(this)
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrix';
@@ -268,21 +236,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyEqual(controller.refTrajectory, this.refTrajectory);
         end
-        
-        %% testGetDeviationFromRefForStateInvalidTrueState
-        function testGetDeviationFromRefForStateInvalidTrueState(this)
-            expectedErrId = 'FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTrueState';
-            timestep = 1;
-            
-            invalidState = this; % not a vector
-            this.verifyError(@() this.controllerUnderTest.getDeviationFromRefForState(invalidState, timestep), ...
-                expectedErrId);
-            
-            invalidState = zeros(this.dimU, 1); % wrong dimension
-            this.verifyError(@() this.controllerUnderTest.getDeviationFromRefForState(invalidState, timestep), ...
-                expectedErrId);
-        end
-        
+                    
         %% testGetDeviationFromRefForStateInvalidTimestep
         function testGetDeviationFromRefForStateInvalidTimestep(this)
             trueState = zeros(this.dimX, 1);
