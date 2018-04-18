@@ -71,8 +71,8 @@ classdef (Sealed) DelayedIMMF < DelayedMeasurementsFilter
             % Class constructor.
             %
             % Parameters:
-            %   >> modeFilters (FilterSet containing KF subclasses)
-            %      A FilterSet consisting of Kalman filters, one for each
+            %   >> modeFilters (Cell array containing LinearGaussianFilter subclasses)
+            %      A cell array consisting of Kalman filters, one for each
             %      mode of the system.
             %
             %   >> modeTransitionMatrix (Matrix)
@@ -106,29 +106,7 @@ classdef (Sealed) DelayedIMMF < DelayedMeasurementsFilter
             this.measurementHistory = cell(1, maxMeasDelay);
             this.inputHistory = cell(1, maxMeasDelay);
         end
-        
-        function setState(this, state)
-            % Set the system state.
-            %
-            % This function is mainly used to set an initial system state, as
-            % it is intended that the IMM filter is responsible for modifying the
-            % system state by exploiting system and measurement models.
-            %
-            % Parameters:
-            %   >> state (Subclass of Distribution)
-            %      The new system state.
-            %      If a GaussianMixture is passed, the i-th component is used to as the state
-            %      of the filter conditioned on the i-th mode. Likewise, the
-            %      weight of the i-th mixture component is taken as probability
-            %      of being in the i-th mode.
-            %      In case of any other Distribution subclass, mean and
-            %      covariance are used for all mode-conditioned filters, and a
-            %      uniform distribution for the modes is employed.
-            this.immf.setState(state);
-            % set history to new state
-           [this.stateHistory{:}] = deal(this.getState());
-        end
-        
+                
         function state = getState(this)
             % Get the current system state.
             %
@@ -139,22 +117,41 @@ classdef (Sealed) DelayedIMMF < DelayedMeasurementsFilter
         end
         
         
-        function [pointEstimate, uncertainty] = getPointEstimate(this)
-            % Get a point estimate of the current system state.
+        %% getStateMeanAndCov
+        function [stateMean, stateCov, stateCovSqrt] = getStateMeanAndCov(this)
+            % Get mean and covariance matrix of the system state.
             %
             % Returns:
-            %   << pointEstimate (Column vector)
-            %      Point estimate of the current system state which is simply
-            %      the mean of the underlying Gaussian mixture.
+            %   << stateMean (Column vector)
+            %      Mean vector of the system state.
             %
-            %   << uncertainty (Positive definite matrix)
-            %      Uncertainty of the current system state point estimate
-            %      (covariance matrix of the underlying Gaussian mixture).
-            [pointEstimate, uncertainty] = this.immf.getPointEstimate();
+            %   << stateCov (Positive definite matrix)
+            %      Covariance matrix of the system state.
+            %
+            %   << stateCovSqrt (Square matrix, optional)
+            %      Lower Cholesky decomposition of the system state covariance matrix.
+            
+            if nargout == 2
+                [stateMean, stateCov] = this.immf.getStateMeanAndCov();
+            else
+                [stateMean, stateCov, stateCovSqrt] = this.immf.getStateMeanAndCov();
+            end
         end
     end
     
     methods (Access = protected)
+        %% performSetState
+        function performSetState(this, state)
+            this.immf.setState(state);
+            % set history to new state
+            [this.stateHistory{:}] = deal(this.getState());
+        end
+        
+        %% performSetStateMeanAndCov
+        function performSetStateMeanAndCov(this, stateMean, stateCov, stateCovSqrt)
+             this.immf.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt);
+        end
+        
         function performPrediction(this, sysModel)
             this.immf.performPrediction(sysModel);
             % update history for the next step

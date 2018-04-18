@@ -1,28 +1,22 @@
 
-classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasurementModel
+classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel
     % Linear measurement model corrupted by additive noise.
     %
     % LinearMeasurementModel Methods:
-    %   LinearMeasurementModel     - Class constructor.
-    %   setNoise                   - Set the measurement noise.
-    %   measurementEquation        - The measurement equation.
-    %   logLikelihood              - Evaluate the logarithmic likelihood function of the implemented measurement equation.
-    %   derivative                 - Compute the first-order and second-order derivatives of the implemented measurement equation.
-    %   simulate                   - Simulate one ore more measurements for a given system state.
-    %   analyticMeasurementMoments - Analytic calculation of the first two moments of the measurement distribution.
-    %   setMeasurementMatrix       - Set the measurement matrix.
+    %   LinearMeasurementModel - Class constructor.
+    %   setNoise               - Set the measurement noise.
+    %   measurementEquation    - The measurement equation.
+    %   logLikelihood          - Evaluate the logarithmic likelihood function.
+    %   derivative             - Compute the first-order and second-order derivatives of the implemented measurement equation.
+    %   simulate               - Simulate a measurement for the given system state.
+    %   analyticMoments        - Analytic calculation of the first two moments of the measurement distribution.
+    %   setMeasurementMatrix   - Set the measurement matrix.
     
     % >> This function/class is part of the Nonlinear Estimation Toolbox
     %
     %    For more information, see https://bitbucket.org/nonlinearestimation/toolbox
     %
-    %    Copyright (C) 2015  Jannik Steinbring <jannik.steinbring@kit.edu>
-    %
-    %                        Institute for Anthropomatics and Robotics
-    %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
-    %                        Karlsruhe Institute of Technology (KIT), Germany
-    %
-    %                        http://isas.uka.de
+    %    Copyright (C) 2015-2017  Jannik Steinbring <nonlinearestimation@gmail.com>
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -38,7 +32,7 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     methods
-        function obj = LinearMeasurementModel(measMatrix)
+       function obj = LinearMeasurementModel(measMatrix)
             % Class constructor.
             %
             % Parameters:
@@ -52,9 +46,15 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
             %      A new LinearMeasurementModel instance.
             
             if nargin < 1
-                obj.setMeasurementMatrix([]);
+                obj.measMatrix = [];
             else
-                obj.setMeasurementMatrix(measMatrix);
+                if ~Checks.isMat(measMatrix) && ...
+                   ~isempty(measMatrix)
+                    error('LinearMeasurementModel:InvalidMeasurementMatrix', ...
+                          'measMatrix must be a matrix or an empty matrix.');
+                end
+                
+                obj.measMatrix = measMatrix;
             end
         end
         
@@ -72,7 +72,7 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
             if ~Checks.isMat(measMatrix) && ...
                ~isempty(measMatrix)
                 error('LinearMeasurementModel:InvalidMeasurementMatrix', ...
-                      'measMatrix must be a matrix.');
+                      'measMatrix must be a matrix or an empty matrix.');
             end
             
             obj.measMatrix = measMatrix;
@@ -107,8 +107,30 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
         end
         
         function [measMean, measCov, ...
-                  stateMeasCrossCov] = analyticMeasurementMoments(obj, stateMean, stateCov, numMeas)
-            [noiseMean, noiseCov] = obj.noise.getMeanAndCovariance();
+                  stateMeasCrossCov] = analyticMoments(obj, stateMean, stateCov, stateCovSqrt)
+            % Analytic calculation of the first two moments of the measurement distribution.
+            %
+            % Parameters:
+            %   >> stateMean (Column vector)
+            %      The state mean.
+            %
+            %   >> stateCov (Positive definite matrix)
+            %      The state covariance.
+            %
+            %   >> stateCovSqrt (Square matrix)
+            %      Square root of the state covariance.
+            %
+            % Returns:
+            %   << measMean (Column vector)
+            %      The measurement mean vector.
+            %
+            %   << measCov (Positive definite matrix)
+            %      The measurement covariance matrix.
+            %
+            %   << stateMeasCrossCov (Matrix)
+            %      The state-measurement cross-covariance matrix.
+            
+            [noiseMean, noiseCov] = obj.noise.getMeanAndCov();
             dimNoise = size(noiseMean, 1);
             dimState = size(stateMean, 1);
             
@@ -119,7 +141,7 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
                 measMean = stateMean + noiseMean;
                 
                 % Measurement covariance
-                measCov = stateCov;
+                measCov = stateCov + noiseCov;
                 
                 % State measurement cross-covariance
                 stateMeasCrossCov = stateCov;
@@ -130,15 +152,13 @@ classdef LinearMeasurementModel < AdditiveNoiseMeasurementModel & AnalyticMeasur
                 measMean = obj.measMatrix * stateMean + noiseMean;
                 
                 % Measurement covariance
-                measCov = obj.measMatrix * stateCov * obj.measMatrix';
+                G = obj.measMatrix * stateCovSqrt;
+                
+                measCov = G * G' + noiseCov;
                 
                 % State measurement cross-covariance
                 stateMeasCrossCov = stateCov * obj.measMatrix';
             end
-            
-            measMean          = repmat(measMean, numMeas, 1);
-            measCov           = Utils.baseBlockDiag(measCov, noiseCov, numMeas);
-            stateMeasCrossCov = repmat(stateMeasCrossCov, 1, numMeas);
         end
     end
     

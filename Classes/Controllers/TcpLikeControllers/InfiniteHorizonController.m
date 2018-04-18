@@ -23,7 +23,7 @@ classdef InfiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,7 +76,7 @@ classdef InfiniteHorizonController < SequenceBasedController
         % (positive integer <dimX+dimU*sequenceLength*(sequenceLength-1)/2>)
         dimState = -1;
         
-    end % properties
+    end
 
     properties (SetAccess = immutable, GetAccess = public)
         % status of controller initialization (integer with following values)
@@ -110,7 +110,6 @@ classdef InfiniteHorizonController < SequenceBasedController
         maxIterationDiff = 1e+11;
     end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods (Access = public)
         %% InfiniteHorizonController
         function this = InfiniteHorizonController(A, B, Q, R, delayProb, sequenceLength)
@@ -166,11 +165,10 @@ classdef InfiniteHorizonController < SequenceBasedController
             this.delayProb = probHelp;
 
             % Check for stabilizablity of A by B
-            if dimX - rank(ctrb(A, B)) > 0
-              error('InfiniteHorizonController:InvalidPlant', ...
+            assert(dimX -rank(ctrb(A, B)) == 0, ...
+                'InfiniteHorizonController:InvalidPlant', ...
                 '** Plant (A, B) has uncontrollable eigenvalues **');
-            end
-            
+                        
             this.transitionMatrix = Utility.calculateDelayTransitionMatrix(this.delayProb);
             
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
@@ -187,22 +185,21 @@ classdef InfiniteHorizonController < SequenceBasedController
         end % function InfiniteHorizonController    
   
         %% reset
-        function reset(s)
-           s.sysState = zeros(s.dimState,1);
-        end % function reset
-  
-    end % methods public
+        function reset(this)
+           this.sysState = zeros(this.dimState,1);
+        end  
+    end 
 
 
     methods (Access = protected)
         %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, ~)
-            if ~Checks.isScalarIn(mode, 1, this.sequenceLength + 1) || mod(mode, 1) ~= 0
-              error('InfiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
-                  '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
-                  this.sequenceLength + 1);
-            end
-            [stateMean, ~] = state.getMeanAndCovariance();
+            assert(Checks.isScalarIn(mode, 1, this.sequenceLength + 1) && mod(mode, 1) == 0, ...
+                'InfiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
+                '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
+                this.sequenceLength + 1);
+            
+            [stateMean, ~] = state.getMeanAndCov();
             
             this.sysState(1:this.dimPlantState) = stateMean(:);
             inputSequence = this.L(: , :, mode) * this.sysState;
@@ -213,16 +210,15 @@ classdef InfiniteHorizonController < SequenceBasedController
         %% doCostsComputation
         function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
             horizonLength = size(appliedInputs, 2);
-            if size(stateTrajectory, 2) ~= horizonLength + 1
-                error('InfiniteHorizonController:DoCostsComputation:InvalidStateTrajectory', ...
-                    '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
-                    
-            end
+            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+                'InfiniteHorizonController:DoCostsComputation:InvalidStateTrajectory', ...
+                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+                       
             averageLQGCosts = Utility.computeLQGCosts(horizonLength, stateTrajectory, appliedInputs, this.Q, this.R) / horizonLength;
         end
         
         %% computeSteadyStateControlCovarianceMatrices
-        function [Pout, status] = computeSteadyStateControlCovarianceMatrices(s, A, augA, augB, augQ, augR)
+        function [Pout, status] = computeSteadyStateControlCovarianceMatrices(this, A, augA, augB, augQ, augR)
             %========================================================================
             % computeSteadyStateControlCovarianceMatrices: computes the steady state
             % solution of the controller by setting the horizon length to infinity
@@ -251,16 +247,16 @@ classdef InfiniteHorizonController < SequenceBasedController
             %
             % Pout(:,:,markovMode), markovMode: 1...packetLength+1 (1 = no delay)
             %========================================================================  
-            currP = zeros(s.dimState, s.dimState, s.sequenceLength + 1);
+            currP = zeros(this.dimState, this.dimState, this.sequenceLength + 1);
             previousP = currP;
             PreviousConvergeDiff = 0;
             %fallingFlag = 0;
-            convergeDiffmin = s.maxIterationDiff;
+            convergeDiffmin = this.maxIterationDiff;
             % counter that counts the number of performed iterations
             counter = 0; 
 
             % Check if convergence of controller gain is in general possible
-            if (s.transitionMatrix(end, end) * (max(abs(eig(A))))^2) > 1
+            if (this.transitionMatrix(end, end) * (max(abs(eig(A))))^2) > 1
                 % no convergence possible
                 status = -2;
                 Pout = -1;
@@ -286,17 +282,17 @@ classdef InfiniteHorizonController < SequenceBasedController
                 % variable to monitor change of difference
                 convergeAcc = convergeDiff - PreviousConvergeDiff;
                 % debuggung stuff
-                s.debugging.numIterationsToSteadyStateP = counter;
-                s.debugging.convergeDiff(counter + 1, :) = convergeDiff;
-                s.debugging.convergeAcc(counter + 1, :) = convergeAcc;
+                this.debugging.numIterationsToSteadyStateP = counter;
+                this.debugging.convergeDiff(counter + 1, :) = convergeDiff;
+                this.debugging.convergeAcc(counter + 1, :) = convergeAcc;
                 % evaluate terminate conditions only if we are out of the initial
                 % time region  
-                if( counter > s.sequenceLength + 2 ) 
+                if( counter > this.sequenceLength + 2 ) 
                     % ------- Terminate Conditions ------------------
                     % Terminate Condition 1: stable / converged:
                     % this happens if currP does not change anymore between two
                     % iterations. Instead of zero, we use a lower bound
-                    if max(abs(convergeDiff)) < s.minIterationDiff
+                    if max(abs(convergeDiff)) < this.minIterationDiff
                         %disp('converged');
                         Pout = currP;
                         status = 1;
@@ -307,7 +303,7 @@ classdef InfiniteHorizonController < SequenceBasedController
                     % prevented to stop at the converged currP. The cases are hard to
                     % distinguish so we return the best solution found and the caution
                     % flag set.
-                    elseif( max(abs(convergeDiff)) > s.maxIterationDiff )
+                    elseif( max(abs(convergeDiff)) > this.maxIterationDiff )
                         %disp('NOT converged or convergence not detected');
                         counter %#ok<NOPRT>
                         convergeCounterMin %#ok<NOPRT>
@@ -336,25 +332,25 @@ classdef InfiniteHorizonController < SequenceBasedController
                 end
                 PreviousConvergeDiff = convergeDiff;
                 previousP = currP;
-                currP = zeros(s.dimState, s.dimState, s.sequenceLength+1);
+                currP = zeros(this.dimState, this.dimState, this.sequenceLength+1);
      
-                for j = 1 : s.sequenceLength + 1
+                for j = 1 : this.sequenceLength + 1
                     % temporary components of
                     P1 = 0;
                     P2 = 0;
                     P3 = 0;
-                    for i = 1 : s.sequenceLength + 1
-                        P1 = P1 + s.transitionMatrix(j,i) * ( augQ(:,:,i) + ...
+                    for i = 1 : this.sequenceLength + 1
+                        P1 = P1 + this.transitionMatrix(j,i) * ( augQ(:,:,i) + ...
                             augA(:,:,i)' * previousP(:,:,i) * augA(:,:,i) );
-                        P2 = P2 + s.transitionMatrix(j,i) * ...
+                        P2 = P2 + this.transitionMatrix(j,i) * ...
                             (augA(:,:,i)' * previousP(:,:,i) * augB(:,:,i));
-                        P3 = P3 + s.transitionMatrix(j,i) * ( augR(:,:,i) ...
+                        P3 = P3 + this.transitionMatrix(j,i) * ( augR(:,:,i) ...
                             + augB(:,:,i)' * previousP(:,:,i) * augB(:,:,i) );
-                    end % i: current Markov mode
+                    end
                     currP(:,:,j) = P1 - P2 * pinv(P3) * P2';
-                end % j: previus Markov mode
-            end % while
-        end % function makeSteadyStateControlCovarianceMatrices
+                end
+            end
+        end
   
   
         %% computeSteadyStateControlGainMatrices
@@ -385,9 +381,9 @@ classdef InfiniteHorizonController < SequenceBasedController
                         (augR(:,:,i) + augB(:,:,i)'* P(:,:,i)* augB(:,:,i));
                     L_2 = L_2 + this.transitionMatrix(j,i)*...
                         (augB(:,:,i)'* P(:,:,i) * augA(:,:,i));
-                end % i: current Markov mode
+                end
                 L(:,:,j) = - pinv(L_1) * L_2;
-            end % i: previous Markov mode
-        end % function makeSteadyStateControlGainMatrices
+            end
+        end
     end
 end

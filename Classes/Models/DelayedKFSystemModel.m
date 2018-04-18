@@ -7,13 +7,13 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %   Maryam Moayedia, Yung Kuan Foo and Yeng Chai Soha
     %   Filtering for networked control systems with single/multiple measurement packets
     %   subject to multiple-step measurement delays and multiple packet dropouts
-    %   International Journal of Systems Science (2011)
+    %   International Journal of Systems Science (2011).
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -82,26 +82,26 @@ classdef DelayedKFSystemModel < LinearSystemModel
             %   << this (DelayedKFSystemModel)
             %      A new DelayedKFSystemModel instance.
             
-            if ~Checks.isNonNegativeScalar(maxMeasDelay) || mod(maxMeasDelay, 1) ~= 0
-                error('DelayedKFSystemModel:InvalidMaxMeasDelay', ...
-                    '** Maximum measurement delay <maxMeasDelay> must be a nonnegative integer **');
-            end
+                     
             Validator.validateSystemMatrix(systemMatrix);
             dimState = size(systemMatrix, 1);
             
             Validator.validateInputMatrix(inputMatrix, dimState);
-           
-            if ~Checks.isPosScalar(numModes) || mod(numModes, 1) ~= 0
-                error('DelayedKFSystemModel:InvalidNumModes', ...
-                    '** Number of modes (i.e., the number of possible inputs) must be a positive integer **');
-            end
-            
-            Validator.validateDiscreteProbabilityDistribution(delayWeights, numModes);
           
-            if ~Checks.isClass(systemNoise, 'Distribution')
-                error('DelayedKFSystemModel:InvalidSystemNoise', ...
-                    '** System noise <systemNoise> must be a subclass of Distribution **');
-            end
+            assert(Checks.isNonNegativeScalar(maxMeasDelay) && mod(maxMeasDelay, 1) == 0, ...
+                'DelayedKFSystemModel:InvalidMaxMeasDelay', ...
+                '** Maximum measurement delay <maxMeasDelay> must be a nonnegative integer **');
+            
+            assert(Checks.isClass(systemNoise, 'Distribution'), ...
+                'DelayedKFSystemModel:InvalidSystemNoise', ...
+                '** System noise <systemNoise> must be a subclass of Distribution **');
+            
+            assert(Checks.isPosScalar(numModes) && mod(numModes, 1) == 0, ...
+                'DelayedKFSystemModel:InvalidNumModes', ...
+                '** Number of modes (i.e., the number of possible inputs) must be a positive integer **');
+                        
+            Validator.validateDiscreteProbabilityDistribution(delayWeights, numModes);
+        
             zeroMatrix = zeros(dimState, dimState * maxMeasDelay);
             % augmented system noise matrix
             augmentedNoiseMatrix = [eye(dimState); zeroMatrix'];            
@@ -113,7 +113,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
             
             this.plantInputMatrix = inputMatrix;
             % moment matching to get Gaussian
-            [this.noiseMean, this.noiseCov] = systemNoise.getMeanAndCovariance();
+            [this.noiseMean, this.noiseCov] = systemNoise.getMeanAndCov();
             this.resetNoise();
                        
             this.numModes = numModes;
@@ -130,18 +130,55 @@ classdef DelayedKFSystemModel < LinearSystemModel
         
         %% setSystemMatrix
         function setSystemMatrix(this, sysMatrix)
-            if ~isempty(this.plantInputMatrix)
-                dimState = size(this.plantInputMatrix, 1);
-                Validator.validateSystemMatrix(sysMatrix, dimState);
-
-                newSysMatrix = this.sysMatrix;
-                newSysMatrix(1:dimState,1:dimState) = sysMatrix;
-                setSystemMatrix@LinearSystemModel(this, newSysMatrix);
+            % Set the system matrix.
+            %
+            % By default, the system matrix is an empty matrix
+            % (i.e., an identity matrix of appropriate dimensions).
+            %
+            % Parameters:
+            %   >> sysMatrix (Square matrix or empty matrix)
+            %      The new system matrix.
+            %      An empty matrix means the identity matrix of appropriate dimensions.
+            
+            dimState = size(this.plantInputMatrix, 1);
+            newSysMatrix = this.sysMatrix;
+            if isempty(sysMatrix)
+               newSysMatrix(1:dimState,1:dimState) = eye(dimState);
             else
-                % call from ctor of base class
-                setSystemMatrix@LinearSystemModel(this, sysMatrix);
+                Validator.validateSystemMatrix(sysMatrix, dimState);
+                newSysMatrix(1:dimState,1:dimState) = sysMatrix;
             end
-       end
+
+            setSystemMatrix@LinearSystemModel(this, newSysMatrix);
+        end
+        
+       function setSystemNoiseMatrix(this, sysNoiseMatrix)
+            % Set the system noise matrix.
+            %
+            % This is not the system noise covariance matrix!
+            %
+            % By default, the noise matrix is an empty matrix
+            % (i.e., an identity matrix of appropriate dimensions).
+            %
+            % Parameters:
+            %   >> sysNoiseMatrix (Matrix or empty matrix)
+            %      The new system noise matrix.
+            %      An empty matrix means the identity matrix of appropriate dimensions.
+            
+            dimState = size(this.plantInputMatrix, 1);
+            newSysNoiseMatrix = this.sysNoiseMatrix;
+            if isempty(sysNoiseMatrix)
+                newSysNoiseMatrix(1:dimState, :) = eye(dimState);
+            else
+                assert(Checks.isSquareMat(sysNoiseMatrix, dimState) && all(isfinite(sysNoiseMatrix(:))), ...
+                    'DelayedKFSystemModel:SetSystemNoiseMatrix:InvalidDimensions', ...
+                    '** System noise matrix <sysNoiseMatrix> must be square (%d-by-%d) and real-valued **', ...
+                    dimState, dimState);
+                
+                newSysNoiseMatrix(1:dimState, :) = sysNoiseMatrix;
+            end
+            setSystemNoiseMatrix@LinearSystemModel(this, newSysNoiseMatrix);
+        end
         
         %% setSystemInput
         function setSystemInput(this, possibleInputs)
@@ -162,25 +199,28 @@ classdef DelayedKFSystemModel < LinearSystemModel
                 end
                 return;
             end
-            if ~Checks.isMat(possibleInputs, this.dimInput, this.numModes) ...
-                    || any(~isfinite(possibleInputs(:)))
-                 error('DelayedKFSystemModel:InvalidInput', ...
-                    '** <possibleInputs> must be given as a real-valued %d-by-%d matrix (i.e., the possibly active inputs must be column-wise arranged) **',  ...
-                    this.dimInput, this.numModes);
-            end
+            assert(Checks.isMat(possibleInputs, this.dimInput, this.numModes) && all(isfinite(possibleInputs(:))), ...
+                'DelayedKFSystemModel:InvalidInput', ...
+                '** <possibleInputs> must be given as a real-valued %d-by-%d matrix (i.e., the possibly active inputs must be column-wise arranged) **',  ...
+                this.dimInput, this.numModes);
+            
             % last element is considered the default input (e.g., zero) applied by actuator in
             % case of packet loss
             % compute expected, but uncertain input
             [inputMean, inputCov] = Utils.getMeanAndCov(possibleInputs, this.weights);
             virtualInput = this.plantInputMatrix * inputMean;
             virtualInputCov = this.plantInputMatrix * inputCov * this.plantInputMatrix';
-            this.setNoise(Gaussian(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov));
+            this.noise.set(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov);
         end
     end
      
     methods (Access = private)
         function resetNoise(this)
-            this.setNoise(Gaussian(this.noiseMean, this.noiseCov));
+            if isempty(this.noise)
+                this.setNoise(Gaussian(this.noiseMean, this.noiseCov));
+            else
+                this.noise.set(this.noiseMean, this.noiseCov);
+            end
         end
     end
 end

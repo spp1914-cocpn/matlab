@@ -13,7 +13,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -66,8 +66,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             % Class constructor.
             %
             % Parameters:
-            %   >> modeFilters (FilterSet containing KF subclasses)
-            %      A FilterSet consisting of Kalman filters, one for each
+            %   >> modeFilters (Cell array containing LinearGaussianFilter subclasses)
+            %      A cell array consisting of Kalman filters, one for each
             %      mode of the system.
             %
             %   >> modeTransitionMatrix (Matrix)
@@ -114,30 +114,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             this.inputHistory = cell(1, this.maxMeasurementDelay + 1);
             this.trueModeHistory = cell(1, this.maxMeasurementDelay + 1); 
         end
-        
-        %% setState
-        function setState(this, state)
-            % Set the system state.
-            %
-            % This function is mainly used to set an initial system state, as
-            % it is intended that the filter is responsible for modifying the
-            % system state by exploiting system and measurement models.
-            %
-            % Parameters:
-            %   >> state (Subclass of Distribution)
-            %      The new system state.
-            %      If a GaussianMixture is passed, the i-th component is used to as the state
-            %      of the filter conditioned on the i-th mode. Likewise, the
-            %      weight of the i-th mixture component is taken as probability
-            %      of being in the i-th mode.
-            %      In case of any other Distribution subclass, mean and
-            %      covariance are used for all mode-conditioned filters, and a
-            %      uniform distribution for the modes is employed.
-            this.immf.setState(state);
-            % set history to new state
-           [this.stateHistory{:}] = deal(this.getState());
-        end
-        
+                
         %% getState
         function state = getState(this)
             % Get the current system state.
@@ -148,19 +125,25 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             state = this.immf.getState();
         end
         
-        %% getPointEstimate
-        function [pointEstimate, uncertainty] = getPointEstimate(this)
-            % Get a point estimate of the current system state.
+        %% getStateMeanAndCov
+        function [stateMean, stateCov, stateCovSqrt] = getStateMeanAndCov(this)
+            % Get mean and covariance matrix of the system state.
             %
             % Returns:
-            %   << pointEstimate (Column vector)
-            %      Point estimate of the current system state which is simply
-            %      the mean of the underlying Gaussian mixture.
+            %   << stateMean (Column vector)
+            %      Mean vector of the system state.
             %
-            %   << uncertainty (Positive definite matrix)
-            %      Uncertainty of the current system state point estimate
-            %      (covariance matrix of the underlying Gaussian mixture).
-            [pointEstimate, uncertainty] = this.immf.getPointEstimate();
+            %   << stateCov (Positive definite matrix)
+            %      Covariance matrix of the system state.
+            %
+            %   << stateCovSqrt (Square matrix, optional)
+            %      Lower Cholesky decomposition of the system state covariance matrix.
+            
+            if nargout == 2
+                [stateMean, stateCov] = this.immf.getStateMeanAndCov();
+            else
+                [stateMean, stateCov, stateCovSqrt] = this.immf.getStateMeanAndCov();
+            end
         end
         
         %% getModeEstimate
@@ -179,8 +162,14 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         end
         
         %% getPreviousModeEstimate
-        function [mode, probability] = getPreviousModeEstimate(this)
+        function [mode, probability] = getPreviousModeEstimate(this, afterStep)
             % Get a point estimate of the previous system mode.
+            %
+            % Parameters:
+            %   >> afterStep (Logical Scalar, optional)
+            %      A flag to indicate whether step(..) has been called beforehand, that is, 
+            %      to indicate whether a time and measurement update has already been carried out.
+            %      If left out, the default value true will be utilized.
             %
             % Returns:
             %   << mode (Positive Integer)
@@ -191,7 +180,21 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             %   << probability (Nonnegative Scalar)
             %      Probability of the maximum mode.
             %
-            mixture = this.stateHistory{1};
+            
+            % we assume that function is called after a step (time + measurement update) has been
+            % performed, if afterStep is not present
+            if nargin == 1
+                mixture = this.stateHistory{2};
+            elseif Checks.isFlag(afterStep)
+                if afterStep
+                    mixture = this.stateHistory{2};
+                else
+                    mixture = this.stateHistory{1};
+                end
+            else
+                this.error('GetPreviousModeEstimate:InvalidFlag', ...
+                    '<afterStep> must be a flag (i.e., a logical scalar) or left out ** ');
+            end
             [~, ~, modeProbs] = mixture.getComponents();
             [probability, mode] = max(modeProbs);
         end
@@ -222,7 +225,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         %% predict
         function runtime = predict(this, ~)
              this.error('InvalidPredictionStep', ...
-                '** Time updates can only be performed in conjunction with a measurement update, so use step() directly');
+                '** Time updates can only be performed in conjunction with a measurement update, so use step() directly **');
         end
         
         %% update
@@ -295,6 +298,93 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     end
     
     methods (Access = protected)
+        %% performSetState
+        function performSetState(this, state)
+            this.immf.setState(state);
+            [means, covs, weights] = this.immf.getState().getComponents();
+            % set history to new state
+            for j=1:this.maxMeasurementDelay + 1
+                this.stateHistory{j} = GaussianMixture(means, covs, weights);
+            end            
+        end
+        
+        %% performSetStateMeanAndCov
+        function performSetStateMeanAndCov(this, stateMean, stateCov, stateCovSqrt)
+            this.immf.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt);
+            [means, covs, weights] = this.immf.getState().getComponents();
+            % set history to new state
+            for j=1:this.maxMeasurementDelay + 1
+                this.stateHistory{j} = GaussianMixture(means, covs, weights);
+            end  
+        end
+                
+        %% performPrediction
+        function performPrediction(this, ~)
+            this.error('InvalidPredictionStep', ...
+                '** Time updates can only be performed in conjunction with a measurement update, so use step() directly');
+        end
+        
+        %% performUpdate
+        function performUpdate(this, ~, ~,~)
+             this.error('InvalidUpdateStep', ...
+                '** Measurement updates can only be performed in conjunction with a time update, so use step() directly **');
+        end
+        
+        %% performStep
+        function performStep(this, sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays)
+            if ~Checks.isClass(sysModel, 'JumpLinearSystemModel')
+                this.errorSysModel('JumpLinearSystemModel');
+            end
+            
+            maxDelay = max([applicableDelays applicableModeDelays]);
+            if isempty(maxDelay)
+                % this should only happen in case both
+                % <applicableDelays> and <applicableModeDelays> are
+                % empty
+                maxDelay = 0;
+            end
+            currentMeasurements = this.incorporateDelayedMeasurements(applicableMeasurements, applicableDelays);
+            currentMode = this.incorporateDelayedModeMeasurements(applicableModes, applicableModeDelays);
+            % remember the current inputs
+            currentInputs = [];%this.getSystemInputs(sysModel);
+            this.inputHistory{1} = this.getSystemInputs(sysModel);
+            % handle border case that maxDelay is this.maxMeasurementDelay + 1 
+            % (maximum allowed delay for a mode observation)
+            delays = min(maxDelay, this.maxMeasurementDelay):-1:0;
+            for i=delays %i = maxDelay:-1:0 using this expression directly does not seem to work correctly when compiled 
+                % check what filter to use, depending on whether true
+                % mode i+1 steps before (i.e., the previous mode) is known or not
+                trueMode = this.trueModeHistory{i + 1};
+                inputs = this.inputHistory{i + 1}; % inputs for prediction
+                if ~isempty(trueMode)
+                    % we also have to update the posterior (mode probs) at this time
+                    [modeStateMeans, modeStateCovs, ~] = this.stateHistory{i + 1}.getComponents();
+                    weights = [zeros(1, trueMode - 1), 1 zeros(1, this.immf.numModes - trueMode)];
+
+                    this.stateHistory{i+1}.set(modeStateMeans, modeStateCovs, weights);
+                end
+                if i ~= 0
+                    measurements = this.measurementHistory{i};
+                else
+                    measurements = currentMeasurements;
+                end
+                this.immf.setState(this.stateHistory{i + 1});
+                DelayedModeIMMF.applyInputs(sysModel, inputs);
+                this.immf.performPrediction(sysModel);
+                if ~isempty(measurements)
+                    this.immf.performUpdate(measModel, measurements);
+                end
+                if i ~= 0
+                    % save posterior
+                    this.stateHistory{i} = this.immf.getState();                    
+                end
+            end                   
+            % update history for the next step (i.e., proceed to k+1)
+            this.updateHistory(currentInputs, currentMeasurements, currentMode);
+        end
+    end
+    
+    methods (Access = private)
         %% checkMeasurementsAndDelays
         function delays = checkMeasurementsAndDelays(this, measurements, measDelays)
             if ~ismatrix(measurements)
@@ -334,74 +424,6 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             end
         end
         
-        %% performPrediction
-        function performPrediction(this, ~)
-            this.error('InvalidPredictionStep', ...
-                '** Time updates can only be performed in conjunction with a measurement update, so use step() directly');
-        end
-        
-        %% performUpdate
-        function performUpdate(this, ~, ~,~)
-             this.error('InvalidUpdateStep', ...
-                '** Measurement updates can only be performed in conjunction with a time update, so use step() directly **');
-        end
-        
-        %% performStep
-        function performStep(this, sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays)
-            if ~Checks.isClass(sysModel, 'JumpLinearSystemModel')
-                this.errorSysModel('JumpLinearSystemModel');
-            end
-            
-            maxDelay = max([applicableDelays applicableModeDelays]);
-            if isempty(maxDelay)
-                % this should only happen in case both
-                % <applicableDelays> and <applicableModeDelays> are
-                % empty
-                maxDelay = 0;
-            end
-            currentMeasurements = this.incorporateDelayedMeasurements(applicableMeasurements, applicableDelays);
-            currentMode = this.incorporateDelayedModeMeasurements(applicableModes, applicableModeDelays);
-            % remember the current inputs
-            currentInputs = [];%this.getSystemInputs(sysModel);
-            this.inputHistory{1} = this.getSystemInputs(sysModel);
-            % handle border case that maxDelay is this.maxMeasurementDelay + 1 
-            % (maximum allowed delay for a mode observation)
-            delays = min(maxDelay, this.maxMeasurementDelay):-1:0;
-            for i=delays %i = maxDelay:-1:0 using this expression directly does not seem to work correctly when compiled 
-                % check what filter to use, depending on whether true
-                % mode i+1 steps before (i.e., the previous mode) is known or not
-                trueMode = this.trueModeHistory{i + 1};
-                inputs = this.inputHistory{i + 1}; % inputs for prediction
-
-                if ~isempty(trueMode)
-                    % we also have to update the posterior (mode probs) at this time
-                    [modeStateMeans, modeStateCovs, ~] = this.stateHistory{i + 1}.getComponents();
-                    weights = [zeros(1, trueMode - 1), 1 zeros(1, this.immf.numModes - trueMode)];
-                    newPosterior = GaussianMixture(modeStateMeans, modeStateCovs, weights);
-                    this.stateHistory{i + 1} = newPosterior;
-                end
-                if i ~= 0
-                    measurements = this.measurementHistory{i};
-                else
-                    measurements = currentMeasurements;
-                end
-                this.immf.setState(this.stateHistory{i + 1});
-                DelayedModeIMMF.applyInputs(sysModel, inputs);
-                this.immf.performPrediction(sysModel);
-                if ~isempty(measurements)
-                    this.immf.performUpdate(measModel, measurements);
-                end
-                if i ~= 0
-                    % save posterior
-                    this.stateHistory{i} = this.immf.getState();
-                end
-            end                   
-            % update history for the next step (i.e., proceed to k+1)
-            this.updateHistory(currentInputs, currentMeasurements, currentMode);
-        end
-    end
-    
-    methods (Access = private)
         %% incorporateDelayedMeasurements
         function nonDelayedMeasurements = incorporateDelayedMeasurements(this, applicableMeasurements, applicableDelays)
             nonDelayedMeasurements = [];
@@ -525,7 +547,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     methods (Access = private, Static)
         %% applyInputs
         function applyInputs(sysModel, inputs, mode)
-            % assume that sysModel is a JumpLinearSystemModel and inputs is a cell array
+            % assume that sysModel is a JumpLinearSystemModel and inputs is
+            % an array of inputs
             if nargin == 2
                 % i-th input to be applied to i-th system model
                 sysModel.setSystemInput(inputs);

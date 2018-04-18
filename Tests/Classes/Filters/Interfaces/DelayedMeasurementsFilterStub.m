@@ -38,15 +38,11 @@ classdef (Sealed) DelayedMeasurementsFilterStub < DelayedMeasurementsFilter
             state = Gaussian(0, 1);
         end
         
-        %% setState
-        function setState(~, ~)
-            % this dummy implementation does nothing
-        end
-        
-        %% getPointEstimate
-        function [pointEstimate, uncertainty] = getPointEstimate(~)
-            pointEstimate = 0;
-            uncertainty = 1;
+        %% getStateMeanAndCov
+        function [stateMean,  stateCov, stateCovSqrt] = getStateMeanAndCov(~)
+            stateMean = 0;
+            stateCov = 1;
+            stateCovSqrt = 1;
         end
         
         %% obtainApplicableMeasurements
@@ -62,13 +58,23 @@ classdef (Sealed) DelayedMeasurementsFilterStub < DelayedMeasurementsFilter
     end
     
     methods (Access = protected)
-        %% performPrediction
-        function performPrediction(~,~)
+        %% performSetStateMeanAndCov
+        function performSetStateMeanAndCov(~,~)
              % this dummy implementation does nothing
+        end
+        
+        %% performSetState
+        function performSetState(~, ~, ~, ~)
+            % this dummy implementation does nothing
         end
         
         %% performUpdate
         function performUpdate(~, ~, ~, ~)
+            % this dummy implementation does nothing
+        end
+        
+        %% performPrediction
+        function performPrediction(~, ~, ~, ~)
             % this dummy implementation does nothing
         end
     end

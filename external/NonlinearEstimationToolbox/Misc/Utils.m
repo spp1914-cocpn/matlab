@@ -3,32 +3,22 @@ classdef Utils
     % This class provides various utility functions.
     %
     % Utils Methods:
-    %   getMeanAndCov             - Compute sample mean and sample covariance.
-    %   getMeanCovAndCrossCov     - Compute sample mean, covariance, and cross-covariance.
-    %   kalmanUpdate              - Perform a Kalman update.
-    %   decomposedStateUpdate     - Perform an update for a system state decomposed into two parts A and B.
-    %   blockDiag                 - Create a block diagonal matrix.
-    %   baseBlockDiag             - Create a block diagonal matrix.
-    %   drawGaussianRndSamples    - Draw random samples from a multivariate Gaussian distribution.
-    %   resampling                - Perform a simple resampling.
-    %   systematicResampling      - Perform a systematic resampling.
-    %   rndOrthogonalMatrix       - Creates a random orthogonal matrix of the specified dimension.
-    %   getStateSamples           - Get a set of samples approximating a Gaussian distributed system state.
-    %   getStateNoiseSamples      - Get a set of samples approximating a jointly Gaussian distributed system state and (system/measurement) noise.
-    %   diffQuotientState         - Compute first-order and second-order difference quotients of a function at the given nominal system state.
-    %   diffQuotientStateAndNoise - Compute first-order and second-order difference quotients of a function at the given nominal system state and nominal noise.
+    %   getMeanAndCov                  - Compute sample mean and sample covariance.
+    %   getGMMeanAndCov                - Compute mean and covariance matrix of a Gaussian mixture.
+    %   kalmanUpdate                   - Perform a Kalman update.
+    %   decomposedStateUpdate          - Perform an update for a system state decomposed into two parts A and B.
+    %   blockDiag                      - Create a block diagonal matrix.
+    %   drawGaussianRndSamples         - Draw random samples from a multivariate Gaussian distribution.
+    %   diffQuotientState              - Compute first-order and second-order difference quotients of a function at the given nominal system state.
+    %   diffQuotientStateAndNoise      - Compute first-order and second-order difference quotients of a function at the given nominal system state and nominal noise.
+    %   diffQuotientStateInputAndNoise - Compute first-order and second-order difference quotients of a function at the given nominal system state, nominal input and nominal noise.
     
     % >> This function/class is part of the Nonlinear Estimation Toolbox
     %
     %    For more information, see https://bitbucket.org/nonlinearestimation/toolbox
     %
-    %    Copyright (C) 2015  Jannik Steinbring <jannik.steinbring@kit.edu>
-    %
-    %                        Institute for Anthropomatics and Robotics
-    %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
-    %                        Karlsruhe Institute of Technology (KIT), Germany
-    %
-    %                        http://isas.uka.de
+    %    Copyright (C) 2015-2017  Jannik Steinbring <nonlinearestimation@gmail.com>
+    %                             Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -106,89 +96,46 @@ classdef Utils
             end
         end
         
-        function [measMean, measCov, ...
-                  stateMeasCrossCov] = getMeanCovAndCrossCov(stateMean, stateSamples, ...
-                                                             measSamples, weights)
-            % Compute sample mean, covariance, and cross-covariance.
+        function [mean, cov] = getGMMeanAndCov(means, covariances, weights)
+            % Compute mean and covariance matrix of a Gaussian mixture.
             %
             % Parameters:
-            %   >> stateMean (Column vector)
-            %      State mean.
+            %   >> means (Matrix)
+            %      Column-wise arranged means of the Gaussian mixture components.
             %
-            %   >> stateSamples (Matrix)
-            %      Column-wise arranged state samples.
-            %
-            %   >> measSamples (Matrix)
-            %      Column-wise arranged measurement samples.
+            %   >> covariances (3D matrix containing positive definite matrices)
+            %      Slice-wise arranged covariance matrices of the Gaussian mixture components.
             %
             %   >> weights (Row vector)
-            %      Column-wise arranged corresponding normalized sample weights.
-            %      If no weights are passed, all samples are assumed
-            %      to be equally weighted.
+            %      Row-wise arranged normalized weights of the Gaussian mixture components.
+            %      If no weights are passed, all Gaussian mixture components are assumed to be equally weighted.
             %
             % Returns:
-            %   << measMean (Column vector)
-            %      The sample measurement mean.
+            %   << mean (Column vector)
+            %      The mean of the Gaussian mixture.
             %
-            %   << measCov (Positive definite matrix)
-            %      The sample measurement covariance matrix.
-            %
-            %   << stateMeasCrossCov (Matrix)
-            %      The sample state measurement cross-covariance matrix.
+            %   << cov (Positive definite matrix)
+            %      The covariance matrix of the Gaussian mixture.
             
-            if nargin < 4
-                numSamples = size(stateSamples, 2);
+            numComponents = size(means, 2);
+            
+            if nargin < 3
+                [mean, covMeans] = Utils.getMeanAndCov(means);
                 
-                % Compute measurement mean
-                measMean = sum(measSamples, 2) / numSamples;
-                
-                % Compute measurement covariance
-                diffMeasSamples = bsxfun(@minus, measSamples, measMean);
-                
-                measCov = (diffMeasSamples * diffMeasSamples') / numSamples;
-                
-                % Compute state measurement cross-covariance
-                diffStateSamples = bsxfun(@minus, stateSamples, stateMean);
-                
-                stateMeasCrossCov = (diffStateSamples * diffMeasSamples') / numSamples;
+                cov = covMeans + sum(covariances, 3) / numComponents;
             else
-                % Compute measurement mean
-                measMean = measSamples * weights';
+                [mean, covMeans] = Utils.getMeanAndCov(means, weights);
                 
-                % Compute measurement covariance and state measurement cross-covariance
-                diffMeasSamples  = bsxfun(@minus, measSamples, measMean);
-                diffStateSamples = bsxfun(@minus, stateSamples, stateMean);
+                weightedCovs = bsxfun(@times, covariances, ...
+                                      reshape(weights, [1 1 numComponents]));
                 
-                % Weights can be negative => we have to treat them separately
-                
-                % Positive weights
-                idx = weights >= 0;
-                
-                sqrtWeights              = sqrt(weights(idx));
-                weightedDiffMeasSamples  = bsxfun(@times, diffMeasSamples(:, idx), sqrtWeights);
-                weightedDiffStateSamples = bsxfun(@times, diffStateSamples(:, idx), sqrtWeights);
-                
-                measCov = weightedDiffMeasSamples * weightedDiffMeasSamples';
-                
-                stateMeasCrossCov = weightedDiffStateSamples * weightedDiffMeasSamples';
-                
-                % Negative weights
-                if ~all(idx)
-                    idx = ~idx;
-                    
-                    sqrtWeights              = sqrt(abs(weights(idx)));
-                    weightedDiffMeasSamples  = bsxfun(@times, diffMeasSamples(:, idx), sqrtWeights);
-                    weightedDiffStateSamples = bsxfun(@times, diffStateSamples(:, idx), sqrtWeights);
-                    
-                    measCov = measCov - weightedDiffMeasSamples * weightedDiffMeasSamples';
-                    
-                    stateMeasCrossCov = stateMeasCrossCov - weightedDiffStateSamples * weightedDiffMeasSamples';
-                end
+                cov = covMeans + sum(weightedCovs, 3);
             end
         end
-        
+                
         function [updatedStateMean, ...
-                  updatedStateCov] = kalmanUpdate(stateMean, stateCov, measurement, ...
+                  updatedStateCov, ...
+                  sqMeasMahalDist] = kalmanUpdate(stateMean, stateCov, measurement, ...
                                                   measMean, measCov, stateMeasCrossCov)
             % Perform a Kalman update.
             %
@@ -217,22 +164,33 @@ classdef Utils
             %
             %   << updatedStateCov (Positive definite matrix)
             %      Posterior state covariance matrix.
+            %
+            %   << sqMeasMahalDist (Scalar)
+            %      Squared Mahalanobis distance of the measurement.
             
-            [measCovSqrt, isNonPos] = chol(measCov);
+            [measCovSqrt, isNonPos] = chol(measCov, 'Lower');
             
             if isNonPos
                 error('Utils:InvalidMeasurementCovariance', ...
                       'Measurement covariance matrix is not positive definite.');
             end
             
-            % Compute Kalman gain
-            A = stateMeasCrossCov / measCovSqrt;
+            A = stateMeasCrossCov / measCovSqrt';
+            
+            innovation = measurement - measMean;
+            
+            t = measCovSqrt \ innovation;
             
             % Compute updated state mean
-            updatedStateMean = stateMean + A * (measCovSqrt' \ (measurement - measMean));
+            updatedStateMean = stateMean + A * t;
             
             % Compute updated state covariance
             updatedStateCov = stateCov - A * A';
+            
+            % Compute squared Mahalanobis distance of the measurement
+            if nargout == 3
+                sqMeasMahalDist = t' * t;
+            end
         end
         
         function [updatedStateMean, ...
@@ -307,27 +265,7 @@ classdef Utils
             
             blockMat = kron(speye(numRepetitions), matrix);
         end
-        
-        function blockMat = baseBlockDiag(matrixBase, matrixDiag, numRepetitions)
-            % Create a block diagonal matrix.
-            %
-            % Parameters:
-            %   >> matrixBase (Matrix)
-            %      Matrix.
-            %
-            %   >> matrixDiag (Matrix)
-            %      Matrix of same size as matrixBase.
-            %
-            %   >> numRepetitions (Positive scalar)
-            %      Number of matrix repetitions along the diagonal.
-            %
-            % Returns:
-            %   << blockMat (Matrix)
-            %      Block diagonal matrix.
-            
-            blockMat = repmat(matrixBase, numRepetitions, numRepetitions) + ...
-                       Utils.blockDiag(matrixDiag, numRepetitions);
-        end
+                
         
         function rndSamples = drawGaussianRndSamples(mean, covSqrt, numSamples)
             % Draw random samples from a multivariate Gaussian distribution.
@@ -352,209 +290,7 @@ classdef Utils
             
             rndSamples = bsxfun(@plus, rndSamples, mean);
         end
-        
-        function [rndSamples, idx] = resampling(samples, cumWeights, numSamples)
-            % Perform a simple resampling.
-            %
-            % Parameters:
-            %   >> samples (Matrix)
-            %      Set of column-wise arranged sample positions to resample from.
-            %
-            %   >> cumWeights (Vector)
-            %      Vector containing the cumulative sample weights.
-            %
-            %   >> numSamples (Positive scalar)
-            %      Number of samples to draw from the given sample distribution.
-            %
-            % Returns:
-            %   << rndSamples (Matrix)
-            %      Column-wise arranged samples drawn from the given sample distribution.
-            %
-            %   << idx (Row vector)
-            %      Corresponding indices of the samples that were resampled from.
-            
-            u = rand(1, numSamples);
-            
-            u = sort(u);
-            
-            idx = zeros(1, numSamples);
-            
-            i = 1;
-            
-            for j = 1:numSamples
-                while u(j) > cumWeights(i)
-                    i = i + 1;
-                end
                 
-                idx(j) = i;
-            end
-            
-            rndSamples = samples(:, idx);
-        end
-        
-        function [rndSamples, idx] = systematicResampling(samples, cumWeights, numSamples)
-            % Perform a systematic resampling.
-            %
-            % Implements the systematic resampling algorithm from:
-            %
-            %   Branko Ristic, Sanjeev Arulampalam, and Neil Gordon,
-            %   Beyond the Kalman Filter: Particle filters for Tracking Applications,
-            %   Artech House Publishers, 2004,
-            %   Section 3.3
-            %
-            % Parameters:
-            %   >> samples (Matrix)
-            %      Set of column-wise arranged sample positions to resample from.
-            %
-            %   >> cumWeights (Vector)
-            %      Vector containing the cumulative sample weights.
-            %
-            %   >> numSamples (Positive scalar)
-            %      Number of samples to draw from the given sample distribution.
-            %
-            % Returns:
-            %   << rndSamples (Matrix)
-            %      Column-wise arranged samples drawn from the given sample distribution.
-            %
-            %   << idx (Row vector)
-            %      Corresponding indices of the samples that were resampled from.
-            
-            csw = cumWeights * numSamples;
-            
-            idx = zeros(1, numSamples);
-            
-            u1 = rand(1);
-            
-            i = 1;
-            
-            for j = 1:numSamples
-                uj = u1 + (j - 1);
-                
-                while uj > csw(i)
-                    i = i + 1;
-                end
-                
-                idx(j) = i;
-            end
-            
-            rndSamples = samples(:, idx);
-        end
-        
-        function rndMat = rndOrthogonalMatrix(dim)
-            % Creates a random orthogonal matrix of the specified dimension.
-            %
-            % Parameters:
-            %   >> dim (Positive scalar)
-            %      Dimension of the desired random orthogonal matrix.
-            %
-            % Returns:
-            %   << rndMat (Square matrix)
-            %      A random orthogonal matrix of the specified dimension.
-            
-            mat = randn(dim, dim);
-            
-            [Q, R] = qr(mat);
-            
-            D = diag(sign(diag(R)));
-            
-            rndMat = Q * D;
-        end
-        
-        function [stateSamples, ...
-                  weights, ...
-                  numSamples] = getStateSamples(sampling, stateMean, stateCovSqrt)
-            % Get a set of samples approximating a Gaussian distributed system state.
-            %
-            % The number of samples, their positions, and their weights are determined (and
-            % controlled) by the respective Gaussian sampling technique.
-            %
-            % Parameters:
-            %   >> sampling (Subclass of GaussianSampling)
-            %      Gaussian sampling technique that controls the sample generation.
-            %
-            %   >> stateMean (Column vector)
-            %      State mean.
-            %
-            %   >> stateCovSqrt (Square matrix)
-            %      Square root of the state covariance, e.g., the lower matrix of a Cholesky decomposition.
-            %
-            % Returns:
-            %   << stateSamples (Matrix)
-            %      Column-wise arranged sample positions approximating the Gaussian system state.
-            %
-            %   << weights (Row vector)
-            %      Column-wise arranged corresponding sample weights.
-            %
-            %   << numSamples (Positive scalar)
-            %      Number of samples approximating the Gaussian system state.
-            
-            dimState = size(stateMean, 1);
-            
-            % Get standard normal approximation
-            [stdNormalSamples, weights, numSamples] = sampling.getStdNormalSamples(dimState);
-            
-            % Generate state samples
-            stateSamples = stateCovSqrt * stdNormalSamples;
-            stateSamples = bsxfun(@plus, stateSamples, stateMean);
-        end
-        
-        function [stateSamples, ...
-                  noiseSamples, ...
-                  weights, ...
-                  numSamples] = getStateNoiseSamples(sampling, stateMean, stateCovSqrt, ...
-                                                     noiseMean, noiseCovSqrt)
-            % Get a set of samples approximating a jointly Gaussian distributed system state and (system/measurement) noise.
-            %
-            % It is assumed that state and noise are mutually independent.
-            %
-            % The number of samples, their positions, and their weights are determined (and
-            % controlled) by the respective Gaussian sampling technique.
-            %
-            % Parameters:
-            %   >> sampling (Subclass of GaussianSampling)
-            %      Gaussian sampling technique that controls the sample generation.
-            %
-            %   >> stateMean (Column vector)
-            %      State mean.
-            %
-            %   >> stateCovSqrt (Square matrix)
-            %      Square root of the state covariance, e.g., the lower matrix of a Cholesky decomposition.
-            %
-            %   >> noiseMean (Column vector)
-            %      Noise mean.
-            %
-            %   >> noiseCovSqrt (Square matrix)
-            %      Square root of the noise covariance, e.g., the lower matrix of a Cholesky decomposition.
-            %
-            % Returns:
-            %   << stateSamples (Matrix)
-            %      Column-wise arranged sample positions approximating the system state.
-            %
-            %   << noiseSamples (Matrix)
-            %      Column-wise arranged samples approximating the noise.
-            %
-            %   << weights (Row vector)
-            %      Column-wise arranged corresponding sample weights.
-            %
-            %   << numSamples (Positive scalar)
-            %      Number of samples approximating the Gaussian joint distribution.
-            
-            dimState    = size(stateMean, 1);
-            dimNoise    = size(noiseMean, 1);
-            dimAugState = dimState + dimNoise;
-            
-            % Get standard normal approximation
-            [stdNormalSamples, weights, numSamples] = sampling.getStdNormalSamples(dimAugState);
-            
-            % Generate state samples
-            stateSamples = stateCovSqrt * stdNormalSamples(1:dimState, :);
-            stateSamples = bsxfun(@plus, stateSamples, stateMean);
-            
-            % Generate noise samples
-            noiseSamples = noiseCovSqrt * stdNormalSamples(dimState+1:end, :);
-            noiseSamples = bsxfun(@plus, noiseSamples, noiseMean);
-        end
-        
         function [stateJacobian, stateHessians] = diffQuotientState(func, nominalState, step)
             % Compute first-order and second-order difference quotients of a function at the given nominal system state.
             %
@@ -572,11 +308,11 @@ classdef Utils
             % Returns:
             %   << stateJacobian (Square matrix)
             %      First-order difference quotients of the system state
-            %      variables, i.e., an approxiamtion of the Jacobian.
+            %      variables, i.e., an approximation of the Jacobian.
             %
             %   << stateHessians (3D matrix)
             %      Set of second-order difference quotients of the system
-            %      state variables, i.e., approxiamtions of the Hessians.
+            %      state variables, i.e., approximations of the Hessians.
             
             % Default value for step
             if nargin < 3
@@ -623,19 +359,19 @@ classdef Utils
             % Returns:
             %   << stateJacobian (Square matrix)
             %      First-order difference quotients of the system state
-            %      variables, i.e., an approxiamtion of the Jacobian.
+            %      variables, i.e., an approximation of the Jacobian.
             %
             %   << noiseJacobian (Square matrix)
             %      First-order difference quotients of the noise variables,
-            %      i.e., an approxiamtion of the Jacobian.
+            %      i.e., an approximation of the Jacobian.
             %
             %   << stateHessians (3D matrix)
             %      Set of second-order difference quotients of the system
-            %      state variables, i.e., approxiamtions of the Hessians.
+            %      state variables, i.e., approximations of the Hessians.
             %
             %   << noiseHessians (3D matrix)
             %      Set of second-order difference quotients of the noise
-            %      variables, i.e., approxiamtions of the Hessians.
+            %      variables, i.e., approximations of the Hessians.
             
             % Default value for step
             if nargin < 4
@@ -675,6 +411,115 @@ classdef Utils
                 stateSamples = repmat(nominalState, 1, 2 * L);
                 
                 valuesNoise2 = func(stateSamples, noiseSamples);
+                
+                noiseHessians = Utils.getHessians(dimNoise, valuesNoise, valuesNoise2, L, step);
+            end
+        end
+        
+        function [stateJacobian, inputJacobian, noiseJacobian, ...
+                  stateHessians, inputHessians, noiseHessians] = diffQuotientStateInputAndNoise(func, nominalState, nominalInput, nominalNoise, step)
+            % Compute first-order and second-order difference quotients of a function at the given nominal system state, nominal input and nominal noise.
+            %
+            % Parameters:
+            %   >> func (Function handle)
+            %      System/Measurement function.
+            %
+            %   >> nominalState (Column vector)
+            %      Nominal system state.
+            %
+            %   >> nominalInput (Column vector)
+            %      Nominal input.
+            %
+            %   >> nominalNoise (Column vector)
+            %      Nominal noise.
+            %
+            %   >> step (Positive scalar)
+            %      Step size to compute the finite difference.
+            %      Default: eps^(1/4)
+            %
+            % Returns:
+            %   << stateJacobian (Square matrix)
+            %      First-order difference quotients of the system state
+            %      variables, i.e., an approximation of the Jacobian.
+            %
+            %   << inputJacobian (Square matrix)
+            %      First-order difference quotients of the input
+            %      variables, i.e., an approximation of the Jacobian.
+            %
+            %   << noiseJacobian (Square matrix)
+            %      First-order difference quotients of the noise variables,
+            %      i.e., an approximation of the Jacobian.
+            %
+            %   << stateHessians (3D matrix)
+            %      Set of second-order difference quotients of the system
+            %      state variables, i.e., approximations of the Hessians.
+            %
+            %   << inputHessians (3D matrix)
+            %      Set of second-order difference quotients of the input
+            %      variables, i.e., approximations of the Hessians.
+            %
+            %   << noiseHessians (3D matrix)
+            %      Set of second-order difference quotients of the noise
+            %      variables, i.e., approximations of the Hessians.
+                            
+            % Default value for step
+            if nargin < 5
+                step = eps^(1/4);
+            end
+            
+            dimState = size(nominalState, 1);
+            dimInput = size(nominalInput, 1);
+            dimNoise = size(nominalNoise, 1);
+            
+            % State Jacobian
+            states = Utils.getJacobianSamples(dimState, nominalState, step);
+            inputSamples = repmat(nominalInput, 1, 2 * dimState + 1);
+            noiseSamples = repmat(nominalNoise, 1, 2 * dimState + 1);
+            
+            valuesState = func(states, inputSamples, noiseSamples);
+            stateJacobian = Utils.getJacobian(dimState, valuesState, step);
+            
+            % Input Jacobian
+            inputs = Utils.getJacobianSamples(dimInput, nominalInput, step);
+            stateSamples = repmat(nominalState, 1, 2 * dimInput + 1);
+            noiseSamples = repmat(nominalNoise, 1, 2 * dimInput + 1); 
+            
+            valuesInput = func(stateSamples, inputs, noiseSamples);
+            inputJacobian = Utils.getJacobian(dimInput, valuesInput, step);
+            
+            % Noise Jacobian
+            noises = Utils.getJacobianSamples(dimNoise, nominalNoise, step);
+            stateSamples = repmat(nominalState, 1, 2 * dimNoise + 1);
+            inputSamples = repmat(nominalInput, 1, 2 * dimNoise + 1);
+            
+            valuesNoise = func(stateSamples, inputSamples, noises);
+            noiseJacobian = Utils.getJacobian(dimNoise, valuesNoise, step);
+            
+            if nargout == 6
+                % State Hessians
+                [states, L] = Utils.getHessiansSamples(dimState, nominalState, step);
+                noiseSamples = repmat(nominalNoise, 1, 2 * L);
+                inputSamples = repmat(nominalInput, 1, 2 * L);
+                
+                valuesState2 = func(states, inputSamples, noiseSamples);
+                
+                stateHessians = Utils.getHessians(dimState, valuesState, valuesState2, L, step);
+                
+                % Input Hessians
+                [inputs, L] = Utils.getHessiansSamples(dimInput, nominalInput, step);
+                stateSamples = repmat(nominalState, 1, 2 * L);
+                noiseSamples = repmat(nominalNoise, 1, 2 * L);
+                
+                valuesInput2 = func(stateSamples, inputs, noiseSamples);
+                
+                inputHessians = Utils.getHessians(dimInput, valuesInput, valuesInput2, L, step);
+                
+                % Noise Hessians
+                [noises, L] = Utils.getHessiansSamples(dimNoise, nominalNoise, step);
+                inputSamples = repmat(nominalInput, 1, 2 * L);
+                stateSamples = repmat(nominalState, 1, 2 * L);
+                
+                valuesNoise2 = func(stateSamples, inputSamples, noises);
                 
                 noiseHessians = Utils.getHessians(dimNoise, valuesNoise, valuesNoise2, L, step);
             end

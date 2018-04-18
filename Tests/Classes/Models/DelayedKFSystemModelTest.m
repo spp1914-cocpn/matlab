@@ -147,7 +147,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
         function testReset(this)
             % set uncertain inputs, then reset the model
             expectedPlantNoise = this.plantNoise;
-            [expectedMean, expectedCov] = this.plantNoise.getMeanAndCovariance();
+            [expectedMean, expectedCov] = this.plantNoise.getMeanAndCov();
             
             this.uncertainInputs = ones(this.dimU, this.numPossibleInputs) .* [1:this.numPossibleInputs];
             this.modelUnderTest.setSystemInput(this.uncertainInputs);
@@ -157,7 +157,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             this.modelUnderTest.reset();
             
             actualPlantNoise = this.modelUnderTest.noise;
-            [actualMean, actualCov] = actualPlantNoise.getMeanAndCovariance();
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
             
             this.verifyClass(actualPlantNoise, ?Gaussian);
             this.verifyEqual(actualMean, expectedMean);
@@ -193,6 +193,73 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
                 augmentedSysMatrix(:, this.dimX+1:end));
         end
         
+        %% testSetSystemMatrixEmptyMatrix
+        function testSetSystemMatrixEmptyMatrix(this)
+            expectedNewSysMatrix = eye(this.dimX);
+            augmentedSysMatrix = full(this.modelUnderTest.sysMatrix);
+            
+            this.modelUnderTest.setSystemMatrix([]);
+            
+            actualAugmentedNewSysMatrix = full(this.modelUnderTest.sysMatrix);
+            actualNewSysMatrix = actualAugmentedNewSysMatrix(1:this.dimX, 1:this.dimX);
+            
+            this.verifyEqual(actualNewSysMatrix, expectedNewSysMatrix);
+            % compare the remaining blocks
+            this.verifyEqual(size(actualAugmentedNewSysMatrix), size(augmentedSysMatrix));
+            this.verifyEqual(actualAugmentedNewSysMatrix(this.dimX+1:end, :), ...
+                augmentedSysMatrix(this.dimX+1:end, :));
+            this.verifyEqual(actualAugmentedNewSysMatrix(:, this.dimX+1:end), ...
+                augmentedSysMatrix(:, this.dimX+1:end));
+        end
+        
+        %% testSetSystemNoiseMatrixInvalidMatrix
+        function testSetSystemNoiseMatrixInvalidMatrix(this)
+            expectedErrId = 'DelayedKFSystemModel:SetSystemNoiseMatrix:InvalidDimensions';
+            
+            newSysNoiseMatrix = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.modelUnderTest.setSystemNoiseMatrix(newSysNoiseMatrix), expectedErrId);
+            newSysNoiseMatrix = inf(this.dimX, this.dimX); % square, but inf
+            this.verifyError(@() this.modelUnderTest.setSystemNoiseMatrix(newSysNoiseMatrix), expectedErrId);
+        end
+        
+        %% testSetSystemNoiseMatrix
+        function testSetSystemNoiseMatrix(this)
+            expectedNewSysNoiseMatrix = this.A' * this.A;
+            augmentedSysNoiseMatrix = full(this.modelUnderTest.sysNoiseMatrix);
+            
+            this.modelUnderTest.setSystemNoiseMatrix(expectedNewSysNoiseMatrix);
+            
+            actualAugmentedNewSysNoiseMatrix = full(this.modelUnderTest.sysNoiseMatrix);
+            actualNewSysNoiseMatrix = actualAugmentedNewSysNoiseMatrix(1:this.dimX, :);
+            
+            this.verifyEqual(actualNewSysNoiseMatrix, expectedNewSysNoiseMatrix);
+            % compare the remaining blocks
+            this.verifyEqual(size(actualAugmentedNewSysNoiseMatrix), size(actualAugmentedNewSysNoiseMatrix));
+            this.verifyEqual(actualAugmentedNewSysNoiseMatrix(this.dimX+1:end, :), ...
+                augmentedSysNoiseMatrix(this.dimX+1:end, :));
+            this.verifyEqual(actualAugmentedNewSysNoiseMatrix(:, this.dimX+1:end), ...
+                augmentedSysNoiseMatrix(:, this.dimX+1:end));
+        end
+        
+        %% testSetSystemNoiseMatrixEmptyMatrix
+        function testSetSystemNoiseMatrixEmptyMatrix(this)
+            expectedNewSysNoiseMatrix = eye(this.dimX);
+            augmentedSysNoiseMatrix = full(this.modelUnderTest.sysNoiseMatrix);
+            
+            this.modelUnderTest.setSystemNoiseMatrix([]);
+            
+            actualAugmentedNewSysNoiseMatrix = full(this.modelUnderTest.sysNoiseMatrix);
+            actualNewSysNoiseMatrix = actualAugmentedNewSysNoiseMatrix(1:this.dimX, :);
+            
+            this.verifyEqual(actualNewSysNoiseMatrix, expectedNewSysNoiseMatrix);
+            % compare the remaining blocks
+            this.verifyEqual(size(actualAugmentedNewSysNoiseMatrix), size(actualAugmentedNewSysNoiseMatrix));
+            this.verifyEqual(actualAugmentedNewSysNoiseMatrix(this.dimX+1:end, :), ...
+                augmentedSysNoiseMatrix(this.dimX+1:end, :));
+            this.verifyEqual(actualAugmentedNewSysNoiseMatrix(:, this.dimX+1:end), ...
+                augmentedSysNoiseMatrix(:, this.dimX+1:end));
+        end
+        
         %% testSetSystemInputInvalidInput
         function testSetSystemInputInvalidInput(this)
             expectedErrId = 'DelayedKFSystemModel:InvalidInput';
@@ -216,7 +283,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             this.modelUnderTest.setSystemInput(this.uncertainInputs);
             
             actualPlantNoise = this.modelUnderTest.noise;
-            [actualMean, actualCov] = actualPlantNoise.getMeanAndCovariance();
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
             
             this.verifyClass(actualPlantNoise, ?Gaussian);
             this.verifyEqual(actualMean, expectedMean);

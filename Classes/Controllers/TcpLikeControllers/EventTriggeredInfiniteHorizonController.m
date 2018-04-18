@@ -12,12 +12,15 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     %   Optimal sequence-based control of networked linear systems,
     %   Karlsruhe series on intelligent sensor-actuator-systems, Volume 15,
     %   KIT Scientific Publishing, 2015.
+    %
+    % This implementation is based on the original one by Maxim Dolgov and
+    % Jörg Fischer.
         
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -97,20 +100,19 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             this = this@SequenceBasedController(dimX, dimU, packetLength);
             
             % Check for stabilizablity of A by B
-            if dimX - rank(ctrb(A, B)) > 0
-              error('** Plant (A, B) has uncontrollable eigenvalues **');
-            end
+            assert(dimX -rank(ctrb(A, B)) == 0, ...
+                'EventTriggeredInfiniteHorizonController:InvalidPlant', ...
+                '** Plant (A, B) has uncontrollable eigenvalues **');            
 
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
             this.Q = Q;
             this.R = R;
             
-            if ~Checks.isNonNegativeScalar(transmissionCosts)
-                 error('EventBasedInfiniteHorizonController:InvalidTransmissionCosts', ...
-                    ['** Input parameter <transmissionCosts> ',...
-                     'must be a nonegative scalar **']);
-            end
+            assert(Checks.isNonNegativeScalar(transmissionCosts), ...
+                'EventBasedInfiniteHorizonController:InvalidTransmissionCosts', ...
+                '** Input parameter <transmissionCosts> must be a nonegative scalar **');
+            
             this.transmissionCosts = transmissionCosts;
             
              % delayProb
@@ -149,12 +151,12 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     methods (Access = protected)
         %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, ~)
-            if ~Checks.isScalarIn(mode, 1, this.sequenceLength + 1) || mod(mode, 1) ~= 0
-              error('EventBasedInfiniteHorizonController:DoControlSequenceComputation', ...
-                  '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
-                  this.sequenceLength + 1);
-            end
-            [stateMean, stateCovariance] = state.getMeanAndCovariance();
+            assert(Checks.isScalarIn(mode, 1, this.sequenceLength + 1) && mod(mode, 1) == 0, ...
+                'EventTriggeredInfiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
+                '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
+                this.sequenceLength + 1);
+            
+            [stateMean, stateCovariance] = state.getMeanAndCov();
             this.sysState(1:this.dimPlantState) = stateMean(:);
                       
             shifted = dec2bin(bitshift(this.transmissionHistory - 1, -1), this.sequenceLength);
@@ -186,18 +188,19 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             end
         end
         
+        %% doCostsComputation
         function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
             horizonLength = size(appliedInputs, 2);
-            if size(stateTrajectory, 2) ~= horizonLength + 1
-                error('InfiniteHorizonController:DoCostsComputation', ...
-                    '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
-            end
+            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+                'EventTriggeredInfiniteHorizonController:DoCostsComputation:InvalidStateTrajectory', ...
+                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+            
             averageLQGCosts = Utility.computeLQGCosts(horizonLength, stateTrajectory, appliedInputs, this.Q, this.R) / horizonLength;
         end
     end
     
     methods (Access = private)
-        
+        %% computeAllTransitionMatrices
         function T = computeAllTransitionMatrices(this)
             numModes = this.sequenceLength + 1;
             numTransmissionCombinations = 2 ^ numModes;
@@ -344,9 +347,9 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
                             P3 = P3 + T(j,i) * (augR(:,:,i) + augB(:,:,i)'* previousP(:,:,i,hFuture) * augB(:,:,i));
                         end
                         P(:,:,j,h) = P1 - P2 * pinv(P3) * P2';
-                    end % j: previus Markov mode
-                end % h: sending history
-            end % while    
+                    end
+                end
+            end  
         end % function makeSteadyStateControlCovarianceMatrices
     end
 end

@@ -1,4 +1,4 @@
-classdef NominalPredictiveController< SequenceBasedController
+classdef NominalPredictiveController< SequenceBasedTrackingController
     % Implementation of a linear networked predictive controller based on a
     % nominal linear-quadratic regulator.
     %
@@ -8,12 +8,16 @@ classdef NominalPredictiveController< SequenceBasedController
     %   IEEE Transactions on Circuits and Systems—II: Express Briefs,
     %   Vol. 57, No. 6, pp. 481-485, 2010.
     %
+    %   Huibert Kwakernaak, and Raphael Sivan, 
+    %   Linear Optimal Control Systems,
+    %   Wiley-Interscience, New York, 1972.
+    %
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -37,14 +41,26 @@ classdef NominalPredictiveController< SequenceBasedController
     properties (SetAccess = immutable)
         A;
         B;
+    end
+    
+    properties (SetAccess = private, GetAccess = protected)
+        % (empty or column vector of dimension <dimU>)
+        feedforward = [];
+    end
+    
+    properties (SetAccess = private, GetAccess = public)
+        % controller gain matrix (negative of the LQR gain matrix)
+        L = [];
         % system state cost matrix;
         % (positive semidefinite matrix of dimension <dimX> x <dimX>)
         Q = [];
         % input cost matrix;
         % (positive definite matrix of dimension <dimU> x <dimU>)
         R = [];
-        % controller gain matrix (negative)
-        L = [];
+
+        % steady-state (setpoint to reach)
+        % (empty or column vector of dimension <dimX>)
+        setpoint = [];
     end
     
     methods (Access = public)
@@ -77,7 +93,7 @@ classdef NominalPredictiveController< SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
+            this = this@SequenceBasedTrackingController(dimX, dimU, sequenceLength, [], [], []);
             this.A = A;
             this.B = B;
             % Q, R
@@ -85,9 +101,7 @@ classdef NominalPredictiveController< SequenceBasedController
             this.Q = Q;
             this.R = R;
             
-            % compute the gain matrix 
-            [L, ~, ~] = dlqr(A, B, Q, R);
-            this.L = -L;
+            this.computeAndSetGainMatrix();
         end
         
         %% reset
@@ -107,32 +121,120 @@ classdef NominalPredictiveController< SequenceBasedController
             %
             this.sequenceLength = newSequenceLength;
         end
+        
+        %% changeCostMatrices
+        function changeCostMatrices(this, newQ, newR)
+            % Change the state and input weighting matrices in the controller's underlying cost function.
+            %
+            % Parameters:
+            %  >> newQ (Positive semi-definite matrix)
+            %     The new state weighting matrix in the controller's underlying cost function.
+            %
+            %  >> newR (Positive definite matrix)
+            %     The new input weighting matrix in the controller's underlying cost function.
+            %
+            Validator.validateCostMatrices(newQ, newR, this.dimPlantState, this.dimPlantInput);
+            this.Q = newQ;
+            this.R = newR;
+            % requires that gain matrix is recomputed
+            this.computeAndSetGainMatrix();
+            % and, likewise, the feedforward
+            if ~isempty(this.setpoint)
+                this.computeAndSetFeedforward();
+            end
+        end
+        
+        %% changeSetPoint
+        function changeSetPoint(this, newSetpoint)
+            % Change the set point in the state space that shall be tracked asymptotically instead of the origin.
+            % Note that it is not verified whether the resulting set point
+            % tracking problem is solvable. 
+            % For instance, in case dim(x) > dim(u), the problem will
+            % generally have no exact solution.
+            %
+            % Parameters:
+            %  >> newSetpoint (Vector)
+            %     The new setpoint to be tracked.
+            %
+            assert(Checks.isVec(newSetpoint, this.dimPlantState) && all(isfinite(newSetpoint)), ...
+                'NominalPredictiveController:ChangeSetPoint:InvalidSetpoint', ...
+                '** <newSetpoint> is expected to be a real-valued, %d-dimensional vector', this.dimPlantState);
+
+            this.setpoint = newSetpoint(:);
+            this.computeAndSetFeedforward();
+        end
+    end
+    
+    methods (Access = private)
+        %% computeAndSetGainMatrix
+        function computeAndSetGainMatrix(this)
+            % compute the gain matrix 
+            [L, ~, ~] = dlqr(this.A, this.B, this.Q, this.R);
+            this.L = -L;
+        end
+        
+        %% computeAndSetFeedforward
+        function computeAndSetFeedforward(this)
+            I = speye(this.dimPlantState);
+            % we need a stationary gain
+            F = this.B \ ((I - this.A - this.B * this.L) / I);
+            this.feedforward = F * this.setpoint;
+        end
     end
     
     methods (Access = protected)
          %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, plantState, varargin)
-            [state, ~] = plantState.getMeanAndCovariance();
-
+            [state, ~] = plantState.getMeanAndCov();
+            
             inputSequence = zeros(this.sequenceLength * this.dimPlantInput, 1);
-            for j = 1:this.sequenceLength
-                inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state;
-                % predict the system state (i.e., compute estimate since noise is
-                % zero-mean)
-                state = this.A * state + ...
-                    this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
-             end
+            if isempty(this.setpoint)
+                % we regulate, i.e., try to reach the origin, no
+                % feedforward required
+                for j = 1:this.sequenceLength
+                    inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state;
+                    % predict the system state (i.e., compute estimate since noise is
+                    % zero-mean)
+                    state = this.A * state + ...
+                        this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
+                end
+            else
+                % we need a feedforward as we try to reach a nonzero
+                % setpoint
+                for j = 1:this.sequenceLength
+                    inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state + this.feedforward;
+                    % predict the system state (i.e., compute estimate since noise is
+                    % zero-mean)
+                    state = this.A * state + ...
+                        this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
+                end
+            end
         end
         
         %% doCostsComputation
         function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
             horizonLength = size(appliedInputs, 2);
-            if size(stateTrajectory, 2) ~= horizonLength + 1
-                error('NominalPredictiveController:DoCostsComputation', ...
-                    '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
-                    
+            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+                'NominalPredictiveController:DoCostsComputation', ...
+                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+
+            if isempty(this.setpoint)
+                performance = stateTrajectory;
+            else
+                performance = stateTrajectory - this.setpoint;
             end
-            averageLQGCosts = Utility.computeLQGCosts(horizonLength, stateTrajectory, appliedInputs, this.Q, this.R) / horizonLength;
+            averageLQGCosts = Utility.computeLQGCosts(horizonLength, performance, appliedInputs, this.Q, this.R) / horizonLength;
+        end
+        
+        %% doGetDeviationFromRefForState
+        function deviation = doGetDeviationFromRefForState(this, trueState, ~)
+            if isempty(this.setpoint)
+                % we track the origin
+                deviation = trueState;
+            else
+                % we track a nonzero setpoint
+                deviation = trueState - this.setpoint;
+            end
         end
     end
 end

@@ -6,7 +6,7 @@ classdef (Abstract) SequenceBasedController < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -98,12 +98,13 @@ classdef (Abstract) SequenceBasedController < handle
             %   << costs (Nonnegative scalar)
             %      The accrued costs according to this controller's underlying cost functional.
             %
-            if ~Checks.isFixedRowMat(stateTrajectory, this.dimPlantState) ...
-                    || ~Checks.isFixedRowMat(appliedInputs, this.dimPlantInput)
-                error('SequenceBasedController:ComputeCosts', ...
-                    ['** <stateTrajectory> must be a real matrix with %d rows ' ...
-                    'and <appliedInputs> must be a real matrix with %d rows'], this.dimPlantState, this.dimPlantInput);
-            end
+            
+            assert(Checks.isFixedRowMat(stateTrajectory, this.dimPlantState) ...
+                    && Checks.isFixedRowMat(appliedInputs, this.dimPlantInput), ...
+                'SequenceBasedController:ComputeCosts', ...
+                '** <stateTrajectory> must be a real matrix with %d rows and <appliedInputs> must be a real matrix with %d rows', ...
+                this.dimPlantState, this.dimPlantInput);
+  
             costs = this.doCostsComputation(stateTrajectory, appliedInputs);
         end
         
@@ -127,18 +128,18 @@ classdef (Abstract) SequenceBasedController < handle
             %   << inputSequence (Column Vector)
             %      A vector containing the stacked control inputs.
             %
-            if ~Checks.isClass(plantState, 'Distribution') || plantState.getDimension() ~= this.dimPlantState
-               error('SequenceBasedController:ComputeControlSequence', ...
-                   ['** Input parameter <state> (state estimate) must be ' ...
-                   'a %d-dimensional Distribution **'], this.dimPlantState);
-            end
+            assert(Checks.isClass(plantState, 'Distribution') && plantState.getDim() == this.dimPlantState, ...
+                'SequenceBasedController:ComputeControlSequence', ...
+                '** Input parameter <state> (state estimate) must be a %d-dimensional Distribution **', ...
+                this.dimPlantState);
+
             inputSequence = this.doControlSequenceComputation(plantState, varargin{:});
         end
     end
     
     methods (Access = public, Abstract)
-        % Resets the controller to its initial state, in case the
-        % controller is a dynamical system itself.
+        % Reset the controller to its initial state, in case the
+        % controller is a dynamical system.
         reset(this);
     end
     

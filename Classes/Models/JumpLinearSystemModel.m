@@ -8,7 +8,7 @@ classdef JumpLinearSystemModel < SystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -41,13 +41,27 @@ classdef JumpLinearSystemModel < SystemModel
         activeMode;
     end
     
-    methods (Access = public)
+    methods (Access = public, Sealed)
         %% JumpLinearSystemModel
         function this = JumpLinearSystemModel(numModes, systemModels)
-            if ~Checks.isPosScalar(numModes) || mod(numModes, 1) ~= 0
-                 error('JumpLinearSystemModel:InvalidNumModes', ...
-                    '** Number of modes must be a positive integer **');
-            end
+            % Class constructor.
+            %
+            % Parameters:
+            %   >> numModes (Positive integer)
+            %      The number of system modes.
+            %
+            %   >> systemModels (Cell array containing LinearSystemModel subclasses)
+            %      A cell array consisting of the individual linear system models, one for each
+            %      mode of the system.
+            %
+            % Returns:
+            %   << this (JumpLinearSystemModel)
+            %      A new JumpLinearSystemModel instance.
+            
+            assert(Checks.isPosScalar(numModes) && mod(numModes, 1) == 0, ...
+                'JumpLinearSystemModel:InvalidNumModes', ...
+                '** Number of modes must be a positive integer **');
+            
             this.numModes = numModes;
             this.setModeSystemModels(systemModels);
             % initially, the system is in mode 1 and no input is applied
@@ -57,12 +71,12 @@ classdef JumpLinearSystemModel < SystemModel
         
         %% setModeSystemModels
         function setModeSystemModels(this, systemModels)
-            if ~iscell(systemModels) || numel(systemModels) < this.numModes ...
-                    ||  any(cellfun(@(model) ~Checks.isClass(model, 'LinearSystemModel'), systemModels))
-                error('JumpLinearSystemModel:InvalidModeSystemModels', ...
-                    '** <systemModels> must be a cell array with at least %d LinearSystemModel(s). **', ...
-                        this.numModes);    
-            end
+            assert(iscell(systemModels) && numel(systemModels) >= this.numModes ...
+                    && all(cellfun(@(model) Checks.isClass(model, 'LinearSystemModel'), systemModels)), ...
+                'JumpLinearSystemModel:InvalidModeSystemModels', ...
+                '** <systemModels> must be a cell array with at least %d LinearSystemModel(s). **', ...
+                this.numModes);    
+            
             % internally, store models as a row vector-like cell array
             this.modeSystemModels = reshape(systemModels(1:this.numModes), 1, this.numModes);
         end
@@ -145,10 +159,10 @@ classdef JumpLinearSystemModel < SystemModel
     
     methods(Access = private)
         function checkMode(this, mode)
-            if ~Checks.isScalarIn(mode, 1, this.numModes) || mod(mode, 1) ~= 0
-                error('JumpLinearSystemModel:InvalidMode', ...
-                    '** mode must be from {1, ..., %d}. **', this.numModes);
-            end
+            assert(Checks.isScalarIn(mode, 1, this.numModes) && mod(mode, 1) == 0, ...
+                'JumpLinearSystemModel:InvalidMode', ...
+                '** mode must be from {1, ..., %d}. **', ...
+                this.numModes);
         end
     end
 end

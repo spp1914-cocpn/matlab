@@ -80,8 +80,8 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             this.numModes = 2;
             this.modeTransitionMatrix = ones(this.numModes, this.numModes) / this.numModes;
             
-            this.modeFilters = FilterSet();
-            arrayfun(@(mode) this.modeFilters.add(AnalyticKF(sprintf('KF for mode %d', mode))), 1:this.numModes);
+            this.modeFilters = arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false);
                         
             this.dimX = 3;
             this.dimU = 2;
@@ -138,11 +138,11 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
                 + (expectedMean - this.predictedMixtureMeans(:, 2)) * transpose(expectedMean - this.predictedMixtureMeans(:, 2)));
             
             % first check the individual filter states
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqualWithAbsTol(actualMean, this.predictedMixtureMeans(:, j));
                 this.verifyEqualWithAbsTol(actualCov, this.predictedMixtureCovs(:, :, j));
             end
@@ -152,7 +152,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             this.verifyClass(predictedState, ?GaussianMixture);
             
             [~, ~, actualWeights] = predictedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
                    
             % first, a sanity check: resuting cov must be larger
             % than initial cov -> check the eigenvalues of the difference matrix
@@ -175,11 +175,11 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             
             % first check the individual filter states; should be all the
             % same
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqualWithAbsTol(actualMean, expectedMean);
                 this.verifyEqualWithAbsTol(actualCov, expectedCov);
             end
@@ -189,7 +189,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             this.verifyClass(predictedState, ?GaussianMixture);
             
             [~, ~, actualWeights] = predictedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
             
             % sanity check: resuting cov must be larger
             % than initial cov -> check the eigenvalues of the difference matrix
@@ -302,7 +302,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
         
         %% testSetStateInvalidDistribution
         function testSetStateInvalidDistribution(this)
-            expectedErrId = 'Filter:InvalidState';
+            expectedErrId = 'Filter:InvalidSystemState';
             
             invalidState = eye(this.dimX); % not a Distribution
             this.verifyError(@() this.filterUnderTest.setState(invalidState), expectedErrId);
@@ -322,12 +322,12 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             state = this.stateGaussian;
             this.filterUnderTest.setState(state);
             
-            actualModeFilterStates = this.modeFilters.getStates();
-            [expectedMean, expectedCov] = this.stateGaussian.getMeanAndCovariance();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
+            [expectedMean, expectedCov] = this.stateGaussian.getMeanAndCov();
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqual(actualMean, expectedMean);
                 this.verifyEqual(actualCov, expectedCov);
             end
@@ -339,12 +339,12 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             state = this.stateGaussianMixture;
             this.filterUnderTest.setState(state);
             
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
  
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqual(actualMean, this.mixtureMeans(:, j));
                 this.verifyEqual(actualCov, this.mixtureCovs(:, :, j));
             end
@@ -359,7 +359,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             
             this.filterUnderTest.setState(expectedNewState);
             actualNewState = this.filterUnderTest.getState();
-            [actualMean, actualCov] = actualNewState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualNewState.getMeanAndCov();
                         
             this.verifyClass(actualNewState, ?GaussianMixture);
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
@@ -379,7 +379,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             
             this.filterUnderTest.setState(expectedNewState);
             actualNewState = this.filterUnderTest.getState();
-            [actualMean, actualCov] = actualNewState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualNewState.getMeanAndCov();
                         
             this.verifyClass(actualNewState, ?GaussianMixture);
             this.verifyEqual(actualMean, expectedMean, 'AbsTol', 1e-8);
@@ -389,33 +389,37 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             this.verifyEqual(actualWeights, expectedWeights);
         end
         
-        %% testGetPointEstimateGaussianMixture
-        function testGetPointEstimateGaussianMixture(this)
+        %% testGetStateMeanAndCovGaussianMixture
+        function testGetStateMeanAndCovGaussianMixture(this)
             newState = this.stateGaussianMixture;
             expectedMean = this.stateGaussianMixtureMean;
             expectedCov = this.stateGaussianMixtureCov;
+            expectedCovSqrt = chol(this.stateGaussianMixtureCov)';
             
             % set the new state and retrieve the point estimate
             this.filterUnderTest.setState(newState);
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+             [actualMean, actualCov, actualCovSqrt] = this.filterUnderTest.getStateMeanAndCov();
             
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
             this.verifyEqualWithAbsTol(actualCov, expectedCov);
+            this.verifyEqualWithAbsTol(actualCovSqrt, expectedCovSqrt);
             
         end
         
-        %% testGetPointEstimateGaussian
-        function testGetPointEstimateGaussian(this)
+        %% testGetStateMeanAndCovGaussian
+        function testGetStateMeanAndCovGaussian(this)
             newState = this.stateGaussian;
             expectedMean = this.stateGaussianMean;
             expectedCov = this.stateGaussianCov;
+            expectedCovSqrt = chol(this.stateGaussianCov)';
             
             % set the new state and retrieve the point estimate
             this.filterUnderTest.setState(newState);
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov, actualCovSqrt] = this.filterUnderTest.getStateMeanAndCov();
             
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
             this.verifyEqualWithAbsTol(actualCov, expectedCov);
+            this.verifyEqualWithAbsTol(actualCovSqrt, expectedCovSqrt);
         end
         
         %% testGetModeEstimateInitialMode

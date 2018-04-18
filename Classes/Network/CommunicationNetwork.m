@@ -1,17 +1,14 @@
 classdef CommunicationNetwork < handle
-    % Defines a simple communication network which allos to send and
-    % receive data packets.
+    % Defines a simple communication network which allows to send and
+    % receive data packets, based on the original implementation by Jörg
+    % Fischer and Maxim Dolgov.
     %
-    %
-    % AUTHOR:       Jörg Fischer
-    % LAST UPDATE:  Maxim Dolgov, 30.04.2013
-    %               Florian Rosenthal, 20.02.2017   
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -38,9 +35,8 @@ classdef CommunicationNetwork < handle
         nwData = {};
         % number of packets that leave the network to current time step;
         % Index is the time step; (array of positive integer)
-        numPacketsOut = [];
-       
-    end % properties
+        numPacketsOut = [];       
+    end
     
     properties (GetAccess = private, SetAccess = immutable)
         % used protocol (has no relevance to behaviour of the network. Only
@@ -92,19 +88,15 @@ classdef CommunicationNetwork < handle
                   '** Input parameter <protocol> must be string with value "TCP" or "UDP" **');
             end
             
-            if ~Checks.isPosScalar(simTime) || mod(simTime, 1) ~= 0
-                error('CommunicationNetwork:InvalidSimTime', ...
-                    ['** Input parameter <simTime> (simulation time) must be',...
-                    ' a positive integer **']);
-            end
+            assert(Checks.isPosScalar(simTime) && mod(simTime, 1) == 0, ...
+                'CommunicationNetwork:InvalidSimTime', ...
+                '** Input parameter <simTime> (simulation time) must be a positive integer **');
             this.simTime = simTime;
 
             % maxDelay
-            if ~Checks.isNonNegativeScalar(maxDelay)  || mod(maxDelay, 1) ~= 0
-              error('CommunicationNetwork:InvalidMaxDelay', ...
-                  ['** Input parameter <maxDelay> (maximum possible packet',...
-                     ' delay) must be a nonnegative integer **'])
-            end
+            assert(Checks.isNonNegativeScalar(maxDelay) && mod(maxDelay, 1) == 0, ...
+                'CommunicationNetwork:InvalidMaxDelay', ...
+                '** Input parameter <maxDelay> (maximum possible packet delay) must be a nonnegative integer **');
             this.maxDelay = maxDelay;
 
             % init network data
@@ -114,26 +106,22 @@ classdef CommunicationNetwork < handle
   
         %% sendPacket
         function sendPacket(this, packet, packetDelay, timeStep)
-            if ~(Checks.isScalarIn(timeStep, 0, this.simTime) && mod(timeStep, 1) == 0)
-                error ('CommunicationNetwork:SendPacket:InvalidTimeStep', ...
-                    '** Time step must be an integer within [0, %d] **', this.simTime);    
-            end
+            assert(Checks.isScalarIn(timeStep, 0, this.simTime) && mod(timeStep, 1) == 0, ...
+                'CommunicationNetwork:SendPacket:InvalidTimeStep', ...
+                '** Time step must be an integer within [0, %d] **', this.simTime);    
+            assert(Checks.isClass(packet, 'DataPacket'), ...            
+                'CommunicationNetwork:SendPacket:InvalidPacket', ...
+                 '** Input parameter <packet> (sent data packet) is not of class DataPacket **');
+            assert(Checks.isNonNegativeScalar(packetDelay) && mod(packetDelay, 1) == 0, ...
+                'CommunicationNetwork:SendPacket:InvalidPacketDelay', ...
+                 '** Input parameter <packetDelay> (time delay to experience by the packet) must be a nonnegative integer **');
+            % error if packet time stamp does not correspond to transmission time    
+            assert(packet.timeStamp == timeStep, ...    
+                'CommunicationNetwork:SendPacket:InvalidPacketTimeStamp', ...
+                '** Packet time stamp does not correspond to transmission time (time step) **');
             
-            if ~Checks.isClass(packet, 'DataPacket')
-                 error('CommunicationNetwork:SendPacket:InvalidPacket', ...
-                     '** Input parameter <packet> (sent data packet) is not of class DataPacket **');
-            end
-            % check packet and delay
-            if ~(Checks.isNonNegativeScalar(packetDelay) && mod(packetDelay, 1) == 0)
-                 error('CommunicationNetwork:SendPacket:InvalidPacketDelay', ...
-                     '** Input parameter <packetDelay> (time delay to experience by the packet) must be a nonnegative integer **');
-            end
-            if packet.timeStamp ~= timeStep
-                % error if packet time stamp does not correspond to transmission time    
-                error('CommunicationNetwork:SendPacket:InvalidPacketTimeStamp', ...
-                    '** Packet time stamp does not correspond to transmission time (time step) **');
-            elseif packetDelay <= this.maxDelay && packetDelay <= this.simTime - timeStep
-                % handle packet as its delay is not too large and will leav
+            if packetDelay <= this.maxDelay && packetDelay <= this.simTime - timeStep
+                % handle packet as its delay is not too large and will leave
                 % the network before simulation ends
                 packet.packetDelay = packetDelay;
                 i = this.numPacketsOut(timeStep + packetDelay) + 1;
@@ -144,10 +132,10 @@ classdef CommunicationNetwork < handle
         
         %% receivePackets
         function [numPackets, packets] = receivePackets(this, timeStep)
-            if ~(Checks.isScalarIn(timeStep, 0, this.simTime) && mod(timeStep, 1) == 0)
-                error ('CommunicationNetwork:ReceivePackets:InvalidTimeStep', ...
-                    '** Time step must be an integer within [0, %d] **', this.simTime);    
-            end
+            assert(Checks.isScalarIn(timeStep, 0, this.simTime) && mod(timeStep, 1) == 0, ...
+                'CommunicationNetwork:ReceivePackets:InvalidTimeStep', ...
+                '** Time step must be an integer within [0, %d] **', this.simTime);    
+            
             % first output parameter is number of packets that will leave the network
             numPackets = this.numPacketsOut(timeStep);
             % the second output parameter is(are) the packet(s) that will leave
@@ -171,6 +159,6 @@ classdef CommunicationNetwork < handle
             % time step the network data array is two-dimensional
             this.nwData = {};
         end
-    end % methods public
-end % classdef
+    end
+end
 

@@ -18,12 +18,17 @@ classdef FiniteHorizonController < SequenceBasedController
     %   Sequence-based LQG Control over Stochastic Networks with Linear Integral Constraints,
     %   Proceedings of the 53rd IEEE Conference on Decision and Control (CDC 2014), 
     %   Los Angeles, California, USA, December 2014.
+    %
+    % While this implementation is to some extent more general than the original one by Maxim Dolgov, 
+    % which can be found <a href="matlab:
+    % web('http://www.cloudrunner.eu/algorithm/160/constrained-slqg-controller/version/1/')"
+    % >here</a>, some parts are directly based thereof.
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -139,11 +144,10 @@ classdef FiniteHorizonController < SequenceBasedController
             %   << obj (FiniteHorizonController)
             %      A new FiniteHorizonController instance.
             
-            if nargin ~= 7 && nargin ~= 10
-                 error('FiniteHorizonController:InvalidNumberOfArguments', ...
-                        '** Constructor must be called with either 7 or 10 arguments **');
-            end
-            
+            assert(nargin == 7 || nargin == 10, ...
+                'FiniteHorizonController:InvalidNumberOfArguments', ...
+                '** Constructor must be called with either 7 or 10 arguments **');
+                        
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
@@ -211,18 +215,16 @@ classdef FiniteHorizonController < SequenceBasedController
     methods (Access = protected)
          %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, timestep)
-            if ~Checks.isScalarIn(timestep, 1, this.horizonLength) || mod(timestep, 1) ~= 0
-              error('FiniteHorizonController:DoControlSequenceComputation:InvalidTimestep', ...
-                  '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
-                  this.horizonLength);
-            end
-            if ~Checks.isScalarIn(mode, 1, this.sequenceLength + 1) || mod(mode, 1) ~= 0
-              error('FiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
-                  '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
-                  this.sequenceLength + 1);
-            end
-            
-            [stateMean, ~] = state.getMeanAndCovariance();
+            assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
+                'FiniteHorizonController:DoControlSequenceComputation:InvalidTimestep', ...
+                '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
+                this.horizonLength);
+            assert(Checks.isScalarIn(mode, 1, this.sequenceLength + 1) && mod(mode, 1) == 0, ...
+                'FiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
+                '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
+                this.sequenceLength + 1);
+                        
+            [stateMean, ~] = state.getMeanAndCov();
             
             this.sysState(1:this.dimPlantState) = stateMean(:);
             inputSequence = this.L(: , :, mode, timestep) * this.sysState;
@@ -242,14 +244,13 @@ classdef FiniteHorizonController < SequenceBasedController
         
         %% doCostsComputation
         function lQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
-            if size(stateTrajectory, 2) ~= this.horizonLength + 1
-                error('FiniteHorizonController:DoCostsComputation:InvalidStateTrajectory', ...
-                    '** <stateTrajectory> is expected to have %d columns ', this.horizonLength + 1);
-            end
-            if size(appliedInputs, 2) ~= this.horizonLength
-                 error('FiniteHorizonController:DoCostsComputation:InvalidInputTrajectory', ...
-                    '** <appliedInputs> is expected to have %d columns ', this.horizonLength);
-            end
+            assert(size(stateTrajectory, 2) == this.horizonLength + 1, ...
+                'FiniteHorizonController:DoCostsComputation:InvalidStateTrajectory', ...
+                '** <stateTrajectory> is expected to have %d columns ', this.horizonLength + 1);
+            assert(size(appliedInputs, 2) == this.horizonLength, ...
+                'FiniteHorizonController:DoCostsComputation:InvalidInputTrajectory', ...
+                '** <appliedInputs> is expected to have %d columns ', this.horizonLength);
+            
             lQGCosts = Utility.computeLQGCosts(this.horizonLength, stateTrajectory, appliedInputs, this.Q, this.R);
         end
     end
@@ -258,23 +259,21 @@ classdef FiniteHorizonController < SequenceBasedController
         
         %% validateLinearIntegralConstraints
         function validateLinearIntegralConstraints(this, stateWeightings, inputWeightings, constraints)
-            if ~Checks.isMat3D(stateWeightings) || size(stateWeightings, 1) ~= this.dimPlantState ...
-                        ||  size(stateWeightings, 2) ~= this.horizonLength + 1
-                error('FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidStateWeightings', ...
-                        '** Input parameter <stateWeightings> must be 3d matrix where each slice is %d-by-%d **', ...
+            assert(Checks.isMat3D(stateWeightings) && size(stateWeightings, 1) == this.dimPlantState ...
+                    && size(stateWeightings, 2) == this.horizonLength + 1, ...
+                'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidStateWeightings', ...
+                '** Input parameter <stateWeightings> must be 3d matrix where each slice is %d-by-%d **', ...
                 this.dimPlantState, this.horizonLength + 1);
-            end
+            
             numConstraints  = size(stateWeightings, 3);
-            if ~Checks.isMat3D(inputWeightings, this.dimPlantInput, this.horizonLength, numConstraints)
-                error('FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidInputWeightings', ...
-                    '** Input parameter <inputWeightings> must be 3d matrix with %d slices, where each slice is %d-by-%d **', ...
-                    numConstraints, this.dimPlantInput, this.horizonLength);
-            end
-            if ~Checks.isVec(constraints, numConstraints)
-                 error('FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidConstraints', ...
-                    '** Input parameter <contstraints> must be vector with %d elements **', ...
-                    numConstraints);
-            end
+            assert(Checks.isMat3D(inputWeightings, this.dimPlantInput, this.horizonLength, numConstraints), ...
+                'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidInputWeightings', ...
+                '** Input parameter <inputWeightings> must be 3d matrix with %d slices, where each slice is %d-by-%d **', ...
+                numConstraints, this.dimPlantInput, this.horizonLength);
+            assert(Checks.isVec(constraints, numConstraints), ...
+                'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidConstraints', ...
+                '** Input parameter <contstraints> must be vector with %d elements **', ...
+                numConstraints);            
         end
         
         %% computeGainMatrices

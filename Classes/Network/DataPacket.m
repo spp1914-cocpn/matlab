@@ -1,17 +1,14 @@
 classdef DataPacket < handle
     % Defines a data packet used to transmit data over an abstract/virtual
-    % communication network.
+    % communication network, based on the original implementation by Jörg
+    % Fischer and Maxim Dolgov.
     %
-    %
-    % AUTHOR:       Jörg Fischer
-    % LAST UPDATE:  Maxim Dolgov, 12.11.2013
-    %               Florian Rosenthal, 27.10.2017    
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -54,26 +51,23 @@ classdef DataPacket < handle
     
     methods
         function set.packetDelay(this, delay)
-            if ~Checks.isNonNegativeScalar(delay) || mod(delay, 1) ~= 0
-                 error('DataPacket:InvalidPacketDelay', ...
-                    '** Packet delay must be a nonnegative integer **');
-            end
+            assert(Checks.isNonNegativeScalar(delay) && mod(delay, 1) == 0, ...
+                'DataPacket:InvalidPacketDelay', ...
+                '** Packet delay must be a nonnegative integer **');
             this.packetDelay = delay;
         end
         
         function set.sourceAddress(this, address)
-            if ~Checks.isPosScalar(address) || mod(address, 1) ~= 0
-                error('DataPacket:InvalidSourceAddress', ...
-                    '** Source address must be a positive integer **');
-            end
+            assert(Checks.isPosScalar(address) && mod(address, 1) == 0, ...
+                'DataPacket:InvalidSourceAddress', ...
+                '** Source address must be a positive integer **');
             this.sourceAddress = address;
         end
         
         function set.destinationAddress(this, address)
-            if ~Checks.isPosScalar(address) || mod(address, 1) ~= 0
-                error('DataPacket:InvalidDestinationAddress', ...
-                    '** Destination address must be a positive integer **');
-            end
+            assert(Checks.isPosScalar(address) && mod(address, 1) == 0, ...
+                'DataPacket:InvalidDestinationAddress', ...
+                '** Destination address must be a positive integer **');
             this.destinationAddress = address;
         end
     end
@@ -103,14 +97,14 @@ classdef DataPacket < handle
             if nargin == 2
                 % generate id by calling getNextId()
                 id = DataPacket.getNextId();
-            elseif nargin == 3 && ~(Checks.isPosScalar(id) && mod(id, 1) == 0)
-            	error('DataPacket:InvalidId', ...
+            elseif nargin == 3
+                assert(Checks.isPosScalar(id) && mod(id, 1) == 0, ...
+                    'DataPacket:InvalidId', ...
                     '** Id of packet must be a positive integer **');   
             end
-            if ~Checks.isPosScalar(timeStamp) || mod(timeStamp, 1) ~= 0
-                error('DataPacket:InvalidTimeStamp', ...
-                    '** Time stamp of packet must be a positive integer **');
-            end
+            assert(Checks.isPosScalar(timeStamp) && mod(timeStamp, 1) == 0, ...
+                'DataPacket:InvalidTimeStamp', ...
+                '** Time stamp of packet must be a positive integer **');
             this.payload = payload;
             this.timeStamp = timeStamp;
             this.id = id;
@@ -118,10 +112,9 @@ classdef DataPacket < handle
         
         %% isNewerThan
         function result = isNewerThan(this, otherPacket)
-            if ~Checks.isClass(otherPacket, 'DataPacket')
-                error('DataPacket:InvalidType', ...
-                    '** <otherPacket> must be of type DataPacket **');
-            end
+            assert(Checks.isClass(otherPacket, 'DataPacket'), ...
+                'DataPacket:InvalidType', ...
+                '** <otherPacket> must be of type DataPacket **');
             result = this.timeStamp > otherPacket.timeStamp;
         end
         

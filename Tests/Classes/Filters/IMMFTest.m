@@ -91,11 +91,11 @@ classdef IMMFTest < BaseIMMFTest;
             
               
             % first check the individual filter states
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqualWithAbsTol(actualMean, this.updatedMixtureMeans(:, j));
                 this.verifyEqualWithAbsTol(actualCov, this.updatedMixtureCovs(:, :, j));
             end
@@ -105,7 +105,7 @@ classdef IMMFTest < BaseIMMFTest;
             this.verifyClass(updatedState, ?GaussianMixture);
             
             [~, ~, actualWeights] = updatedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
             
             % first, a sanity check: posterior cov must be smaller than prior
             % cov -> check the eigenvalues of the difference matrix
@@ -120,7 +120,7 @@ classdef IMMFTest < BaseIMMFTest;
         %% verifyUpdateGaussian
         function verifyUpdateGaussian(this)
             % first check the individual filter states
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             
             residualCov = this.C * this.stateGaussianCov * this.C' + this.V;
             gain = this.stateGaussianCov * this.C' * inv(residualCov);
@@ -130,7 +130,7 @@ classdef IMMFTest < BaseIMMFTest;
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 
                 this.verifyEqualWithAbsTol(actualMean, expectedMean);
                 this.verifyEqualWithAbsTol(actualCov, expectedCov);
@@ -141,7 +141,7 @@ classdef IMMFTest < BaseIMMFTest;
             this.verifyClass(updatedState, ?GaussianMixture);
             
             [~, ~, actualWeights] = updatedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
            
             % mode probabilities should be as before the update; 
             expectedWeights = [1/2 1/2];
@@ -182,16 +182,14 @@ classdef IMMFTest < BaseIMMFTest;
         function testIMMFInvalidModeFilters(this)
             expectedErrId = 'MATLAB:class:RequireClass';
             
-            % no FilterSet passed
+            % no cell passed
             invalidModeFilters = eye(this.dimX);
             this.verifyError(@() IMMF(invalidModeFilters, this.modeTransitionMatrix, this.filterName), expectedErrId);
             
             expectedErrId = 'Filter:InvalidModeFilters:InvalidFilterType';
             
-            % FilterSet with invalid filter passed
-            invalidModeFilters = FilterSet();
-            invalidModeFilters.add(AnalyticKF('KF'));
-            invalidModeFilters.add(this.filterUnderTest);
+            % cell with invalid filter passed
+            invalidModeFilters = {EKF('KF'); this.filterUnderTest};
             this.verifyError(@() IMMF(invalidModeFilters, this.modeTransitionMatrix, this.filterName), expectedErrId);
         end
         

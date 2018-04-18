@@ -210,8 +210,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             filter = DelayedKF(this.maxMeasDelay);
             
             this.verifyEqual(filter.getName(), DelayedKFTest.defaultFiltername);
-            this.verifyTrue(filter.getUseAnalyticMeasurementModel());
-            
+            this.verifyEqual(filter.getStateDim(), 0);
         end
         
         %% testDelayedKFZeroMaxMeasDelay
@@ -220,7 +219,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyEqual(filter.getMaxMeasurementDelay(), DelayedKFTest.zeroMeasDelay);
             this.verifyEqual(filter.getName(), this.zeroDelayFiltername);
-            this.verifyTrue(filter.getUseAnalyticMeasurementModel());
+            this.verifyEqual(filter.getStateDim(), 0);
         end
         
         %% testDelayedKF
@@ -229,12 +228,12 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyEqual(filter.getMaxMeasurementDelay(), this.maxMeasDelay);
             this.verifyEqual(filter.getName(), this.filtername);
-            this.verifyTrue(filter.getUseAnalyticMeasurementModel());
+            this.verifyEqual(filter.getStateDim(), 0);
         end
         
         %% testSetStateInvalidState
         function testSetStateInvalidState(this)
-            expectedErrId = 'Filter:UnsupportedSystemState'; % issued from super class GaussianFilter
+            expectedErrId = 'Filter:InvalidSystemState'; % issued from super class GaussianFilter
             
             invalidState = this; % not a distribution
             this.verifyError(@() this.delayFilter.setState(invalidState), expectedErrId);
@@ -247,7 +246,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualState, ?Gaussian);
     
-            [actualMean, actualCov] = actualState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualState.getMeanAndCov();
                
             this.verifyEqualWithAbsTol(actualMean, this.stateGaussianMean);
             this.verifyEqualWithAbsTol(actualCov, this.stateGaussianCov);
@@ -262,19 +261,11 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualState, ?Gaussian);
             
-            [actualMean, actualCov] = actualState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualState.getMeanAndCov();
                         
             this.verifyEqualWithAbsTol(actualMean, this.stateGaussianMixtureMean);
             this.verifyEqualWithAbsTol(actualCov, this.stateGaussianMixtureCov);
             
-        end
-        
-        %% testGetLastUpdateData
-        function testGetLastUpdateData(this)
-            % this method is not implemented
-            expectedErrId = 'Filter:NotImplemented';
-            
-            this.verifyError(@() this.delayFilter.getLastUpdateData(), expectedErrId);
         end
         
         %% testPerformUpdateInvalidMeasModel
@@ -284,7 +275,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.delayFilter.setState(this.stateGaussian);
             % not a LinearMeasurementModel
             invalidMeasModel = this.delayFilterModel;
-            this.verifyError(@() this.delayFilter.update(invalidMeasModel, this.delayedMeasurements), expectedErrId);
+            this.verifyError(@() this.delayFilter.update(invalidMeasModel, this.delayedMeasurements, this.delays), expectedErrId);
         end
         
         %% testPerformUpdateNoApplicableMeas
@@ -302,7 +293,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualState, ?Gaussian);
             
-            [actualMean, actualCov] = actualState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualState.getMeanAndCov();
             
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
             this.verifyEqualWithAbsTol(actualCov, expectedCov);
@@ -325,7 +316,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualState, ?Gaussian);
             
-            [actualMean, actualCov] = actualState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualState.getMeanAndCov();
 
             % first, a sanity check: posterior cov must be smaller or equal than prior
             % cov -> check the eigenvalues of the difference matrix
@@ -348,7 +339,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualState, ?Gaussian);
             
-            [actualMean, actualCov] = actualState.getMeanAndCovariance();
+            [actualMean, actualCov] = actualState.getMeanAndCov();
                       
             this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
             this.verifyEqualWithAbsTol(actualMean, expectedUpdatedMean);
@@ -381,7 +372,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualPredictedState, ?Gaussian);
             
-            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCovariance();
+            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCov();
             
             % sanity check: resuting cov must be larger
             % than initial cov -> check the eigenvalues of the difference matrix
@@ -405,7 +396,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             this.verifyClass(actualPredictedState, ?Gaussian);
             
-            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCovariance();
+            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCov();
             
             % sanity check: resuting cov must be larger
             % than initial cov -> check the eigenvalues of the difference matrix

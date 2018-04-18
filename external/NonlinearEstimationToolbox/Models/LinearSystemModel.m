@@ -1,5 +1,5 @@
 
-classdef LinearSystemModel < SystemModel & AnalyticSystemModel
+classdef LinearSystemModel < SystemModel
     % Linear system model corrupted by linear transformed additive noise.
     %
     % LinearSystemModel Methods:
@@ -8,7 +8,7 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
     %   systemEquation           - The system equation.
     %   derivative               - Compute the first-order and second-order derivatives of the implemented system equation.
     %   simulate                 - Simulate the temporal evolution for a given system state.
-    %   analyticPredictedMoments - Analytic calculation of the first two moments of the predicted state distribution.
+    %   analyticMoments          - Analytic calculation of the first two moments of the predicted state distribution.
     %   setSystemMatrix          - Set the system matrix.
     %   setSystemInput           - Set the system input vector.
     %   setSystemNoiseMatrix     - Set the system noise matrix.
@@ -18,13 +18,7 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
     %
     %    For more information, see https://bitbucket.org/nonlinearestimation/toolbox
     %
-    %    Copyright (C) 2015  Jannik Steinbring <jannik.steinbring@kit.edu>
-    %
-    %                        Institute for Anthropomatics and Robotics
-    %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
-    %                        Karlsruhe Institute of Technology (KIT), Germany
-    %
-    %                        http://isas.uka.de
+    %    Copyright (C) 2015-2017  Jannik Steinbring <nonlinearestimation@gmail.com>
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -59,18 +53,30 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
             %      A new LinearSystemModel instance.
             
             if nargin < 1
-                obj.setSystemMatrix([]);
+                obj.sysMatrix = [];
             else
-                obj.setSystemMatrix(sysMatrix);
+                if ~Checks.isSquareMat(sysMatrix) && ...
+                   ~isempty(sysMatrix)
+                    error('LinearSystemModel:InvalidSystemMatrix', ...
+                          'sysMatrix must be a square matrix or an empty matrix.');
+                end
+                
+                obj.sysMatrix = sysMatrix;
             end
             
             if nargin < 2
-                obj.setSystemNoiseMatrix([]);
+                obj.sysNoiseMatrix = [];
             else
-                obj.setSystemNoiseMatrix(sysNoiseMatrix);
+                if ~Checks.isMat(sysNoiseMatrix) && ...
+                   ~isempty(sysNoiseMatrix)
+                    error('LinearSystemModel:InvalidSystemNoiseMatrix', ...
+                          'sysNoiseMatrix must be a matrix or an empty matrix.');
+                end
+                
+                obj.sysNoiseMatrix = sysNoiseMatrix;
             end
             
-            obj.setSystemInput([]);
+            obj.sysInput = [];
         end
         
         function setSystemMatrix(obj, sysMatrix)
@@ -205,8 +211,27 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
         end
         
         function [predictedStateMean, ...
-                  predictedStateCov] = analyticPredictedMoments(obj, stateMean, stateCov)
-            [noiseMean, noiseCov] = obj.noise.getMeanAndCovariance();
+                  predictedStateCov] = analyticMoments(obj, stateMean, stateCov, stateCovSqrt)
+            % Analytic calculation of the first two moments of the predicted state distribution.
+            %
+            % Parameters:
+            %   >> stateMean (Column vector)
+            %      The state mean.
+            %
+            %   >> stateCov (Positive definite matrix)
+            %      The state covariance.
+            %
+            %   >> stateCovSqrt (Square matrix)
+            %      Square root of the state covariance.
+            %
+            % Returns:
+            %   << predictedStateMean (Column vector)
+            %      The predicted state mean.
+            %
+            %   << predictedStateCov (Positive definite matrix)
+            %      The predicted state covariance.
+            
+            [noiseMean, noiseCov, noiseCovSqrt] = obj.noise.getMeanAndCov();
             dimState = size(stateMean, 1);
             dimNoise = size(noiseMean, 1);
             
@@ -216,8 +241,14 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
             else
                 obj.checkSysMatrix(dimState);
                 
+                if nargin < 4 || isempty(stateCovSqrt)
+                    predictedStateCov = obj.sysMatrix * stateCov * obj.sysMatrix';
+                else
+                    G = obj.sysMatrix * stateCovSqrt;
+                    predictedStateCov  = G * G';
+                end
                 predictedStateMean = obj.sysMatrix * stateMean;
-                predictedStateCov  = obj.sysMatrix * stateCov * obj.sysMatrix';
+                
             end
             
             if isempty(obj.sysNoiseMatrix)
@@ -228,8 +259,10 @@ classdef LinearSystemModel < SystemModel & AnalyticSystemModel
             else
                 obj.checkSysNoiseMatrix(dimState, dimNoise);
                 
+                G = obj.sysNoiseMatrix * noiseCovSqrt;
+                
                 predictedStateMean = predictedStateMean + obj.sysNoiseMatrix * noiseMean;
-                predictedStateCov  = predictedStateCov + obj.sysNoiseMatrix * noiseCov * obj.sysNoiseMatrix';
+                predictedStateCov  = predictedStateCov + G * G';
             end
             
             if ~isempty(obj.sysInput)

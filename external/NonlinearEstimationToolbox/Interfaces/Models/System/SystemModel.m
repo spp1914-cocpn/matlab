@@ -12,13 +12,7 @@ classdef SystemModel < handle
     %
     %    For more information, see https://bitbucket.org/nonlinearestimation/toolbox
     %
-    %    Copyright (C) 2015  Jannik Steinbring <jannik.steinbring@kit.edu>
-    %
-    %                        Institute for Anthropomatics and Robotics
-    %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
-    %                        Karlsruhe Institute of Technology (KIT), Germany
-    %
-    %                        http://isas.uka.de
+    %    Copyright (C) 2015-2017  Jannik Steinbring <nonlinearestimation@gmail.com>
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -38,13 +32,14 @@ classdef SystemModel < handle
             % Set the system noise.
             %
             % Parameters:
-            %   >> noise (Subclass of Distribution or cell array containing subclasses of Distribution)
+            %   >> noise (Subclass of Distribution)
             %      The new system noise.
             
             if Checks.isClass(noise, 'Distribution')
                 obj.noise = noise;
             else
-                obj.noise = JointDistribution(noise);
+                error('SystemModel:InvalidNoise', ...
+                      'noise must be a subclass of Distribution.');
             end
         end
         
@@ -76,7 +71,7 @@ classdef SystemModel < handle
             %   << noiseHessians (3D matrix)
             %      The Hessians of the noise variables.
             
-            if nargout == 2
+            if nargout <= 2
                 [stateJacobian, noiseJacobian] = Utils.diffQuotientStateAndNoise(@obj.systemEquation, ...
                                                                                  nominalState, nominalNoise);
             else

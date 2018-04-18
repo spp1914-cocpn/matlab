@@ -163,24 +163,7 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
             this.verifyEqual(actualApplicableDelays, this.applicableDelays);
             
         end
-        
-        %% testUpdateInvalidMeasurementsNoDelays
-        function testUpdateInvalidMeasurementsNoDelays(this)
-            expectedErrId = 'Filter:InvalidMeasurements';
-            
-            % measurements must not be empty
-            invalidMeasurements = [];
-            % perform an "update" (model not required), do not pass
-            % delays
-            this.verifyError(@() this.filterUnderTest.update([], invalidMeasurements), expectedErrId);
-            
-            % measurements must be a matrix or vector
-            invalidMeasurements = ones(3, 3, 3);
-            % perform an "update" (model not required), do not pass
-            % delays
-            this.verifyError(@() this.filterUnderTest.update([], invalidMeasurements), expectedErrId);
-        end
-     
+                    
          %% testUpdateInvalidMeasurements
         function testUpdateInvalidMeasurements(this)
             expectedErrId = 'Filter:InvalidMeasurements';
@@ -245,7 +228,7 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
              % since delays are assumed to be zero
             measurements = this.delayedMeasurements;
             
-            this.filterUnderTest.update([], measurements);
+            this.filterUnderTest.update([], measurements, zeros(1, this.numMeas));
             
             [actualNumUsedMeas, actualNumDiscardedMeas] = ...
                 this.filterUnderTest.getLastUpdateMeasurementData();
@@ -290,31 +273,9 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
         end
 %%
 %%
-        %% testStepInvalidMeasurementsNoDelays
-        function testStepInvalidMeasurementsNoDelays(this)
-            expectedErrId = 'Filter:InvalidMeasurements';
-            
-            % measurements must not be empty
-            invalidMeasurements = [];
-            % perform a "step" (models are not required), do not pass
-            % delays
-            this.verifyError(@() this.filterUnderTest.step([], [], invalidMeasurements), expectedErrId);
-            
-            % measurements must be a matrix or vector
-            invalidMeasurements = ones(3, 3, 3);
-            % perform a "step" (models are not required), do not pass
-            % delays
-            this.verifyError(@() this.filterUnderTest.step([], [], invalidMeasurements), expectedErrId);
-        end
-     
-         %% testStepInvalidMeasurements
+        %% testStepInvalidMeasurements
         function testStepInvalidMeasurements(this)
             expectedErrId = 'Filter:InvalidMeasurements';
-            
-            % measurements must not be empty
-            invalidMeasurements = [];
-            % perform a "step" (models are not required)
-            this.verifyError(@() this.filterUnderTest.step([], [], invalidMeasurements, this.delays), expectedErrId);
             
             % measurements must be a matrix or vector
             invalidMeasurements = ones(3, 3, 3);
@@ -371,7 +332,7 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
              % since delays are assumed to be zero
             measurements = this.delayedMeasurements;
             
-            this.filterUnderTest.step([], [], measurements);
+            this.filterUnderTest.step([], [], measurements, zeros(1, this.numMeas));
             
             [actualNumUsedMeas, actualNumDiscardedMeas] = ...
                 this.filterUnderTest.getLastUpdateMeasurementData();

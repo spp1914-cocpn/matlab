@@ -89,25 +89,7 @@
                     numMeas - numApplicableMeas, numMeas);
             end
         end
-        
-        %% checkMeasurementsAndDelays
-        function delays = checkMeasurementsAndDelays(this, measurements, measDelays)
-            this.checkMeasurements(measurements);
-            numMeas = size(measurements, 2);
-            
-            if nargin == 2
-                delays = zeros(1, numMeas);
-            elseif Checks.isNonNegativeScalar(measDelays) && mod(measDelays, 1) == 0
-                delays = repmat(measDelays, 1, numMeas);
-            elseif Checks.isNonNegativeVec(measDelays, numMeas) ...
-                    && all(arrayfun(@(measDelay) mod(measDelay, 1) == 0, measDelays))
-                delays = measDelays;
-            else
-                this.error('InvalidMeasDelay', ...
-                    '** Each measurement delay must be a nonnegative integer **');
-            end
-        end
-        
+               
         %% performStep
         function performStep(this, sysModel, measModel, applicableMeasurements, measDelays)
             this.performPrediction(sysModel);
@@ -147,30 +129,27 @@
             %   >> measurements (Matrix)
             %      Column-wise arranged measurement vectors, where each column represents an individual
             %      (possibly delayed) measurement. 
-            %      In case of two or more measurements (i.e., two or more columns), the
-            %      filter assumes that the measurements originate from the same measurement model and
-            %      i.i.d. measurement noise. For example, in case of a measurement model h(x, v) and two
-            %      measurements m1 and m2 the filter assumes
             %
-            %          m1 = h(x, v) and m2 = h(x, v).
-            %
-            %   >> delays (optional, nonnegative integer 
-            %      or vector of nonnegative integers (one for each measurement))
-            %      If a vector is passed here, the i-th element denotes the delay of the i-th measurement.
-            %      If a single nonnegative integer is passed instead, its
-            %      value is taken as delay for all passed measurements.
-            %      If this argument is left out, all measurements are
-            %      assumed to be non-delayed.
+            %   >> delays (Vector of nonnegative integers (one for each measurement))
+            %      Vector of nonnegative integers, the i-th element denotes the delay of the i-th measurement.
             %
             % Returns:
             %   << runtime (Scalar)
             %      Time needed to perform the measurement update.
-            if nargin == 3
-                measurementDelays = this.checkMeasurementsAndDelays(measurements);
-            else
-                measurementDelays = this.checkMeasurementsAndDelays(measurements, delays);
+            
+            if isempty(measurements) || ~ismatrix(measurements) || any(~isfinite(measurements(:)))
+                this.error('InvalidMeasurements', ...
+                    '** Measurements must be column-wise arranged and real-valued **');
             end
-            [applicableMeasurements, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
+            numMeas = size(measurements, 2);
+            
+            if ~Checks.isNonNegativeVec(delays, numMeas) ...
+                    || any(arrayfun(@(measDelay) mod(measDelay, 1) ~= 0, delays))
+                this.error('InvalidMeasDelay', ...
+                    '** Each measurement delay must be a nonnegative integer **');
+            end
+
+            [applicableMeasurements, applicableDelays] = this.getApplicableMeasurements(measurements, delays);
             if nargout == 1
                 s = tic;
                 this.tryPerformUpdate(measModel, applicableMeasurements, applicableDelays);
@@ -194,32 +173,34 @@
             %   >> measModel (Arbitrary class (filter dependent))
             %      Measurement model that provides the mapping between measurements and the system state.
             %
-            %   >> measurements (Matrix)
+            %   >> measurements (Matrix, can be empty)
             %      Column-wise arranged measurement vectors, where each column represents an individual
             %      (possibly delayed) measurement. 
-            %      In case of two or more measurements (i.e., two or more columns), the
-            %      filter assumes that the measurements originate from the same measurement model and
-            %      i.i.d. measurement noise. For example, in case of a measurement model h(x, v) and two
-            %      measurements m1 and m2 the filter assumes
+            %      If no measurements to be processed, pass the empty
+            %      matrix here.
             %
-            %          m1 = h(x, v) and m2 = h(x, v).
-            %
-            %   >> delays (optional, Nonnegative integer or vector of nonnegative integers (one for each measurement))
+            %   >> delays (Nonnegative integer or vector of nonnegative integers (one for each measurement))
             %      If a vector is passed here, the i-th element denotes the delay of the i-th measurement.
-            %      If a single nonnegative integer is passed instead, its
-            %      value is taken as delay for all passed measurements.
-            %      If this argument is left out, all measurements are
-            %      assumed to be non-delayed.
+            %      If no measurements to be processed, pass the empty
+            %      matrix here.
             %
             % Returns:
             %   << runtime (Scalar)
             %      Time needed to perform the combined time and measurement update.
-            if nargin == 4
-                measurementDelays = this.checkMeasurementsAndDelays(measurements);
-            else
-                measurementDelays = this.checkMeasurementsAndDelays(measurements, delays);
+
+            if ~ismatrix(measurements) || any(~isfinite(measurements(:)))
+                this.error('InvalidMeasurements', ...
+                    '** Measurements must be column-wise arranged and real-valued **');
             end
-            [applicableMeasurements, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
+            numMeas = size(measurements, 2);
+            
+            if ~Checks.isNonNegativeVec(delays, numMeas) ...
+                    || any(arrayfun(@(measDelay) mod(measDelay, 1) ~= 0, delays))
+                this.error('InvalidMeasDelay', ...
+                    '** Each measurement delay must be a nonnegative integer **');
+            end
+
+            [applicableMeasurements, applicableDelays] = this.getApplicableMeasurements(measurements, delays);
             if nargout == 1
                 s = tic;
                 this.tryPerformStep(sysModel, measModel, applicableMeasurements, applicableDelays); 

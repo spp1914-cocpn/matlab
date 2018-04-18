@@ -13,7 +13,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -61,6 +61,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         expAugA;
         expAugB;
         measNoiseCovSqrt; % lower Cholesky factor of the covariance matrix
+        measNoiseMean;
         dimMeas;
         measBufferLength;
         dimAugmentedMeas;
@@ -85,7 +86,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     methods (Access = public)
         %% InfiniteHorizonUdpLikeController
         function this = InfiniteHorizonUdpLikeController(A, B, C, Q, R, caDelayProb, scDelayProb, ...
-                sequenceLength, maxMeasDelay, W, V)
+                sequenceLength, maxMeasDelay, W, V, v_mean)
             % Class constructor.
             %
             % Parameters:
@@ -126,6 +127,10 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             %   >> V (Square Matrix)
             %      The covariance matrix of the measurement noise.
             %
+            %   >> v_mean (Vector, optional)
+            %      The mean of the measurement noise.
+            %      If left out, the nois is assumed to be zero mean.
+            %
             % Returns:
             %   << this (InfiniteHorizonUdpLikeController)
             %      A new InfiniteHorizonUdpLikeController instance.
@@ -143,11 +148,11 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             
             Validator.validateMeasurementMatrix(C, dimX);
             this.dimMeas = size(C, 1);
-            if ~Checks.isNonNegativeScalar(maxMeasDelay) || mod(maxMeasDelay, 1) ~= 0
-                 error('InfiniteHorizonUdpLikeController:InvalidMaxMeasDelay', ...
-                    ['** Input parameter <maxMeasDelay> (maximum measurement',...
-                     'delay (M-1)) must be a nonnegative integer **']);
-            end
+            assert(Checks.isNonNegativeScalar(maxMeasDelay) && mod(maxMeasDelay, 1) == 0, ...
+                'InfiniteHorizonUdpLikeController:InvalidMaxMeasDelay', ...
+                ['** Input parameter <maxMeasDelay> (maximum measurement',...
+                'delay (M-1)) must be a nonnegative integer **']);
+            
                         
             this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
             
@@ -155,11 +160,20 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             % check the noise covs
             Validator.validateSysNoiseCovarianceMatrix(W, dimX);
             this.measNoiseCovSqrt = Validator.validateMeasNoiseCovarianceMatrix(V, this.dimMeas);
+            if nargin < 12 || isempty(v_mean)
+                this.measNoiseMean = zeros(this.dimMeas, 1);
+            else
+                assert(Checks.isVec(v_mean, this.dimMeas), ...
+                    'InfiniteHorizonUdpLikeController:InvalidMeasNoiseMean', ...
+                    '** Input parameter <v_mean> (mean of measurement noise) must be a %d-dimensional vector **',...
+                     this.dimMeas);    
+                this.measNoiseMean = v_mean(:);
+            end
             
             % initially, there is no measurement available (modelled by
             % noise)
             noiseSamples = ...
-                Utils.drawGaussianRndSamples(zeros(this.dimMeas, 1), this.measNoiseCovSqrt, this.measBufferLength); 
+                Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
             this.augmentedMeasurement = noiseSamples(:);
             this.availableMeasurements = bitget(0, 1:this.measBufferLength);
      
@@ -211,7 +225,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             % initially, there is no measurement available (modelled by
             % noise)
             noiseSamples = ...
-                Utils.drawGaussianRndSamples(zeros(this.dimMeas, 1), this.measNoiseCovSqrt, this.measBufferLength); 
+                Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
             this.augmentedMeasurement = noiseSamples(:);
             this.availableMeasurements = bitget(0, 1:this.measBufferLength);
             this.lastNumUsedMeas = 0;
@@ -254,7 +268,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 this.checkMeasurementsAndDelays(measurements, measurementDelays);
                 [applicableMeas, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
             end
-            noiseSample = Utils.drawGaussianRndSamples(zeros(this.dimMeas, 1), this.measNoiseCovSqrt, 1);
+            noiseSample = Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, 1);
             this.augmentedMeasurement = [noiseSample; this.augmentedMeasurement(1:end-this.dimMeas)]; % shift measurements "one downwards"
             this.availableMeasurements = [0 this.availableMeasurements(1:end-1)];
 
@@ -293,11 +307,10 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
          %% doCostsComputation
          function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
             horizonLength = size(appliedInputs, 2);
-            if size(stateTrajectory, 2) ~= horizonLength + 1
-                error('InfiniteHorizonUdpLikeController:DoCostsComputation', ...
-                    '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
-                    
-            end
+            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+                'InfiniteHorizonUdpLikeController:DoCostsComputation', ...
+                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+            
             averageLQGCosts = Utility.computeLQGCosts(horizonLength, stateTrajectory, appliedInputs, this.Q, this.R) / horizonLength;
         end
     end
@@ -503,17 +516,18 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         
         %% checkMeasurementsAndDelays
         function delays = checkMeasurementsAndDelays(this, measurements, measDelays)
-            if ~Checks.isFixedRowMat(measurements, this.dimMeas)
-                error('InfiniteHorizonUdpLikeController:CheckMeasurementsAndDelays:InvalidMeas', ...
-                    '** Individual measurements must be %d-dimensional **', this.dimMeas);
-            end
+            assert(Checks.isFixedRowMat(measurements, this.dimMeas), ...
+                'InfiniteHorizonUdpLikeController:CheckMeasurementsAndDelays:InvalidMeas', ...
+                '** Individual measurements must be %d-dimensional **', ...
+                this.dimMeas);
+            
             numMeas = size(measurements, 2);
             
-            if ~Checks.isNonNegativeVec(measDelays, numMeas) ...
-                    || any(arrayfun(@(measDelay) mod(measDelay, 1) ~= 0, measDelays))
-                error('InfiniteHorizonUdpLikeController:CheckMeasurementsAndDelays:InvalidMeasDelay', ...
-                    '** Each measurement delay (%d in total) must be a nonnegative integer **', numMeas);
-            end
+            assert(Checks.isNonNegativeVec(measDelays, numMeas) ...
+                    && all(arrayfun(@(measDelay) mod(measDelays, 1) == 0, measDelays)), ...
+                'InfiniteHorizonUdpLikeController:CheckMeasurementsAndDelays:InvalidMeasDelay', ...
+                '** Each measurement delay (%d in total) must be a nonnegative integer **', numMeas);
+            
             delays = measDelays;
         end
         

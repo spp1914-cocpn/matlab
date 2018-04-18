@@ -48,9 +48,9 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %   >> dimPlantInput (Positive integer)
             %      The dimension of the inputs applied to the plant.
             %
-            %  >> sequenceLength (Positive integer)
-            %     The length of the input sequence (i.e., the number of
-            %     control inputs) to be computed by the controller.
+            %   >> sequenceLength (Positive integer)
+            %      The length of the input sequence (i.e., the number of
+            %      control inputs) to be computed by the controller.
             %
             %   >> Z (Matrix, n-by-dimPlantState)
             %      The time-invariant plant output (performance) matrix, 
@@ -60,21 +60,20 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %      The reference trajectory to track, given as a matrix
             %      with the reference plant outputs column-wise arranged.
             %
-            %  >> expectedTrajectoryLength (Positive integer)
-            %     The expected length reference trajectory.
-            %     Pass the empty matrix here, if no checks shall be done.
+            %   >> expectedTrajectoryLength (Positive integer)
+            %      The expected length reference trajectory.
+            %      Pass the empty matrix here, if no checks shall be done.
             %
             % Returns:
             %   << this (SequenceBasedTrackingController)
             %      A new SequenceBasedTrackingController instance.
             
             this = this@SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength);
-            if ~isempty(Z) 
-                if ~Checks.isFixedColMat(Z, dimPlantState) || any(~isfinite(Z(:)))
-                    error('SequenceBasedTrackingController:InvalidZMatrix', ...
-                        '** Input parameter <Z> (Plant output/performance maxtrix) must be a real-valued matrix with %d cols **', ...
-                        dimPlantState); 
-                end
+            if ~isempty(Z)
+                assert(Checks.isFixedColMat(Z, dimPlantState) && all(isfinite(Z(:))), ...
+                    'SequenceBasedTrackingController:InvalidZMatrix', ...
+                    '** Input parameter <Z> (Plant output/performance maxtrix) must be a real-valued matrix with %d cols **', ...
+                    dimPlantState); 
                                 
                 this.Z = Z;
                 this.dimRef = size(Z, 1);
@@ -99,7 +98,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             % state from the reference at a given time step.
             %
             % Parameters:
-            %   >> trueState (Vector dimension dimPlantState)
+            %   >> trueState (Vector of dimension dimPlantState)
             %      The plant true state at the given time step
             %
             %   >> timestep (Positive integer)
@@ -107,15 +106,13 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %      reference trajectory.
             %
             % Returns:
-            %   << deviation (Nonnegative scalar)
+            %   << deviation (Vector)
             %      The deviation of the performance output of the given
             %      true state and the reference, i.e., Z * x_true -z_ref.
             %
-            if ~Checks.isVec(trueState, this.dimPlantState)
-                 error('SequenceBasedTrackingController:GetDeviationFromRefForState:InvalidTrueState', ...
-                   ['** Input parameter <trueState>  must be ' ...
-                   'a %d-dimensional vector **'], this.dimPlantState);
-            end
+            assert(Checks.isVec(trueState, this.dimPlantState), ...
+                'SequenceBasedTrackingController:GetDeviationFromRefForState:InvalidTrueState', ...
+                '** Input parameter <trueState>  must be a %d-dimensional vector **', this.dimPlantState);
             % pass state as a column vector
             deviation = this.doGetDeviationFromRefForState(trueState(:), timestep);
         end
@@ -129,17 +126,16 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
         %% validateReferenceTrajectory
         function validateReferenceTrajectory(this, refTrajectory, expectedTrajectoryLength)
             if nargin == 3
-                if ~Checks.isMat(refTrajectory, this.dimRef, expectedTrajectoryLength) ...
-                        || any(~isfinite(refTrajectory(:)))
-                    error('SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
-                        '** Reference trajectory <referenceTrajectory> must be a real-valued %d-by-%d matrix **',...
-                        this.dimRef, expectedTrajectoryLength);
-                end
-            elseif ~Checks.isFixedRowMat(refTrajectory, this.dimRef) || any(~isfinite(refTrajectory(:)))
-                error('SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
+                assert(Checks.isMat(refTrajectory, this.dimRef, expectedTrajectoryLength) && all(isfinite(refTrajectory(:))), ...
+                    'SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
+                    '** Reference trajectory <referenceTrajectory> must be a real-valued %d-by-%d matrix **',...
+                    this.dimRef, expectedTrajectoryLength);                    
+            else
+                assert(Checks.isFixedRowMat(refTrajectory, this.dimRef) && all(isfinite(refTrajectory(:))), ...
+                    'SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
                     '** Reference trajectory <referenceTrajectory> must be a real-valued matrix with %d rows**',...
                     this.dimRef);
-            end
+            end           
         end
     end
 end

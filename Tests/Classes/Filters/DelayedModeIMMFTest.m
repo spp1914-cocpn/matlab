@@ -95,11 +95,11 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
                 + (expectedMean - this.updatedMixtureMeans(:, 2)) * transpose(expectedMean - this.updatedMixtureMeans(:, 2)));
                           
             % first check the individual filter states
-            actualModeFilterStates = this.modeFilters.getStates();
+            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCovariance();
+                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
                 this.verifyEqualWithAbsTol(actualMean, this.updatedMixtureMeans(:, j));
                 this.verifyEqualWithAbsTol(actualCov, this.updatedMixtureCovs(:, :, j));
                 
@@ -113,7 +113,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             this.verifyClass(updatedState, ?GaussianMixture);
             
             [~, ~, actualWeights] = updatedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getPointEstimate();
+            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
                       
             this.verifyEqualWithAbsTol(actualWeights, expectedWeights);
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
@@ -162,17 +162,15 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
         function testDelayedModeIMMFInvalidModeFilters(this)
             expectedErrId = 'MATLAB:class:RequireClass';
             
-            % no FilterSet passed
+            % no cell passed
             invalidModeFilters = eye(this.dimX);
             this.verifyError(@() DelayedModeIMMF(invalidModeFilters, this.modeTransitionMatrix, this.maxMeasDelay, this.filterName), ...
                 expectedErrId);
             
             expectedErrId = 'Filter:InvalidModeFilters:InvalidFilterType';
             
-            % FilterSet with invalid filter passed
-            invalidModeFilters = FilterSet();
-            invalidModeFilters.add(AnalyticKF('KF'));
-            invalidModeFilters.add(this.filterUnderTest);
+           % cell with invalid filter passed
+            invalidModeFilters = {EKF('KF'); this.filterUnderTest};
             this.verifyError(@() DelayedModeIMMF(invalidModeFilters, this.modeTransitionMatrix, this.maxMeasDelay, this.filterName), ...
                 expectedErrId);
         end
@@ -212,6 +210,18 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
         end
 %%
 %%
+        %% testGetPreviousModeEstimateInvalidFlag
+        function testGetPreviousModeEstimateInvalidFlag(this)
+            expectedErrId = 'Filter:GetPreviousModeEstimate:InvalidFlag';
+            newState = this.stateGaussianMixture;
+                        
+            this.filterUnderTest.setState(newState);
+            invalidFlag = eye(2); % not a logical
+            this.verifyError(@() this.filterUnderTest.getPreviousModeEstimate(invalidFlag), expectedErrId);
+            invalidFlag = [true false]; % not a scalar
+            this.verifyError(@() this.filterUnderTest.getPreviousModeEstimate(invalidFlag), expectedErrId);
+        end
+        
         %% testGetPreviousModeEstimateGaussianMixture
         function testGetPreviousModeEstimateGaussianMixture(this)
             newState = this.stateGaussianMixture;
@@ -219,7 +229,14 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             expectedMaxModeProb = 2 / 3;
             
             this.filterUnderTest.setState(newState);
-            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate();
+            afterStep = true;
+            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate(afterStep);
+            
+            this.verifyEqual(maxMode, expectedMaxMode);
+            this.verifyEqual(prob, expectedMaxModeProb);
+            
+            afterStep = false;
+            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate(afterStep);
             
             this.verifyEqual(maxMode, expectedMaxMode);
             this.verifyEqual(prob, expectedMaxModeProb);
@@ -233,7 +250,14 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             expectedMaxModeProb = 1/ 2;
 
             this.filterUnderTest.setState(newState);
-            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate();
+             afterStep = true;
+            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate(afterStep);
+            
+            this.verifyEqual(maxMode, expectedMaxMode);
+            this.verifyEqual(prob, expectedMaxModeProb);
+            
+            afterStep = false;
+            [maxMode, prob] = this.filterUnderTest.getPreviousModeEstimate(afterStep);
             
             this.verifyEqual(maxMode, expectedMaxMode);
             this.verifyEqual(prob, expectedMaxModeProb);

@@ -13,12 +13,15 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     %   Optimal sequence-based control of networked linear systems,
     %   Karlsruhe series on intelligent sensor-actuator-systems, Volume 15,
     %   KIT Scientific Publishing, 2015.
-    
-        % >> This function/class is part of CoCPN-Sim
+    %
+    % This implementation is based on the original one by Jörg Fischer and
+    % Maxim Dolgov.
+
+    % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -169,18 +172,16 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     methods (Access = protected)
          %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, timestep)
-            if ~Checks.isScalarIn(timestep, 1, this.horizonLength) || mod(timestep, 1) ~= 0
-              error('FiniteHorizonTrackingController:DoControlSequenceComputation:InvalidTimestep', ...
-                  '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
-                  this.horizonLength);
-            end
-            if ~Checks.isScalarIn(mode, 1, this.sequenceLength + 1) || mod(mode, 1) ~= 0
-              error('FiniteHorizonTrackingController:DoControlSequenceComputation:InvalidMode', ...
-                  '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
-                  this.sequenceLength + 1);
-            end
-            
-            [stateMean, ~] = state.getMeanAndCovariance();
+            assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
+                'FiniteHorizonTrackingController:DoControlSequenceComputation:InvalidTimestep', ...
+                '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
+                this.horizonLength);
+            assert(Checks.isScalarIn(mode, 1, this.sequenceLength + 1) && mod(mode, 1) == 0, ...
+                'FiniteHorizonTrackingController:DoControlSequenceComputation:InvalidMode', ...
+                '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
+                this.sequenceLength + 1);
+             
+            [stateMean, ~] = state.getMeanAndCov();
   
             this.sysState(1:this.dimPlantState) = stateMean(:);
             inputSequence = this.L(: , :, mode, timestep) * this.sysState - this.feedforward(:, mode, timestep);
@@ -189,14 +190,13 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
         end
         
         function lQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
-            if size(stateTrajectory, 2) ~= this.horizonLength + 1
-                error('FiniteHorizonTrackingController:DoCostsComputation:InvalidStateTrajectory', ...
-                    '** <stateTrajectory> is expected to have %d columns ', this.horizonLength + 1);
-            end
-            if size(appliedInputs, 2) ~= this.horizonLength
-                 error('FiniteHorizonTrackingController:DoCostsComputation:InvalidInputTrajectory', ...
-                    '** <appliedInputs> is expected to have %d columns ', this.horizonLength);
-            end
+            assert(size(stateTrajectory, 2) == this.horizonLength + 1, ...
+                'FiniteHorizonTrackingController:DoCostsComputation:InvalidStateTrajectory', ...
+                '** <stateTrajectory> is expected to have %d columns ', this.horizonLength + 1);
+            assert(size(appliedInputs, 2) == this.horizonLength, ...
+                'FiniteHorizonTrackingController:DoCostsComputation:InvalidInputTrajectory', ...
+                '** <appliedInputs> is expected to have %d columns ', this.horizonLength);
+
             % compute performance output and difference to reference
             % trajectory
             diff = bsxfun(@minus, this.Z * stateTrajectory, this.refTrajectory);
@@ -205,11 +205,11 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
         
         %% doGetDeviationFromRefForState
         function deviation = doGetDeviationFromRefForState(this, state, timestep)
-            if ~Checks.isScalarIn(timestep, 1, this.horizonLength) || mod(timestep, 1) ~= 0
-              error('FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTimestep', ...
-                  '** Input parameter <timestep> must be in {1, ... %d} **', ...
-                  this.horizonLength);
-            end
+            assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
+                'FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTimestep', ...
+                '** Input parameter <timestep> must be in {1, ... %d} **', ...
+                this.horizonLength);
+            
             deviation = this.Z * state - this.refTrajectory(:, timestep);
         end
     end

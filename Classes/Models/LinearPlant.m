@@ -1,5 +1,5 @@
 classdef LinearPlant < LinearSystemModel
-    % Implemententation of a linear (potentially time-varying) plant with white and zero mean Gaussian
+    % Implementation (based on Maxim Dolgov's original one) of a linear (potentially time-varying) plant with white and zero mean Gaussian
     % process noise, i.e. x_{k+1} = A_{k}x_{k} + B_{k}u_{k} + G_{k}w_{k}.
     % By default, the system noise matrix G_{k} is the identity matrix.
     % It can be changed, for instance, if the noise affects only a subset of the state variables.
@@ -7,16 +7,14 @@ classdef LinearPlant < LinearSystemModel
     % covariance, and setNoise(..) should be called with the identity
     % matrix.
     %
+    % This implementation is based on the original one by Jörg Fischer.
     %
-    % AUTHOR:       Maxim Dolgov, 12.04.2013
-    % LAST UPDATE:  Maxim Dolgov, 12.04.2013
-    %               Florian Rosenthal, 05.10.2017
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -86,7 +84,11 @@ classdef LinearPlant < LinearSystemModel
             %      If a vector (<dimState>) is passed, 
             %      its values are interpreted as the variances of a diagonal covariance matrix.
             
-            setNoise@LinearSystemModel(this, Gaussian(zeros(this.dimState, 1), covariance));      
+            if isempty(this.noise)
+                setNoise@LinearSystemModel(this, Gaussian(zeros(this.dimState, 1), covariance));      
+            else
+                this.noise.set(zeros(this.dimState, 1), covariance);
+            end
         end
         
         %% setSystemInput
@@ -102,10 +104,11 @@ classdef LinearPlant < LinearSystemModel
             
             newInput = [];
             if ~isempty(sysInput)
-                if ~Checks.isColVec(sysInput, this.dimInput) || ~all(isfinite(sysInput))
-                    error('LinearPlant:InvalidInput', ...
-                        '** Control input to apply must be a real-valued %d-dimensional column vector  **', this.dimInput);
-                end
+                assert(Checks.isColVec(sysInput, this.dimInput) && all(isfinite(sysInput)), ...
+                    'LinearPlant:InvalidInput', ...
+                    '** Control input to apply must be a real-valued %d-dimensional column vector  **', ...
+                    this.dimInput);
+                
                 newInput = this.inputMatrix * sysInput;
             end
             setSystemInput@LinearSystemModel(this, newInput);
@@ -149,5 +152,5 @@ classdef LinearPlant < LinearSystemModel
             setSystemMatrix@LinearSystemModel(this, sysMatrix);
             this.dimState = size(this.sysMatrix, 1);
         end
-   end % methods public
-end % classdef
+    end
+end

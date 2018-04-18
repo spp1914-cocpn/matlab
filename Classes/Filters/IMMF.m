@@ -18,7 +18,7 @@ classdef IMMF < Filter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -41,7 +41,7 @@ classdef IMMF < Filter
     
     properties (SetAccess = immutable, GetAccess = private)
         % filter set with mode-conditioned Kalman filters
-        modeFilters@FilterSet;
+        modeFilters@cell;
     end
     
     properties (SetAccess = immutable, GetAccess = public)
@@ -61,7 +61,7 @@ classdef IMMF < Filter
     end
     
     properties (Constant)
-        probabilityBound = 1e-12;
+        probabilityBound = 1e-50;
     end
     
     methods (Access = public)
@@ -69,8 +69,8 @@ classdef IMMF < Filter
             % Class constructor.
             %
             % Parameters:
-            %   >> modeFilters (FilterSet containing KF subclasses)
-            %      A FilterSet consisting of Kalman filters, one for each
+            %   >> modeFilters (Cell array containing LinearGaussianFilter subclasses)
+            %      A cell array consisting of Kalman filters, one for each
             %      mode of the system.
             %   >> modeTransitionMatrix (Matrix)
             %      A stochastic matrix whose (i,j)-th entry defines the probability of switching from mode i to j.
@@ -84,19 +84,20 @@ classdef IMMF < Filter
             % Returns:
             %   << this (IMMF)
             %      A new IMMF instance.
+            
             if nargin == 2
                 name = 'Interacting Multiple Model Filter';
             end
             this@Filter(name);
 
             this.modeFilters = modeFilters;
-            this.numModes = modeFilters.getNumFilters();
-            if any(arrayfun(@(i) ~Checks.isClass(modeFilters.get(i), 'KF'), 1:this.numModes))
+            this.numModes = numel(modeFilters);
+            if any(arrayfun(@(i) ~Checks.isClass(modeFilters{i}, 'LinearGaussianFilter'), 1:this.numModes))
                 this.error('InvalidModeFilters:InvalidFilterType', ...
-                     '** Each mode-conditioned filter must be a Kalman filter **');
+                     '** Each mode-conditioned filter must be a LinearGaussianFilter, i.e., a Kalman filter **');
             end
             Validator.validateTransitionMatrix(modeTransitionMatrix, this.numModes);
-            this.modeTransitionProbs = modeTransitionMatrix;
+            this.modeTransitionProbs = this.normalizeModeTransitionMatrix(modeTransitionMatrix);
         end
     end
     
@@ -113,50 +114,10 @@ classdef IMMF < Filter
             %      elements in [0,1] and rows summing up to 1.
             %
             Validator.validateTransitionMatrix(modeTransitionMatrix, this.numModes);
-            this.modeTransitionProbs = modeTransitionMatrix;
+            this.modeTransitionProbs = this.normalizeModeTransitionMatrix(modeTransitionMatrix);
         end
                
-        function setState(this, state)
-            % Set the system state.
-            %
-            % This function is mainly used to set an initial system state, as
-            % it is intended that the IMM filter is responsible for modifying the
-            % system state by exploiting system and measurement models.
-            %
-            % Parameters:
-            %   >> state (Subclass of Distribution)
-            %      The new system state.
-            %      If a GaussianMixture is passed, the i-th component is used to as the state
-            %      of the filter conditioned on the i-th mode. Likewise, the
-            %      weight of the i-th mixture component is taken as probability
-            %      of being in the i-th mode.
-            %      In case of any other Distribution subclass, mean and
-            %      covariance are used for all mode-conditioned filters, and a
-            %      uniform distribution for the modes is employed.
-            if Checks.isClass(state, 'GaussianMixture')
-                if state.getNumComponents() ~= this.numModes
-                    this.error('InvalidStateGaussianMixture' ,...
-                        '** Gaussian mixture is expected to have %d components **', this.numModes);
-                end
-                this.dimState = state.getDimension();
-                [modeStateMeans, modeStateCovs, modeProbs] = state.getComponents();
-                this.modeProbabilities = this.normalizeModeProbabilities(modeProbs);
-                for i=1:this.numModes
-                    this.modeFilters.get(i).setState(Gaussian(modeStateMeans(:, i), modeStateCovs(:, :, i)));
-                end
-            elseif Checks.isClass(state, 'Distribution')
-                [mean, cov] = state.getMeanAndCovariance();
-                this.dimState = numel(mean);
-                % no prior knowledge on modes available, so assume uniform distribution
-                this.modeProbabilities = this.normalizeModeProbabilities(repmat(1 / this.numModes, 1, this.numModes));
-                this.modeFilters.setStates(Gaussian(mean, cov));
-            else
-                this.error('InvalidState' , ...
-                    '** State must either be a Gaussian mixture with %d components or any arbitrary distribution **', ...
-                    this.numModes);
-            end
-        end
-                
+        %% getState        
         function state = getState(this)
             % Get the current system state.
             %
@@ -166,22 +127,26 @@ classdef IMMF < Filter
             [modeStateMeans, modeStateCovs] = this.getModeStateMeansAndCovs();
             state = GaussianMixture(modeStateMeans, modeStateCovs, this.modeProbabilities);
         end
-                
-        function [pointEstimate, uncertainty] = getPointEstimate(this)
-            % Get a point estimate of the current system state.
+        
+        %% getStateMeanAndCov
+        function [stateMean, stateCov, stateCovSqrt] = getStateMeanAndCov(this)
+            % Get mean and covariance matrix of the system state.
             %
             % Returns:
-            %   << pointEstimate (Column vector)
-            %      Point estimate of the current system state which is simply
-            %      the mean of the underlying Gaussian mixture.
+            %   << stateMean (Column vector)
+            %      Mean vector of the system state.
             %
-            %   << uncertainty (Positive definite matrix)
-            %      Uncertainty of the current system state point estimate
-            %      (covariance matrix of the underlying Gaussian mixture).
+            %   << stateCov (Positive definite matrix)
+            %      Covariance matrix of the system state.
+            %
+            %   << stateCovSqrt (Square matrix, optional)
+            %      Lower Cholesky decomposition of the system state covariance matrix.
+
             [modeStateMeans, modeStateCovs] = this.getModeStateMeansAndCovs();
-            [pointEstimate, covMeans] = Utils.getMeanAndCov(modeStateMeans, this.modeProbabilities);
-            weightedStateCovs = bsxfun(@times, modeStateCovs, reshape(this.modeProbabilities, [1 1 this.numModes]));
-            uncertainty = covMeans + sum(weightedStateCovs, 3);
+            [stateMean, stateCov] = Utils.getGMMeanAndCov(modeStateMeans, modeStateCovs, this.modeProbabilities);
+            if nargout == 3
+                stateCovSqrt = chol(stateCov, 'Lower');
+            end
         end
         
         %% getModeEstimate
@@ -204,18 +169,48 @@ classdef IMMF < Filter
     end
     
     methods (Access = protected)
-        function performUpdate(this, measModels, measurements)
+        %% performSetState
+        function performSetState(this, state)
+            if Checks.isClass(state, 'GaussianMixture')
+                if state.getNumComponents() ~= this.numModes
+                    this.error('InvalidStateGaussianMixture' ,...
+                        '** Gaussian mixture is expected to have %d components **', this.numModes);
+                end
+                [modeStateMeans, modeStateCovs, modeProbs] = state.getComponents();
+                this.modeProbabilities = this.normalizeModeProbabilities(modeProbs);
+                for i=1:this.numModes
+                    this.modeFilters{i}.setStateMeanAndCov(modeStateMeans(:, i), modeStateCovs(:, :, i));
+                end
+            else
+                [mean, cov, covSqrt] = state.getMeanAndCov();
+                this.performSetStateMeanAndCov(mean, cov, covSqrt);
+            end
+        end
+        
+        %% performSetStateMeanAndCov
+        function performSetStateMeanAndCov(this, stateMean, stateCov, stateCovSqrt)
+            % no prior knowledge on modes available, so assume uniform distribution
+            this.modeProbabilities = this.normalizeModeProbabilities(repmat(1 / this.numModes, 1, this.numModes));
+            for i=1:this.numModes
+                this.modeFilters{i}.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt);
+            end
+        end
+        
+        %% performUpdate
+        function performUpdate(this, measModels, measurement)
+            % compute the individual model likelihoods
             if (iscell(measModels))
                 if numel(measModels) ~= this.numModes
                     this.issueErrorMeasModel();
                 end
-                arrayfun(@(index) this.modeFilters.updateSingle(index, measModels{index}, measurements), 1:this.numModes);
+                arrayfun(@(index) this.modeFilters{index}.update(measModels{index}, measurement), 1:this.numModes);
             else
-                this.modeFilters.update(measModels, measurements);
+                arrayfun(@(index) this.modeFilters{index}.update(measModels, measurement), 1:this.numModes);
             end
             this.updateModeProbabilities();
         end
         
+        %% performPrediction
         function performPrediction(this, sysModel)
             if Checks.isClass(sysModel, 'JumpLinearSystemModel')
                 modeDependentModels = sysModel.modeSystemModels;
@@ -223,11 +218,11 @@ classdef IMMF < Filter
                     this.issueErrorSysModel();
                 end    
                 this.performStateEstimateMixing();
-                arrayfun(@(index) this.modeFilters.predictSingle(index, modeDependentModels{index}), 1:this.numModes)
+                arrayfun(@(index) this.modeFilters{index}.predict(modeDependentModels{index}), 1:this.numModes)
             elseif Checks.isClass(sysModel, 'SystemModel')
                 % use the given model for all filters
                 this.performStateEstimateMixing();
-                this.modeFilters.predict(sysModel);
+                arrayfun(@(index) this.modeFilters{index}.predict(sysModel), 1:this.numModes)
             else
                 this.issueErrorSysModel();
             end
@@ -235,65 +230,65 @@ classdef IMMF < Filter
     end
    
     methods (Access = private)
+        %% issueErrorMeasModel
         function issueErrorMeasModel(this)
             this.errorMeasModel('MeasurementModel', ...
                         sprintf('Cell array of %d MeasurementModels', this.numModes));
         end
         
+        %% issueErrorSysModel
         function issueErrorSysModel(this)
             this.errorSysModel(sprintf('JumpLinearSystemModel (%d modes)', this.numModes), ...
                     'SystemModel (for all modes)');
         end
         
+        %% performStateEstimateMixing
         function performStateEstimateMixing(this)
             oldModeProbabilities = this.modeProbabilities;
             this.predictModeProbabilities();
             this.mixStateEstimates(oldModeProbabilities);
         end
         
+        %% predictModeProbabilities
         function predictModeProbabilities(this)
             %yields a column vector, so transpose the result
             this.modeProbabilities = reshape(this.modeTransitionProbs' * this.modeProbabilities', 1, this.numModes);
             this.modeProbabilities = this.normalizeModeProbabilities(this.modeProbabilities);
         end
         
+        %% mixStateEstimates
         function mixStateEstimates(this, oldModeProbabilities)
             [modeStateMeans, modeStateCovs] = this.getModeStateMeansAndCovs();
             % multiply (j,i)-th element of transition matrix by old probability of mode j
             mixingWeights = this.modeTransitionProbs .* oldModeProbabilities';
             % divide (j,i)-th element of mixing weights by predicted (new) probability of mode i
             mixingWeights = mixingWeights ./ this.modeProbabilities;
+            
             % mix all estimates
             % resulting state (per mode) is a Gaussian approximation of a
             % Gaussian mixture
-            [mixedMeans, mixedMeansCovs] = arrayfun(@(col) Utils.getMeanAndCov(modeStateMeans, mixingWeights(:, col)'), ...
-                1:this.numModes, 'UniformOutput', false);
-                
-            weightedCovs = arrayfun(@(col) bsxfun(@times, modeStateCovs, reshape(mixingWeights(:, col)', [1 1 this.numModes])), ...
-                1:this.numModes, 'UniformOutput', false);
-            mixedCovs = cell2mat(mixedMeansCovs) + sum(cell2mat(weightedCovs), 3);
-
             for i=1:this.numModes
-                covIdx = this.dimState * (i - 1) + 1;
+                [mean, cov] = Utils.getGMMeanAndCov(modeStateMeans, modeStateCovs, mixingWeights(:, i)');
                 %initialize filter with mixed estimate
-                this.modeFilters.get(i).setState(Gaussian(mixedMeans{i}, ...
-                    mixedCovs(:, covIdx:(covIdx + this.dimState - 1))));
+                this.modeFilters{i}.setStateMeanAndCov(mean, cov);
             end
         end
         
+        %% getModeStateMeansAndCovs
         function [modeStateMeans, modeStateCovs] = getModeStateMeansAndCovs(this)
-            [means, covs] = cellfun(@(dist) dist.getMeanAndCovariance(), this.modeFilters.getStates(), ...
-                'UniformOutput', false);
+            [means, covs] = cellfun(@getStateMeanAndCov, this.modeFilters, 'UniformOutput', false);
             modeStateMeans = cell2mat(means);
-            modeStateCovs = reshape(cell2mat(covs), [this.dimState, this.dimState, this.numModes]);
+            modeStateCovs = reshape(cell2mat(covs), this.dimState, this.dimState, this.numModes);
         end
         
+        %% updateModeProbabilities
         function updateModeProbabilities(this)
             logLikelihoods = zeros(1, this.numModes);
+            dist = Gaussian();
             for i=1:this.numModes
-                [measurement, measurementMean, measurementCovariance, ~, ~] = this.modeFilters.get(i).getLastUpdateData();
-                % assume Gaussian likelihood
-                dist = Gaussian(measurementMean, measurementCovariance);
+                [measurement, measurementMean, measurementCovariance, ~] = this.modeFilters{i}.getLastUpdateData();
+                % assume Gaussian likelihood: set the moments
+                dist.set(measurementMean, measurementCovariance);
                 logLikelihoods(i) = dist.logPdf(measurement);
             end
             this.checkLogLikelihoodEvaluations(logLikelihoods, this.numModes);
@@ -306,7 +301,8 @@ classdef IMMF < Filter
             normalizationConstant = sum(updatedModeProbs);
             this.modeProbabilities = this.normalizeModeProbabilities(updatedModeProbs / normalizationConstant);
         end
-        
+            
+        %% normalizeModeProbabilities
         function normalizedModeProbs = normalizeModeProbabilities(this, modeProbs)
             idx = find(modeProbs <= IMMF.probabilityBound);
             normalizedModeProbs = modeProbs;
@@ -315,6 +311,16 @@ classdef IMMF < Filter
                 %    '** %d of %d mode probablities too small. Perform normalization **', numel(idx), this.numModes); 
                 normalizedModeProbs(idx) = IMMF.probabilityBound;
                 normalizedModeProbs = normalizedModeProbs / sum(normalizedModeProbs);
+            end
+        end
+        
+        %% normalizeModeTransitionMatrix
+        function normalizedTransitionMatrix = normalizeModeTransitionMatrix(this, modeTransitionMatrix)
+            idx = find(modeTransitionMatrix <= IMMF.probabilityBound);
+            normalizedTransitionMatrix = modeTransitionMatrix;
+            if ~isempty(idx)
+                normalizedTransitionMatrix(idx) = IMMF.probabilityBound;
+                normalizedTransitionMatrix = normalizedTransitionMatrix ./ sum(normalizedTransitionMatrix, 2);
             end
         end
     end

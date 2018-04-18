@@ -1,4 +1,4 @@
-classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
+classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
     % This class represents a Kalman filter that can operate with time delayed control inputs 
     % and/or time delayed measurements. The filter calculates the linear minimum
     % mean square state estimate of a system based on a model of that system,
@@ -14,13 +14,13 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
     %
     % AUTHOR:       Jörg Fischer
     % LAST UPDATE:  Maxim Dolgov, 26.06.2013
-    %               Florian Rosenthal, 12.01.2017
+    %               Florian Rosenthal, 26.02.2018
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -71,42 +71,62 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
                 name = 'Delayed KF';
             end
             s@DelayedMeasurementsFilter(maxMeasDelay, name);
-            s@AnalyticKF(name);
-            s.setUseAnalyticMeasurementModel(true);    
         end % function DelayedKF
-
-        %% setState
-        function setState(this, state)
-            % Set the system state.
+       
+        %% getState
+        function state = getState(this)
+            % Get the system state.
             %
-            % This function is mainly used to set an initial system state, as
-            % it is intended that the filter is responsible for modifying the
-            % system state by exploiting system and measurement models.
-            %
-            % Parameters:
-            %   >> state (Subclass of Distribution)
-            %      The new system state.
+            % Returns:
+            %   << state (Gaussian)
+            %      The system state.
             
-            setState@GaussianFilter(this, state);
-            [mean, cov] = state.getMeanAndCovariance();
-            %augment state
-            this.augmentedStateMean = repmat(mean, this.maxMeasurementDelay + 1, 1);
-            % this matrix (covariance of augmented state) is not necessarily pd
-            this.augmentedStateCov = repmat(cov, this.maxMeasurementDelay + 1, this.maxMeasurementDelay + 1);
+            state = Gaussian(this.augmentedStateMean(1:this.dimState), ...
+                this.augmentedStateCov(1:this.dimState, 1:this.dimState));
         end
         
-        %% getLastUpdateData
-        function [measurement, ...
-                  measMean, ...
-                  measCov, ...
-                  stateMeasCrossCov, ...
-                  numIterations] = getLastUpdateData(this)
-              this.error('NotImplemented', 'NotImplemented');
+        %% getStateMeanAndCov
+        function [stateMean, stateCov, stateCovSqrt] = getStateMeanAndCov(this)
+            % Get mean and covariance matrix of the system state.
+            %
+            % Returns:
+            %   << stateMean (Column vector)
+            %      Mean vector of the system state.
+            %
+            %   << stateCov (Positive definite matrix)
+            %      Covariance matrix of the system state.
+            %
+            %   << stateCovSqrt (Square matrix, optional)
+            %      Lower Cholesky decomposition of the system state covariance matrix.
+            
+            stateMean = this.augmentedStateMean(1:this.dimState);
+            stateCov = this.augmentedStateCov(1:this.dimState, 1:this.dimState);
+            if nargout == 3
+                stateCovSqrt = chol(stateCov, 'lower');
+            end
         end
         
     end % methods public
 
     methods(Access = protected)
+        %% performSetState
+        function performSetState(this, state)
+            [mean, cov] = state.getMeanAndCov();
+            
+            % augment state
+            this.augmentedStateMean = repmat(mean, this.maxMeasurementDelay + 1, 1);
+            % this matrix (covariance of augmented state) is not pd
+            this.augmentedStateCov = repmat(cov, this.maxMeasurementDelay + 1, this.maxMeasurementDelay + 1);
+        end
+        
+        %% performSetStateMeanAndCov
+        function performSetStateMeanAndCov(this, stateMean, stateCov, ~)
+            % augment state
+            this.augmentedStateMean = repmat(stateMean, this.maxMeasurementDelay + 1, 1);
+            % this matrix (covariance of augmented state) is not pd
+            this.augmentedStateCov = repmat(stateCov, this.maxMeasurementDelay + 1, this.maxMeasurementDelay + 1);
+        end
+        
         %% performUpdate
         function performUpdate(this, measModel, applicableMeasurements, applicableDelays)
             if ~Checks.isClass(measModel, 'LinearMeasurementModel')
@@ -117,9 +137,9 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
                 % grouping by operation (column-wise)
                 [groups, ~, timeDelays] = grp2idx(applicableDelays);
                 measurementsPerDelay = splitapply(@(group) {group}, applicableMeasurements, groups');
-                % now perform the analytical update: incoprorate all
+                % now perform the analytical update: incorporate all
                 % measurements per delay at once
-                arrayfun(@(i) this.updateAnalytic(measModel, measurementsPerDelay{i}, timeDelays(i)), 1:numel(timeDelays));
+                arrayfun(@(i) this.doUpdate(measModel, measurementsPerDelay{i}, timeDelays(i)), 1:numel(timeDelays));
            end
         end
     
@@ -128,15 +148,18 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
              if ~Checks.isClass(sysModel, 'DelayedKFSystemModel')
                 this.errorSysModel('DelayedKFSystemModel');
              end
-            this.predictAnalytic(sysModel);
+            this.doPrediction(sysModel);
         end
-        
-        %% updateAnalytic
-        function updateAnalytic(this, measModel, measurements, delay)
+             
+    end
+    
+    methods (Access = private)
+        %% doUpdate
+        function doUpdate(this, measModel, measurements, delay)
             [dimMeas, numMeas] = size(measurements);
             baseMeasMatrix = measModel.measMatrix;
            
-            [noiseMean, noiseCov] = measModel.noise.getMeanAndCovariance();
+            [noiseMean, noiseCov] = measModel.noise.getMeanAndCov();
             dimStackedMeas = size(baseMeasMatrix, 1) * numMeas; % what is expected according to the original model
                        
             augmentedMeasMatrix = [zeros(dimMeas, this.dimState * delay), ...
@@ -144,8 +167,8 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
             
             % compute required moments
             measMean = repmat(augmentedMeasMatrix * this.augmentedStateMean + noiseMean, numMeas, 1);
-            measCov = Utils.baseBlockDiag(augmentedMeasMatrix * this.augmentedStateCov * augmentedMeasMatrix', ...
-                noiseCov, numMeas);
+            measCov = Utils.blockDiag(noiseCov, numMeas) ...
+                + repmat(augmentedMeasMatrix * this.augmentedStateCov * augmentedMeasMatrix', numMeas, numMeas);
             % cross-covariance of original (non-augmented) state and
             % measurements
             stateMeasCrossCov = repmat(this.augmentedStateCov(1:this.dimState, :) * augmentedMeasMatrix', 1, numMeas);
@@ -189,23 +212,30 @@ classdef (Sealed) DelayedKF < AnalyticKF & DelayedMeasurementsFilter
             augmentedPostCov = factor * this.augmentedStateCov * factor' ...
                 + covGain * Utils.blockDiag(noiseCov, numMeas) * covGain';
                         
-            this.checkAndSaveUpdate(postMean, augmentedPostCov(1:this.dimState, 1:this.dimState));
+            this.checkCovUpdate(augmentedPostCov(1:this.dimState, 1:this.dimState), ...
+                                                     'Updated state');
             % all checks successful, store augmented estimates
             this.augmentedStateMean(1:this.dimState) = postMean;
             this.augmentedStateCov = augmentedPostCov;
         end
         
-        %% predictAnalytic
-        function predictAnalytic(this, augmentedSystemModel)
+        %% doPrediction
+        function doPrediction(this, augmentedSystemModel)
+            % do not compute square root of state cov as it is not
+            % neccessarily positive-definite
            [predictedAugmentedStateMean, ...
-                predictedAugmentedStateCov] = augmentedSystemModel.analyticPredictedMoments(this.augmentedStateMean, ...
+                predictedAugmentedStateCov] = augmentedSystemModel.analyticMoments(this.augmentedStateMean, ...
                                                                     this.augmentedStateCov);
             
-            this.checkAndSavePrediction(predictedAugmentedStateMean(1:this.dimState), ...
-                predictedAugmentedStateCov(1:this.dimState, 1:this.dimState));
+            % check if predicted state covariance is valid
+            this.checkCovPrediction(predictedAugmentedStateCov(1:this.dimState, 1:this.dimState), ...
+                                                           'Predicted state');
+                     
+
             % all checks successful, store augmented estimates
             this.augmentedStateMean = predictedAugmentedStateMean;
             this.augmentedStateCov = predictedAugmentedStateCov;
-        end
+
+        end       
     end
 end % classdef

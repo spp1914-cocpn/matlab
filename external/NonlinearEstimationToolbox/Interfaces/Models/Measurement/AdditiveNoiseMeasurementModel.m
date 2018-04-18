@@ -5,21 +5,15 @@ classdef AdditiveNoiseMeasurementModel < Likelihood
     % AdditiveNoiseMeasurementModel Methods:
     %   setNoise            - Set the measurement noise.
     %   measurementEquation - The measurement equation.
-    %   logLikelihood       - Evaluate the logarithmic likelihood function of the implemented measurement equation.
+    %   logLikelihood       - Evaluate the logarithmic likelihood function.
     %   derivative          - Compute the first-order and second-order derivatives of the implemented measurement equation.
-    %   simulate            - Simulate one ore more measurements for a given system state.
+    %   simulate            - Simulate a measurement for the given system state.
     
     % >> This function/class is part of the Nonlinear Estimation Toolbox
     %
     %    For more information, see https://bitbucket.org/nonlinearestimation/toolbox
     %
-    %    Copyright (C) 2015  Jannik Steinbring <jannik.steinbring@kit.edu>
-    %
-    %                        Institute for Anthropomatics and Robotics
-    %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
-    %                        Karlsruhe Institute of Technology (KIT), Germany
-    %
-    %                        http://isas.uka.de
+    %    Copyright (C) 2015-2017  Jannik Steinbring <nonlinearestimation@gmail.com>
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -33,40 +27,45 @@ classdef AdditiveNoiseMeasurementModel < Likelihood
     %
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-    
+        
     methods
         function setNoise(obj, noise)
             % Set the measurement noise.
             %
             % Parameters:
-            %   >> noise (Subclass of Distribution or cell array containing subclasses of Distribution)
+            %   >> noise (Subclass of Distribution)
             %      The new measurement noise.
             
             if Checks.isClass(noise, 'Distribution')
                 obj.noise = noise;
             else
-                obj.noise = JointDistribution(noise);
+                error('AdditiveNoiseMeasurementModel:InvalidNoise', ...
+                      'noise must be a subclass of Distribution.');
             end
         end
         
-        function logValues = logLikelihood(obj, stateSamples, measurements)
-            % Evaluate the logarithmic likelihood function of the implemented measurement equation.
+       function logValues = logLikelihood(obj, stateSamples, measurement)
+            % Evaluate the logarithmic likelihood function.
             %
             % Parameters:
             %   >> stateSamples (Matrix)
             %      L column-wise arranged state samples.
             %
-            %   >> measurements (Matrix)
-            %      Column-wise arranged measurement vectors, where each column represents an
-            %      individual measurement.
+            %   >> measurement (Column vector)
+            %      The measurement vector.
             %
             % Returns:
             %   << logValues (Row vector)
             %      L column-wise arranged logarithmic likelihood function values.
             
-            [dimMeas, numMeas] = size(measurements);
-            dimNoise   = obj.noise.getDimension();
-            numSamples = size(stateSamples, 2); 
+            if ~Checks.isColVec(measurement)
+                obj.error('InvalidMeasurement', ...
+                          'measurement must be a column vector.');
+            end
+            
+            dimNoise   = obj.noise.getDim();
+            dimMeas    = size(measurement, 1);
+            numSamples = size(stateSamples, 2);
             
             if dimMeas ~= dimNoise
                 error('AdditiveNoiseMeasurementModel:InvalidMeasurementNoise', ...
@@ -74,25 +73,19 @@ classdef AdditiveNoiseMeasurementModel < Likelihood
             end
             
             % Evaluate deterministic measurement equation
-            deterministicEvals = obj.measurementEquation(stateSamples);
+            deterministicMeas = obj.measurementEquation(stateSamples);
             
             % Check computed deterministic measurements
-            if ~Checks.isMat(deterministicEvals, dimMeas, numSamples)
+            if ~Checks.isMat(deterministicMeas, dimMeas, numSamples)
                 error('AdditiveNoiseMeasurementModel:InvalidMeasurements', ...
                       ['Computed deterministic measurements have to be ' ...
                        'stored as a matrix of dimension %dx%d.'], ...
                        dimMeas, numSamples);
             end
             
-            logValues = zeros(1, numSamples);
+            values = bsxfun(@minus, measurement, deterministicMeas);
             
-            for i = 1:numMeas
-                values = bsxfun(@minus, measurements(:, i), deterministicEvals);
-                
-                logV = obj.noise.logPdf(values);
-                
-                logValues = logValues + logV;
-            end
+            logValues = obj.noise.logPdf(values);
         end
         
         function [stateJacobian, stateHessians] = derivative(obj, nominalState)
@@ -121,41 +114,25 @@ classdef AdditiveNoiseMeasurementModel < Likelihood
             end
         end
         
-        function measurements = simulate(obj, state, numMeasurements)
-            % Simulate one ore more measurements for a given system state.
+        function measurement = simulate(obj, state)
+            % Simulate a measurement for the given system state.
             %
             % Parameters:
             %   >> state (Column vector)
             %      The system state.
             %
-            %   >> numMeasurements (Positive scalar)
-            %      The number of measurements to simulate.
-            %      Default: One measurement will be simulated.
-            %
             % Returns:
-            %   << measurements (Matrix)
-            %      Column-wise arranged simulated measurements.
+            %   << measurement (Column vector)
+            %      The simulated measurement.
             
             if ~Checks.isColVec(state)
                 error('AdditiveNoiseMeasurementModel:InvalidSystemState', ...
                       'state must be a column vector.');
             end
             
-            if nargin < 3
-                numMeasurements = 1;
-            else
-                if ~Checks.isPosScalar(numMeasurements)
-                    error('AdditiveNoiseMeasurementModel:InvalidSystemState', ...
-                          'numMeasurements must be a positive scalar.');
-                end
-                
-                numMeasurements = ceil(numMeasurements);
-            end
+            noiseSamples = obj.noise.drawRndSamples(1);
             
-            noiseSamples = obj.noise.drawRndSamples(numMeasurements);
-            
-            measurements = obj.measurementEquation(state);
-            measurements = repmat(measurements, 1, numMeasurements) + noiseSamples;
+            measurement = obj.measurementEquation(state) + noiseSamples;
         end
     end
     

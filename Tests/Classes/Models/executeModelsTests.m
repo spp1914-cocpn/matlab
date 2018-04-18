@@ -31,8 +31,11 @@ function result = executeModelsTests()
     tests = [
         TestSuite.fromClass(?JumpLinearSystemModelTest) ...
         TestSuite.fromClass(?LinearPlantTest) ...
-        TestSuite.fromClass(?DelayedKFSystemModelTest)];
-
+        TestSuite.fromClass(?DelayedKFSystemModelTest) ...
+        TestSuite.fromClass(?NonlinearPlantTest) ...
+        TestSuite.fromClass(?InvertedPendulumTest)
+        ];
+    
     result = tests.run();
 end
 

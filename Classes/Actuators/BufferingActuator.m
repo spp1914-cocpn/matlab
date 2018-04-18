@@ -9,6 +9,8 @@ classdef BufferingActuator < handle
     % step. If there is no control input that corresponds to the current 
     % time step, a configurable default value is applied.
     %
+    % This implementation is based on the original one by Jörg Fischer.
+    %
     % Literature: 
     %   Jörg Fischer, Achim Hekler and Uwe D. Hanebeck,
     %   State Estimation in Networked Control Systems,
@@ -21,15 +23,12 @@ classdef BufferingActuator < handle
     %   Proceedings of the 2013 American Control Conference (ACC 2013), 
     %   Washington D. C., USA, June 2013.
     %
-    % AUTHOR:       Jörg Fischer
-    % LAST UPDATE:  Jörg Fischer, 06.11.2013
-    %               Florian Rosenthal, 06.12.2016
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -61,18 +60,17 @@ classdef BufferingActuator < handle
         dimU = -1;
         % output value in case the buffer runs empty; (column vector)
         defaultInput= 0;
-    end % properties
-
+    end
+    
     properties (SetAccess = private, GetAccess = public)
         %% derived properties
         % buffer to store packet with active (i.e., most recent) control input sequence; (DataPacket)
         bufferedPacket = [];
     end
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods (Access = public)
         %% BufferingActuator
-        function s = BufferingActuator(controlSequenceLength, maxPacketDelay, defaultU)
+        function this = BufferingActuator(controlSequenceLength, maxPacketDelay, defaultU)
             % Class constructor.
             %
             % Parameters:
@@ -92,24 +90,21 @@ classdef BufferingActuator < handle
             %      A new BufferingActuator instance.
             %
             Validator.validateSequenceLength(controlSequenceLength);
-            s.controlSequenceLength = controlSequenceLength;
+            this.controlSequenceLength = controlSequenceLength;
            
-            if Checks.isNonNegativeScalar(maxPacketDelay) && ...
-                    (mod(maxPacketDelay, 1) == 0 || isinf(maxPacketDelay))
-                s.maxPacketDelay = maxPacketDelay;
-            else
-                error('BufferingActuator:InvalidMaxPacketDelay', ...
-                    ['** Input parameter <maxPacketDelay> (maximum allowed ',...
-                       'packet delay) must be a nonnegative integer or inf **']);
-            end
+            assert(Checks.isNonNegativeScalar(maxPacketDelay) ...
+                    && mod(maxPacketDelay, 1) == 0 || isinf(maxPacketDelay), ...
+                'BufferingActuator:InvalidMaxPacketDelay', ...
+                '** Input parameter <maxPacketDelay> (maximum allowed packet delay) must be a nonnegative integer or inf **');
+           
+            this.maxPacketDelay = maxPacketDelay;
+         
+            assert(Checks.isVec(defaultU) && all(isfinite(defaultU)), ...
+                'BufferingActuator:InvalidDefaultU', ...
+                '** Input parameters <defaultU> (default input) must be a real-valued vector or a real number  **');
 
-            if ~Checks.isVec(defaultU) || any(~isfinite(defaultU))
-                error('BufferingActuator:InvalidDefaultU', ...
-                    ['** Input parameters <defaultU> (default input) must ',...
-                     'be a real-valued vector or a real number  **'])
-            end
-            s.defaultInput = defaultU(:);
-            s.dimU = size(s.defaultInput, 1);
+            this.defaultInput = defaultU(:);
+            this.dimU = size(this.defaultInput, 1);
         end
 
         function [controlInput, mode] = getCurrentInput(this, timeStep)
@@ -127,10 +122,10 @@ classdef BufferingActuator < handle
             %      The mode of the underlying MJLS that corresponds the the
             %      returned input (i.e., the age of the buffered sequence).
             %
-            if ~Checks.isNonNegativeScalar(timeStep) || mod(timeStep, 1) ~= 0
-                error ('BufferingActuator:GetCurrentInput:InvalidTimeStep', ...
-                    '** Time step must be a nonnegative integer **');    
-            end
+            assert(Checks.isNonNegativeScalar(timeStep) && mod(timeStep, 1) == 0, ...
+                'BufferingActuator:GetCurrentInput:InvalidTimeStep', ...
+                '** Time step must be a nonnegative integer **');    
+            
             if ~isempty(this.bufferedPacket)...
                     && this.bufferedPacket.timeStamp + this.controlSequenceLength > timeStep
                 mode = timeStep - this.bufferedPacket.timeStamp + 1;
@@ -165,19 +160,17 @@ classdef BufferingActuator < handle
             end
             numSeq = numel(controllerPackets);
             if numSeq ~= 0
-                if ~Checks.isClass(controllerPackets, 'DataPacket', numSeq)
-                        error('BufferingActuator:ProcessControllerPackets:InvalidControllerPackets', ...
-                            ['** Input parameter (received control input packets) must', ...
-                             ' consist of %d DataPacket(s) **'], numSeq);
-                end
+                assert(Checks.isClass(controllerPackets, 'DataPacket', numSeq), ...
+                    'BufferingActuator:ProcessControllerPackets:InvalidControllerPackets', ...
+                    '** Input parameter (received control input packets) must consist of %d DataPacket(s) **', numSeq);
+                
                 [inputSequences{1:numSeq}] = controllerPackets(:).payload;
-                if sum(cell2mat(cellfun(@(x) Checks.isMat(x, this.dimU, this.controlSequenceLength), ...
-                        inputSequences, 'UniformOutput', false))) ~= numSeq
-                     error('BufferingActuator:ProcessControllerPackets:InvalidControlSequences', ...
-                         '** Each control input sequence must be given as real-valued a %d-by-%d matrix **', ...
-                         this.dimU, this.controlSequenceLength);
-                end
-
+                assert(sum(cell2mat(cellfun(@(x) Checks.isMat(x, this.dimU, this.controlSequenceLength), ...
+                        inputSequences, 'UniformOutput', false))) == numSeq, ...
+                    'BufferingActuator:ProcessControllerPackets:InvalidControlSequences', ...
+                     '** Each control input sequence must be given as real-valued a %d-by-%d matrix **', ...
+                     this.dimU, this.controlSequenceLength);
+                
                 [delays{1:numSeq}] = controllerPackets(:).packetDelay;
                 % get the newest sequence, i.e., that one with smallest delay
                 % (should be unique)
