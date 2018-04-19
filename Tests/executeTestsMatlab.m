@@ -1,4 +1,4 @@
-function results = executeAllTests()
+function results = executeTestsMatlab()
     % Function to run all test cases in matlab/Tests.
     
     % >> This function/class is part of CoCPN-Sim
