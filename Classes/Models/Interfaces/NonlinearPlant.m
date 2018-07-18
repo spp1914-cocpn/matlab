@@ -57,10 +57,10 @@ classdef (Abstract) NonlinearPlant < SystemModel
             
             assert(Checks.isNonNegativeScalar(dimState) && mod(dimState, 1) == 0, ...
                 'NonlinearPlant:InvalidStateDim', ...
-                '** <dimState> delay must be a nonnegative integer **');
+                '** <dimState> must be a nonnegative integer **');
             assert(Checks.isNonNegativeScalar(dimInput) && mod(dimInput, 1) == 0, ...
                 'NonlinearPlant:InvalidInputDim', ...
-                '** <dimInput> delay must be a nonnegative integer **');
+                '** <dimInput> must be a nonnegative integer **');
             
             this.dimState = dimState;
             this.dimInput = dimInput;
@@ -80,7 +80,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
             
             assert(isempty(sysInput) || (Checks.isColVec(sysInput, this.dimInput) && all(isfinite(sysInput))), ...
                 'NonlinearPlant:SetSystemInput:InvalidSystemInput', ...
-                '** Control input to apply must be a real-valued %d-dimensional column vector  **', this.dimInput);
+                '** <sysInput> must be a real-valued %d-dimensional column vector  **', this.dimInput);
             
             this.sysInput = sysInput;
         end

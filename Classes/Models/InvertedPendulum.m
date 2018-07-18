@@ -49,6 +49,32 @@ classdef InvertedPendulum < NonlinearPlant
     methods (Access = public)
         %% InvertedPendulum
         function this = InvertedPendulum(massCart, massPendulum, lengthPendulum, inertia, friction, samplingInterval)
+            % Class constructor.
+            %
+            % Parameters:
+            %   >> massCart (Positive Scalar)
+            %      A positive scalar denoting the mass (in kg) of the cart.
+            %
+            %   >> massPendulum (Positive scalar)
+            %      A positive scalar denoting the mass (in kg) of the pendulum.
+            %
+            %   >> lengthPendulum (Positive scalar)
+            %      A positive scalar denoting the length/distance to pendulum center of mass (in m).
+            %
+            %   >> inertia (Positive scalar)
+            %      A positive scalar denoting the moment of inertia of the pendulum (in kgm²).
+            %
+            %   >> friction (Positive scalar)
+            %      A positive scalar denoting the coefficient of friction for the cart (in Ns/m).
+            %
+            %   >> samplingInterval (Positive scalar)
+            %      The sampling interval (in seconds) that was used for the discretization of the
+            %      underlying continuous-time plant model.
+            %
+            % Returns:
+            %   << this (InvertedPendulum)
+            %      A new InvertedPendulum instance.
+            
             this@NonlinearPlant(4, 1);
             
             this.massCart = massCart;
@@ -63,6 +89,7 @@ classdef InvertedPendulum < NonlinearPlant
     methods (Access = protected)
         %% nonlinearDynamics
         function predictedStates = nonlinearDynamics(this, stateSamples, inputSamples, ~)
+            % new cart position (x_1) and pendulum angle (x_3)
             predictedStates(1, :) = this.samplingInterval * stateSamples(2, :) + stateSamples(1, :);
             predictedStates(3, :) = this.samplingInterval * stateSamples(4, :) + stateSamples(3, :);
 
@@ -70,7 +97,7 @@ classdef InvertedPendulum < NonlinearPlant
                 inputSamples = zeros(1, size(stateSamples, 2));
             end
 
-            % compute new velocity, x_2
+            % compute new cart velocity (x_2) and pendulum angular velocity (x_4)
             sins = sin(stateSamples(3, :));
             coss = cos(stateSamples(3, :));
             part1 = this.inertia + this.massPendulum * this.lengthPendulum ^ 2;
