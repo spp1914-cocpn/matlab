@@ -44,7 +44,7 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
     end
     
     properties (SetAccess = private, GetAccess = protected)
-        % (empty or column vector of dimension <dimU>)
+        % (empty or column vector of dimension <dimU>, default zero)
         feedforward = [];
     end
     
@@ -100,6 +100,8 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
             Validator.validateCostMatrices(Q, R, dimX, dimU);
             this.Q = Q;
             this.R = R;
+            
+            this.feedforward = zeros(dimU, 1);
             
             this.computeAndSetGainMatrix();
         end
@@ -188,27 +190,25 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
             [state, ~] = plantState.getMeanAndCov();
             
             inputSequence = zeros(this.sequenceLength * this.dimPlantInput, 1);
+            ff = ~isempty(this.setpoint) * this.feedforward;
+
+            for j = 1:this.sequenceLength
+                inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state + ff;
+                % predict the system state (i.e., compute estimate since noise is
+                % zero-mean)
+                state = this.A * state + ...
+                    this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
+            end            
+        end
+        
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, ~)
             if isempty(this.setpoint)
-                % we regulate, i.e., try to reach the origin, no
-                % feedforward required
-                for j = 1:this.sequenceLength
-                    inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state;
-                    % predict the system state (i.e., compute estimate since noise is
-                    % zero-mean)
-                    state = this.A * state + ...
-                        this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
-                end
+                performance = state;
             else
-                % we need a feedforward as we try to reach a nonzero
-                % setpoint
-                for j = 1:this.sequenceLength
-                    inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state + this.feedforward;
-                    % predict the system state (i.e., compute estimate since noise is
-                    % zero-mean)
-                    state = this.A * state + ...
-                        this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
-                end
+                performance = state - this.setpoint;
             end
+            stageCosts = Utility.computeStageCosts(performance, input, this.Q, this.R);
         end
         
         %% doCostsComputation

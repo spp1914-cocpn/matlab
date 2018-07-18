@@ -1,4 +1,4 @@
-classdef Utility
+classdef Utility < handle
     % This class provides various utility functions.
     
     % >> This function/class is part of CoCPN-Sim
@@ -34,9 +34,68 @@ classdef Utility
     
     methods (Static, Access = public)
     
+        %% computeStageCosts
+        function stageCosts = computeStageCosts(state, appliedInput, Q, R)
+            % Compute the stage-costs of a quadratic cost function,
+            % i.e., compute x'*Q*x + u'*R*u for a given pair of state x and input u.
+            %
+            % Parameters:
+            %
+            %   >> state (Column vector)
+            %      The state vector at the current stage.
+            %  
+            %   >> appliedInput (Column vector)
+            %      The input at the current stage.
+            %
+            %   >> Q (positive-semidefinite matrix)
+            %      The state weighting matrix, expected to be at least
+            %      positive-semidefinite and of appropriate dimension.
+            %
+            %   >> R (positive-definite matrix)
+            %      The input weighting matrix, expected to be 
+            %      positive-definite and of appropriate dimension.
+            %
+            % Returns:
+            %   << stageCosts (Nonnegative scalar)
+            %      The stage-costs, coresponding to the given parameters.
+            
+            stageCosts = state' * Q * state + appliedInput' * R * appliedInput;
+        end
+        
         %% computeLQGCosts
         function costs = computeLQGCosts(horizonLength, stateTrajectories, appliedInputs, Q, R)
-            % horizon length: positive integer
+            % Evaluate a quadratic cost function for a finite horizon N,
+            % i.e., compute x_0'*Q*x_0 + u_0'*R*u_0 + ... + x_{N-1}'*Q*x_{N-1} + u_{N-1}'*R*u_{N-1} 
+            % + x_N'*Q*x_N, for given pairs of state and input
+            % trajectories.
+            %
+            % Parameters:
+            %   >> horizon length (Positive integer)
+            %      The length N of the horizon to be considered.
+            %
+            %   >> stateTrajectories (3D matrix)
+            %      A 3D matrix with the different state trajectories     
+            %      slice-wise arranged. Each state trajectory is expected
+            %      to be column-wise arranged and to possess at least N+1 elements.
+            %  
+            %   >> appliedInputs (3D matrix)
+            %      A 3D matrix with the different input trajectories     
+            %      slice-wise arranged. Each input trajectory is expected
+            %      to be column-wise arranged and to possess at least N elements.
+            %
+            %   >> Q (positive-semidefinite matrix)
+            %      The state weighting matrix, expected to be at least
+            %      positive-semidefinite and of appropriate dimension.
+            %
+            %   >> R (positive-definite matrix)
+            %      The input weighting matrix, expected to be 
+            %      positive-definite and of appropriate dimension.
+            %
+            % Returns:
+            %   << costs (Row vector)
+            %      The value of the cost function, evaluated for each pair
+            %      of states and inputs, column-wise arranged.
+                        
             % stateTrajectories: dimState x horizonLength+1 x n  (true states or
             % estimates by controller)
             % applied inputs: dimInput x horizonLength x n

@@ -75,10 +75,7 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
         P;
         % dimension of the augmented system state; 
         % (positive integer <dimX+dimU*sequenceLength*(sequenceLength-1)/2>)
-        dimState = -1;
-        % time invariant transmission costs
-        transmissionCosts;
-       
+        dimState = -1;         
     end
     
     properties (Access = private)
@@ -88,6 +85,21 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
         sysState = []; 
         % bit vector to track the history (1 = sent, 0 = not sent)
         transmissionHistory;
+    end
+    
+    properties (Access = public)
+        % transmission costs
+        transmissionCosts;     
+    end
+    
+    methods
+        function set.transmissionCosts(this, transmissionCosts)
+            assert(Checks.isNonNegativeScalar(transmissionCosts), ...
+                'EventTriggeredInfiniteHorizonController:InvalidTransmissionCosts', ...
+                '** Input parameter <transmissionCosts> must be a nonnegative scalar **');
+            
+            this.transmissionCosts = transmissionCosts;
+        end
     end
     
     methods (Access = public)
@@ -108,10 +120,6 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             Validator.validateCostMatrices(Q, R, dimX, dimU);
             this.Q = Q;
             this.R = R;
-            
-            assert(Checks.isNonNegativeScalar(transmissionCosts), ...
-                'EventBasedInfiniteHorizonController:InvalidTransmissionCosts', ...
-                '** Input parameter <transmissionCosts> must be a nonegative scalar **');
             
             this.transmissionCosts = transmissionCosts;
             
@@ -186,6 +194,12 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
                 this.sysState(this.dimPlantState + 1:end) = ...
                     this.F * this.sysState(this.dimPlantState + 1:end) + this.G * inputSequence;
             end
+        end
+        
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, ~)
+                        
+            stageCosts = Utility.computeStageCosts(state, input, this.Q, this.R);
         end
         
         %% doCostsComputation

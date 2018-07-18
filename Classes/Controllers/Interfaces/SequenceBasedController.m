@@ -77,9 +77,43 @@ classdef (Abstract) SequenceBasedController < handle
     methods (Access = protected, Abstract)
         inputSequence = doControlSequenceComputation(this, plantState, varargin);
         costs = doCostsComputation(this, stateTrajectory, appliedInputs);
+        stageCosts = doStageCostsComputation(this, state, input, timestep);
     end
     
     methods (Access = public)
+        %% computeStageCosts
+        function stageCosts = computeStageCosts(this, state, input, timestep)
+            % Compute stage costs for a given state-input pair
+            % according to this controller's underlying cost functional.
+            %
+            % Parameters:
+            %   >> state (Vector)
+            %      The state vector at the given timestep.
+            %
+            %   >> input (Vector)
+            %      The input at the given timestep.
+            %
+            %   >> timestep (Positive integer)
+            %      The timestep for the stage costs shall be computed.
+            %
+            % Returns:
+            %   << stageCosts (Nonnegative scalar)
+            %      The stage costs according to this controller's underlying cost functional.
+            %            
+            
+            assert(Checks.isVec(state, this.dimPlantState) ...
+                    && Checks.isVec(input, this.dimPlantInput), ...
+                'SequenceBasedController:ComputeStageCosts:InvalidStateInput', ...
+                '** <state> must be a %d-dimensional vector rows and <input> must be %d-dimensional vector', ...
+                this.dimPlantState, this.dimPlantInput);
+            
+            assert(Checks.isPosScalar(timestep) && mod(timestep, 1) == 0, ...
+                'SequenceBasedController:ComputeStageCosts:InvalidTimestep', ...
+                '** <timestep> must be positive integer');
+            
+            stageCosts = doStageCostsComputation(this, state(:), input(:), timestep);
+        end
+        
         %% computeCosts
         function costs = computeCosts(this, stateTrajectory, appliedInputs)
             % Compute accrued costs for the given state and input

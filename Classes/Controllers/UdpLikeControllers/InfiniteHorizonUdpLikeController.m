@@ -50,7 +50,6 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     end
     
     properties (GetAccess = protected, SetAccess = immutable)
-        C; % measurement matrix
         % system state cost matrix;
         % (positive semidefinite matrix of dimension <dimX> x <dimX>)
         Q;
@@ -213,7 +212,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             % compute the expected augmented sys matrices
             [this.expAugA, this.expAugB, augA, augB] = ...
                 this.computeExpectedAugmentedSysMatrices(A, B, F, G, H, dimEta);
-            [expAugQ, expAugR] = this.computeExpectedAugmentedCostMatrices(Q, R, H);
+            [expAugQ, expAugR] = this.computeExpectedAugmentedCostMatrices(H);
             
             [this.augC, probC] = this.computeAugmentedMeasMatrices(C, trueScDelayProbs);
             [this.L, this.K] = this.computeControllerGains(W, V, augA, augB, probC, expAugQ, expAugR);
@@ -303,6 +302,12 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
          function inputSequence = doControlSequenceComputation(this)
             inputSequence = this.L * this.sysState;
          end
+         
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, ~)
+                        
+            stageCosts = Utility.computeStageCosts(state, input, this.Q, this.R);
+        end
          
          %% doCostsComputation
          function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
@@ -497,21 +502,21 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         end
         
         %% computeExpectedAugmentedCostMatrices
-        function [expAugQ, expAugR] = computeExpectedAugmentedCostMatrices(this, Q, R, H)
+        function [expAugQ, expAugR] = computeExpectedAugmentedCostMatrices(this, H)
             numModes = this.sequenceLength + 1;
             dimZeros = (this.measBufferLength - 1) * this.dimPlantState;
             
             expHRH = zeros(this.dimState - dimZeros - this.dimPlantState);
 
             for i = 1:numModes
-                expHRH = expHRH + this.stationaryModeDistribution(i) * H(:, :, i)' * R * H(:, :, i);
+                expHRH = expHRH + this.stationaryModeDistribution(i) * H(:, :, i)' * this.R * H(:, :, i);
             end
-            expAugQ = blkdiag(Q, zeros(dimZeros), expHRH);
+            expAugQ = blkdiag(this.Q, zeros(dimZeros), expHRH);
             
             % J matrix is only nonzero for first mode, so only this
             % contributes to expAugR
             J = [speye(this.dimPlantInput) zeros(this.dimPlantInput, this.dimPlantInput * (this.sequenceLength -1))];
-            expAugR = this.stationaryModeDistribution(1) * J' * R * J;
+            expAugR = this.stationaryModeDistribution(1) * J' * this.R * J;
        end
         
         %% checkMeasurementsAndDelays
@@ -522,9 +527,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 this.dimMeas);
             
             numMeas = size(measurements, 2);
-            
             assert(Checks.isNonNegativeVec(measDelays, numMeas) ...
-                    && all(arrayfun(@(measDelay) mod(measDelays, 1) == 0, measDelays)), ...
+                    && all(arrayfun(@(delay) mod(delay, 1) == 0, measDelays)), ...
                 'InfiniteHorizonUdpLikeController:CheckMeasurementsAndDelays:InvalidMeasDelay', ...
                 '** Each measurement delay (%d in total) must be a nonnegative integer **', numMeas);
             

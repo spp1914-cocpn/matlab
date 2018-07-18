@@ -170,7 +170,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     end
      
     methods (Access = protected)
-         %% doControlSequenceComputation
+        %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, timestep)
             assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
                 'FiniteHorizonTrackingController:DoControlSequenceComputation:InvalidTimestep', ...
@@ -187,6 +187,17 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             inputSequence = this.L(: , :, mode, timestep) * this.sysState - this.feedforward(:, mode, timestep);
             this.sysState(this.dimPlantState + 1:end) = ...
                 this.F * this.sysState(this.dimPlantState + 1:end) + this.G * inputSequence;
+        end
+        
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, timestep)
+            assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
+                'FiniteHorizonTrackingController:DoStageCostsComputation:InvalidTimestep', ...
+                '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
+                this.horizonLength);
+            
+            performance = this.Z * state - this.refTrajectory(:, timestep);
+            stageCosts = Utility.computeStageCosts(performance, input, this.Q, this.R);
         end
         
         function lQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)

@@ -207,6 +207,12 @@ classdef InfiniteHorizonController < SequenceBasedController
                 this.F * this.sysState(this.dimPlantState + 1:end) + this.G * inputSequence;
         end
         
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, ~)
+                        
+            stageCosts = Utility.computeStageCosts(state, input, this.Q, this.R);
+        end
+        
         %% doCostsComputation
         function averageLQGCosts = doCostsComputation(this, stateTrajectory, appliedInputs)
             horizonLength = size(appliedInputs, 2);

@@ -213,7 +213,7 @@ classdef FiniteHorizonController < SequenceBasedController
     end
     
     methods (Access = protected)
-         %% doControlSequenceComputation
+        %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, timestep)
             assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
                 'FiniteHorizonController:DoControlSequenceComputation:InvalidTimestep', ...
@@ -240,6 +240,16 @@ classdef FiniteHorizonController < SequenceBasedController
             
             this.sysState(this.dimPlantState + 1:end) = ...
                 this.F * this.sysState(this.dimPlantState + 1:end) + this.G * inputSequence;
+        end
+        
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, timestep)
+            assert(Checks.isScalarIn(timestep, 1, this.horizonLength) && mod(timestep, 1) == 0, ...
+                'FiniteHorizonController:DoStageCostsComputation:InvalidTimestep', ...
+                '** Input parameter <timestep> (current time step) must be in {1, ... %d} **', ...
+                this.horizonLength);
+            
+            stageCosts = Utility.computeStageCosts(state, input, this.Q, this.R);
         end
         
         %% doCostsComputation

@@ -240,13 +240,13 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
         function inputSequence = doControlSequenceComputation(this, state, ~, timestep)
             % time step is only required for picking the correct reference
             % trajectory (if present)
-            if ~Checks.isPosScalar(timestep)  || mod(timestep, 1) ~= 0
-              error('LinearlyConstrainedPredictiveController:DoControlSequenceComputation:InvalidTimestep', ...
-                  '** Input parameter <timestep> (current time step) must be a positive integer **');
-            end
+            assert(Checks.isPosScalar(timestep)  && mod(timestep, 1) == 0, ...
+                'LinearlyConstrainedPredictiveController:DoControlSequenceComputation:InvalidTimestep', ...
+                '** Input parameter <timestep> (current time step) must be a positive integer **');
+            
             [stateMean, ~] = state.getMeanAndCov();
             if ~isempty(this.refTrajectory)
-                zRef = this.refTrajectory(:, timestep:timestep+this.sequenceLength);
+                zRef = this.refTrajectory(:, timestep:timestep + this.sequenceLength);
                 solverVars = {stateMean, zRef};
             else
                 solverVars = {stateMean};
@@ -262,17 +262,30 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             end
         end
         
-        %% doCostsComputation
-        function costs = doCostsComputation(this, stateTrajectory, appliedInputs)
-            horizonLength = size(appliedInputs, 2);
-            if size(stateTrajectory, 2) ~= horizonLength + 1
-                 error('LinearlyConstrainedPredictiveController:DoCostsComputation:InvalidStateTrajectory', ...
-                    '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
-            end
+        %% doStageCostsComputation
+        function stageCosts = doStageCostsComputation(this, state, input, timestep)
             if ~isempty(this.Z)
                 % compute performance output and difference to reference
                 % trajectory
-                performance = this.Z * stateTrajectory - this.refTrajectory(1:horizonLength + 1);
+                performance = this.Z * state - this.refTrajectory(:, timestep);
+            else
+                performance = state;
+            end
+            
+            stageCosts = Utility.computeStageCosts(performance, input, this.Q, this.R);
+        end
+        
+        %% doCostsComputation
+        function costs = doCostsComputation(this, stateTrajectory, appliedInputs)
+            horizonLength = size(appliedInputs, 2);
+            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+                'LinearlyConstrainedPredictiveController:DoCostsComputation:InvalidStateTrajectory', ...
+                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+            
+            if ~isempty(this.Z)
+                % compute performance output and difference to reference
+                % trajectory
+                performance = this.Z * stateTrajectory - this.refTrajectory(:, 1:horizonLength + 1);
             else
                 performance = stateTrajectory;
             end
@@ -283,11 +296,11 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
         function deviation = doGetDeviationFromRefForState(this, state, timestep)
             if ~isempty(this.Z)
                 % we track a reference trajectory
-                if ~Checks.isScalarIn(timestep, 1, size(this.refTrajectory, 2)) || mod(timestep, 1) ~= 0
-                    error('LinearlyConstrainedPredictiveController:GetDeviationFromRefForState:InvalidTimestep', ...
-                        '** Input parameter <timestep> must be in {1, ... %d} **', ...
-                        size(this.refTrajectory, 2));
-                end
+                assert(Checks.isScalarIn(timestep, 1, size(this.refTrajectory, 2)) && mod(timestep, 1) == 0, ...
+                    'LinearlyConstrainedPredictiveController:GetDeviationFromRefForState:InvalidTimestep', ...
+                    '** Input parameter <timestep> must be in {1, ... %d} **', ...
+                    size(this.refTrajectory, 2));
+
                 deviation = this.Z * state - this.refTrajectory(:, timestep);
             else
                 % we track the origin
@@ -340,30 +353,28 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
                         
         %% validateStateConstraints
         function validateStateConstraints(this, stateWeightings, stateConstraints)
-            if ~Checks.isFixedRowMat(stateWeightings, this.dimPlantState)
-                error('LinearlyConstrainedPredictiveController:ValidateStateConstraints:InvalidStateWeightings', ...
-                        '** Input parameter <stateWeightings> must be a matrix with the weightings (%d-dimensional) column-wise arranged **', ...
+            assert(Checks.isFixedRowMat(stateWeightings, this.dimPlantState), ...
+                'LinearlyConstrainedPredictiveController:ValidateStateConstraints:InvalidStateWeightings', ...
+                '** Input parameter <stateWeightings> must be a matrix with the weightings (%d-dimensional) column-wise arranged **', ...
                 this.dimPlantState);
-            end
-            if ~Checks.isVec(stateConstraints, size(stateWeightings, 2))
-                 error('LinearlyConstrainedPredictiveController:ValidateStateConstraints:InvalidStateConstraints', ...
-                    '** Input parameter <stateConstraints> must be a vector with %d elements **', ...
-                    size(stateWeightings, 2));
-            end
+ 
+            assert(Checks.isVec(stateConstraints, size(stateWeightings, 2)), ...
+                'LinearlyConstrainedPredictiveController:ValidateStateConstraints:InvalidStateConstraints', ...
+                '** Input parameter <stateConstraints> must be a vector with %d elements **', ...
+                size(stateWeightings, 2));
         end
         
         %% validateInputConstraints
         function validateInputConstraints(this, inputWeightings, inputConstraints)
-            if ~Checks.isFixedRowMat(inputWeightings, this.dimPlantInput)
-                error('LinearlyConstrainedPredictiveController:ValidateInputConstraints:InvalidInputWeightings', ...
-                        '** Input parameter <inputWeightings> must be a matrix with the weightings (%d-dimensional) column-wise arranged **', ...
+            assert(Checks.isFixedRowMat(inputWeightings, this.dimPlantInput), ...
+                'LinearlyConstrainedPredictiveController:ValidateInputConstraints:InvalidInputWeightings', ...
+                '** Input parameter <inputWeightings> must be a matrix with the weightings (%d-dimensional) column-wise arranged **', ...
                 this.dimPlantState);
-            end
-            if ~Checks.isVec(inputConstraints, size(inputWeightings, 2))
-                 error('LinearlyConstrainedPredictiveController:ValidateInputConstraints:InvalidInputConstraints', ...
-                    '** Input parameter <inputConstraints> must be a vector with %d elements **', ...
-                    size(inputWeightings, 2));
-            end
+
+            assert(Checks.isVec(inputConstraints, size(inputWeightings, 2)), ...
+                'LinearlyConstrainedPredictiveController:ValidateInputConstraints:InvalidInputConstraints', ...
+                '** Input parameter <inputConstraints> must be a vector with %d elements **', ...
+                size(inputWeightings, 2));
         end
     end      
 end
