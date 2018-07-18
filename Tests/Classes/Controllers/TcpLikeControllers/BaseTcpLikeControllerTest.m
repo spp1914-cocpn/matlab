@@ -54,6 +54,7 @@ classdef (Abstract) BaseTcpLikeControllerTest < matlab.unittest.TestCase
         controller = initControllerUnderTest(this);
         initAdditionalProperties(this);
         expectedCosts = computeExpectedCosts(this, states, inputs);
+        expectedStageCosts = computeExpectedStageCosts(this, state, input, timestep);        
     end
      
     methods (Sealed, TestMethodSetup)
@@ -88,7 +89,17 @@ classdef (Abstract) BaseTcpLikeControllerTest < matlab.unittest.TestCase
     end
     
      methods (Test)
-                 
+         
+         %% testDoStageCostsComputation
+         function testDoStageCostsComputation(this)
+             input = ones(this.dimU, 1);
+             timestep = 1;
+             
+             expectedStageCosts = this.computeExpectedStageCosts(this.state, input, timestep);
+             actualStageCosts = this.controllerUnderTest.computeStageCosts(this.state, input, timestep);
+             this.verifyEqual(actualStageCosts, expectedStageCosts);    
+         end
+         
         %% testDoCostsComputation
         function testDoCostsComputation(this)
             states = ones(this.dimX, 2);

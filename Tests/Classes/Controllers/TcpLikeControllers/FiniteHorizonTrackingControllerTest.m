@@ -114,6 +114,12 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
                 + (states(:, 2) - this.refTrajectory(:, 2))' * this.Q * (states(:, 2) - this.refTrajectory(:, 2)) ...
                 + inputs' * this.R * inputs;
         end
+        
+        %% computeExpectedStageCosts
+        function expectedStageCosts = computeExpectedStageCosts(this, state, input, timestep)
+             expectedStageCosts =  (state - this.refTrajectory(:, timestep))' * this.Q ...
+                 * (state - this.refTrajectory(:, timestep)) + input' * this.R * input;
+        end
     end
     
     methods (Test)

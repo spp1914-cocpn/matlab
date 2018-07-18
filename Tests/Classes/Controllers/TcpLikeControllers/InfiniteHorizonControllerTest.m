@@ -56,6 +56,11 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % average costs
             expectedCosts = expectedCosts / size(inputs, 2);
         end
+        
+        %% computeExpectedStageCosts
+        function expectedStageCosts = computeExpectedStageCosts(this, state, input, ~)
+             expectedStageCosts =  state' * this.Q * state + input' * this.R * input;
+        end
     end
     
     methods (Access = private)

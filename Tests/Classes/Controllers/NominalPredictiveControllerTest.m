@@ -399,6 +399,37 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             this.verifySize(actualSequence, expectedSize);
             this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 2*1e-4);
         end
+       
+        %% testDoStageCostsComputation
+        function testDoStageCostsComputation(this)
+            state = this.stateTrajectory(:, end-1);
+            input = this.inputTrajectory(:, end);
+            timestep = size(this.inputTrajectory, 2);
+            
+            expectedStageCosts = state' * this.Q * state + input' * this.R * input;
+            actualStageCosts = this.controllerUnderTest.computeStageCosts(state, input, timestep);
+            
+            this.verifyEqual(actualStageCosts, expectedStageCosts, ...
+                'AbsTol', NominalPredictiveControllerTest.absTol);
+        end
+        
+        %% testDoStageCostsComputationWithSetpoint
+        function testDoStageCostsComputationWithSetpoint(this)
+            % assert that the set point is changed
+            this.controllerUnderTest.changeSetPoint(this.setpoint);
+            this.assertEqual(this.controllerUnderTest.setpoint, this.setpoint);
+            
+            state = this.stateTrajectory(:, end-1);
+            input = this.inputTrajectory(:, end);
+            timestep = size(this.inputTrajectory, 2);
+            
+            expectedStageCosts = (state - this.setpoint)' * this.Q * (state - this.setpoint) ...
+                + input' * this.R * input;
+            actualStageCosts = this.controllerUnderTest.computeStageCosts(state, input, timestep);
+            
+            this.verifyEqual(actualStageCosts, expectedStageCosts, ...
+                'AbsTol', NominalPredictiveControllerTest.absTol);
+        end
         
         %% testDoCostsComputationInvalidStateTrajectory
         function testDoCostsComputationInvalidStateTrajectory(this)

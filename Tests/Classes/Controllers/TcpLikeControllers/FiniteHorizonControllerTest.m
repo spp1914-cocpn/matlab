@@ -149,6 +149,11 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
              expectedCosts =  states(:, 1)' * this.Q * states(:, 1) ...
                 + states(:, 2)' * this.Q * states(:, 2) + inputs' * this.R * inputs;
         end
+        
+        %% computeExpectedStageCosts
+        function expectedStageCosts = computeExpectedStageCosts(this, state, input, ~)
+             expectedStageCosts =  state' * this.Q * state + input' * this.R * input;
+        end
     end
 %%
 %%

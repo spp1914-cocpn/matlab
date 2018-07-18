@@ -151,6 +151,7 @@ classdef UtilityTest < matlab.unittest.TestCase
             this.verifyEqual(actualAugR, expectedAugR);
         end
         
+        %% verifyEqualAugmentedLinearIntegralConstraints
         function verifyEqualAugmentedLinearIntegralConstraints(this, ...
                 augmentedStateWeightings, augmentedInputWeightings, controlSequenceLength, stateWeights, inputWeights)
             
@@ -215,7 +216,18 @@ classdef UtilityTest < matlab.unittest.TestCase
     
     methods (Test)
 %%
-%%        
+%%      
+        %% testComputeStageCosts
+        function testComputeStageCosts(this)
+            state = [1 3]';
+            input = [-2 -3 5]';
+            
+            actualStageCosts = Utility.computeStageCosts(state, input, this.Q, this.R);
+            expectedStateCosts = state' * this.Q * state + input' * this.R * input;
+            
+            this.verifyEqualWithAbsTol(actualStageCosts, expectedStateCosts);
+        end
+
         %% testComputeLQGCosts
         function testComputeLQGCosts(this)
             [stateTrajectory, inputTrajectory, expectedCosts] = this.computeCostsAndTrajectories(); 

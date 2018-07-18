@@ -54,5 +54,10 @@
          function costs = doCostsComputation(~, ~, ~)
              costs = 0;
          end
+         
+         %% doStageCostsComputation
+         function stageCosts = doStageCostsComputation(~, ~, ~, ~)
+             stageCosts = 0;
+         end
     end
 end   

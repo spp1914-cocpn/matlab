@@ -91,6 +91,17 @@ classdef (Abstract) BaseFiniteHorizonControllerTest < BaseTcpLikeControllerTest
                 expectedErrId);
         end
         
+        %% testDoStageCostsComputationInvalidTimestep
+        function testDoStageCostsComputationInvalidTimestep(this)
+           expectedErrId = [class(this.controllerUnderTest) ':DoStageCostsComputation:InvalidTimestep'];
+           
+           invalidTimestep = this.horizonLength + 1; % too late
+           state = ones(this.dimX, 1);
+           input = ones(this.dimU, 1);           
+           this.verifyError(@() this.controllerUnderTest.computeStageCosts(state, input, invalidTimestep), ...
+                expectedErrId);
+        end
+        
         %% testDoCostsComputationInvalidStateTrajectory
         function testDoCostsComputationInvalidStateTrajectory(this)
             appliedInputs = ones(this.dimU, this.horizonLength);

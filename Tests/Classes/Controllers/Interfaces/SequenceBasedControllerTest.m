@@ -91,6 +91,37 @@ classdef SequenceBasedControllerTest < matlab.unittest.TestCase
             this.verifyEqual(actualSeqLength, this.sequenceLength);
         end
         
+        %% testComputeStageCostsInvalidStateInput
+        function testComputeStageCostsInvalidStateInput(this)
+            expectedErrId = 'SequenceBasedController:ComputeStageCosts:InvalidStateInput';
+            
+            % first, invalid state: vector of wrong dimension
+            invalidState = this.inputTrajectory(:, 1);
+            this.verifyError(@() this.controllerUnderTest.computeStageCosts(invalidState, this.inputTrajectory(:, 1), 1), ...
+                expectedErrId);
+            
+            % now: invalid input: vector of wrong dimension
+            invalidInput = this.stateTrajectory(:, 1);
+            this.verifyError(@() this.controllerUnderTest.computeStageCosts(this.stateTrajectory(:, 1), invalidInput, 1), ...
+                expectedErrId);
+        end
+        
+        %% testComputeStageCostsInvalidTimestep
+        function testComputeStageCostsInvalidTimestep(this)
+            expectedErrId = 'SequenceBasedController:ComputeStageCosts:InvalidTimestep';
+            
+            % first, invalid state: vector of wrong dimension
+            invalidTimestep = -1;
+            this.verifyError(@() this.controllerUnderTest.computeStageCosts(this.stateTrajectory(:, 1), this.inputTrajectory(:, 1), invalidTimestep), ...
+                expectedErrId);   
+        end
+        
+        %% testComputeStageCosts
+        function testComputeStageCosts(this)
+            % the controller stub always returns costs 0
+            this.verifyEqual(this.controllerUnderTest.computeStageCosts(this.stateTrajectory(:, 1), this.inputTrajectory(:, 1), 1), 0);
+        end
+        
         %% testComputeCostsInvalidParams
         function testComputeCostsInvalidParams(this)
             expectedErrId = 'SequenceBasedController:ComputeCosts';
