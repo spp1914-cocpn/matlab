@@ -127,16 +127,12 @@ classdef Validator
             %
             if nargin == 2
                 [isCov, tmp] = Checks.isCov(V, dimY);
-                if ~isCov
-                  error('Validator:ValidateMeasNoiseCovarianceMatrix:InvalidCovDim', ...
-                    '**  <V> (measurement noise covariance) must be a real-valued, positive definite %d-by-%d matrix **', dimY, dimY);
-                end
+                assert(isCov, 'Validator:ValidateMeasNoiseCovarianceMatrix:InvalidCovDim', ...
+                    '**  <V> (measurement noise covariance) must be a real-valued, positive definite %d-by-%d matrix **', dimY, dimY);                
             else
                 [isCov, tmp] = Checks.isCov(V);
-                if ~isCov
-                  error('Validator:ValidateMeasNoiseCovarianceMatrix:InvalidCov', ...
-                    '**  <V> (measurement noise covariance) must be a real-valued, positive definite matrix **');
-                end
+                assert(isCov, 'Validator:ValidateMeasNoiseCovarianceMatrix:InvalidCov', ...
+                    '**  <V> (measurement noise covariance) must be a real-valued, positive definite matrix **');                
             end
              
             if nargout == 1
@@ -164,15 +160,11 @@ classdef Validator
             %
             if nargin == 2
                [isCov, tmp] = Checks.isCov(W, dimW);
-               if ~isCov
-                  error('Validator:ValidateSysNoiseCovarianceMatrix:InvalidCovDim', ...
+               assert(isCov, 'Validator:ValidateSysNoiseCovarianceMatrix:InvalidCovDim', ...
                     '**  <W> (process noise covariance) must be a real-valued, positive definite %d-by-%d matrix **', dimW, dimW);
-                end
             else
                 [isCov, tmp] = Checks.isCov(W);
-            end
-            if ~isCov
-                  error('Validator:ValidateSysNoiseCovarianceMatrix:InvalidCov', ...
+                assert(isCov, 'Validator:ValidateSysNoiseCovarianceMatrix:InvalidCov', ...
                     '**  <W> (process noise covariance) must be a real-valued, positive definite matrix **');
             end
             
@@ -219,8 +211,20 @@ classdef Validator
                 '** Cost matrix <R> must be a real-valued, symmetric and invertible %d-by-%d matrix **', dimU, dimU);
         end
         
-        %% validateDiscreteProbabilityDistribution
+        %% validateDiscreteProbabilityDistribution           
         function validateDiscreteProbabilityDistribution(probDist, numElements)
+            % Convenience function to validate a vector defining a discrete probability distribution.
+            % In particular, this function errors if entries of the vector
+            % are not nonnegative or do not sum up to 1.
+            % 
+            % Parameters:
+            %   >> probDist (Vector)
+            %      The vector to describe a probability distribution.
+            %
+            % 
+            %   >> numElements (Positive integer, Optional)
+            %      The expected number of elements of the given vector.
+            %
             if nargin == 1
                 assert(Checks.isNonNegativeVec(probDist) && all(isfinite(probDist)) && round(sum(probDist * 1e8)) == 1e8, ...
                     'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs', ...
@@ -234,6 +238,18 @@ classdef Validator
         
         %% validateTransitionMatrix
         function validateTransitionMatrix(modeTransitionMatrix, numModes)
+            % Convenience function to validate whether a given matrix is valid transition matrix of a Markov chain.
+            % In particular, this function errors if the given matrix is not square, any entry is not in
+            % [0, 1], or any row does not sum up to 1.
+            % 
+            % Parameters:
+            %   >> modeTransitionMatrix (Square matrix)
+            %      The mode transition matrix to check.
+            %
+            % 
+            %   >> numModes (Positive integer, Optional)
+            %      The number of modes of the corresponding Markov chain.
+            %
             if nargin == 1
                 assert(Checks.isSquareMat(modeTransitionMatrix) ...
                     && isequal(modeTransitionMatrix <= 1 & modeTransitionMatrix >= 0, ones(size(modeTransitionMatrix))) ...
