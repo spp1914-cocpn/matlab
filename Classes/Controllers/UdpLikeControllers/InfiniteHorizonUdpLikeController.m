@@ -34,7 +34,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
-    properties (SetAccess = protected)
+    properties (Access = protected)
         % packet delay probability density function of the controller-actuator-
         % link; (vector of dimension >= <sequenceLength>)
         caDelayProb;
@@ -128,7 +128,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             %
             %   >> v_mean (Vector, optional)
             %      The mean of the measurement noise.
-            %      If left out, the nois is assumed to be zero mean.
+            %      If left out, the noise is assumed to be zero mean.
             %
             % Returns:
             %   << this (InfiniteHorizonUdpLikeController)
@@ -150,8 +150,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             assert(Checks.isNonNegativeScalar(maxMeasDelay) && mod(maxMeasDelay, 1) == 0, ...
                 'InfiniteHorizonUdpLikeController:InvalidMaxMeasDelay', ...
                 ['** Input parameter <maxMeasDelay> (maximum measurement',...
-                'delay (M-1)) must be a nonnegative integer **']);
-            
+                'delay (M-1)) must be a nonnegative integer **']);            
                         
             this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
             
@@ -540,12 +539,12 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             numMeas = numel(measDelays);
             % the controller assumes only a single measurement per time step
             [~, uniqueIdx, ~] = unique(measDelays, 'stable');
-            if numel(uniqueIdx) ~= numMeas
-                error('InfiniteHorizonUdpLikeController:GetApplicableMeasurements:IgnoringMeasurementsNotUnique', ...
-                    '** %s\nIgnoring %d of %d measurements. **', ...
-                    'Controller assumes only one measurement per time step', ...
-                    numMeas - numel(uniqueIdx), numMeas);
-            end
+            assert(numel(uniqueIdx) == numMeas, ...
+                'InfiniteHorizonUdpLikeController:GetApplicableMeasurements:IgnoringMeasurementsNotUnique', ...
+                '** %s\nIgnoring %d of %d measurements. **', ...
+                'Controller assumes only one measurement per time step', ...
+                numMeas - numel(uniqueIdx), numMeas);
+  
             % find the measurements with valid delays
             idx = find(measDelays(uniqueIdx) <= this.measBufferLength - 1);
             applicableMeas = measurements(:, idx);
