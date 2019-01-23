@@ -5,13 +5,13 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -300,6 +300,126 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             this.actuatorUnderTest.reset();
             % buffer should be empty now
             this.verifyEmpty(this.actuatorUnderTest.bufferedPacket);
+        end
+        
+        %% testChangeControlSequenceLengthInvalidSequenceLength
+        function testChangeControlSequenceLengthInvalidSequenceLength(this)
+            expectedErrId = 'Validator:ValidateSequenceLength:InvalidSequenceLength';
+            
+            invalidSequenceLength = 0; % must be positive
+            this.verifyError(@() this.actuatorUnderTest.changeControlSequenceLength(invalidSequenceLength), ...
+                expectedErrId);
+            
+            invalidSequenceLength = 4.5; % must not be fractional
+            this.verifyError(@() this.actuatorUnderTest.changeControlSequenceLength(invalidSequenceLength), ...
+                expectedErrId);
+            
+            invalidSequenceLength = inf; % must not be inf
+            this.verifyError(@() this.actuatorUnderTest.changeControlSequenceLength(invalidSequenceLength), ...
+                expectedErrId);
+        end
+        
+        %% testChangeControlSequenceLengthInvalidControlSequence
+        function testChangeControlSequenceLengthInvalidControlSequence(this)
+            expectedErrId = 'BufferingActuator:ProcessControllerPackets:InvalidControlSequences';
+            
+            % change the sequence length
+            this.actuatorUnderTest.changeControlSequenceLength(this.sequenceLength + 1);
+            
+            % send a packet with an invalid payload: not the correct sequence length
+            invalidSequence = ones(this.dimU, this.sequenceLength);
+            invalidPacket = DataPacket(invalidSequence, this.timestamp, this.id + 4);
+            packets = [this.dataPacket; invalidPacket; this.dataPacket3];
+            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(packets), expectedErrId);
+        end
+        
+        %% testChangeControlSequenceShorterSequence
+        function testChangeControlSequenceShorterSequence(this)
+            newSeqLength = 1;
+            timestep = this.timestamp;
+            
+            % first, process two packets; those with delay 0 and 2
+            % thus, a packet is buffered
+            packets = [this.dataPacket2; this.dataPacket3];
+            this.actuatorUnderTest.processControllerPackets(packets);            
+        
+            this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
+            this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
+            
+            % the first element of the buffered sequence should still be
+            % available
+            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep);
+            expectedMode = newSeqLength;
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.controlSequence2(:, newSeqLength));
+            
+            % now try to get the input for a future time step, which is not
+            % part of the buffered, truncated sequence any more
+            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + 1);
+            expectedMode = newSeqLength + 1; % default input is applied
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU);
+        end
+        
+        %% testChangeControlSequenceLongerSequence
+        function testChangeControlSequenceLongerSequence(this)
+            newSeqLength = this.sequenceLength + 1;
+            timestep = this.timestamp;
+            
+            this.actuatorUnderTest.processControllerPackets([this.dataPacket; this.dataPacket2; this.dataPacket3]);
+            % dataPacket2 is buffered as it has smallest delay
+            
+            this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
+            this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
+            
+            % now get the input for the the current timestep
+            for j = 0:this.sequenceLength-1
+                [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + j);
+                expectedMode = j + 1;
+                expectedInput = this.controlSequence2(:, expectedMode);
+                this.verifyEqual(actualMode, expectedMode);
+                this.verifyEqual(actualInput, expectedInput);
+            end
+            
+            % try to get the input for a future time step, which is now part of the buffered, extended sequence
+            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength - 1);
+            expectedMode = newSeqLength; 
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU); % default input is applied as this is appended to the sequence
+        end
+        
+        %% testChangeControlSequenceSameLength
+        function testChangeControlSequenceSameLength(this)
+            newSeqLength = this.sequenceLength;
+            timestep = this.timestamp;
+            
+            % first, process two packets; those with delay 0 and 2
+            % thus, a packet is buffered
+            packets = [this.dataPacket2; this.dataPacket3];
+            this.actuatorUnderTest.processControllerPackets(packets);            
+        
+            this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
+            this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
+            
+            % now get the inputs
+            for j = 0:newSeqLength - 1
+                [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + j);
+                expectedMode = j + 1;
+                expectedInput = this.controlSequence2(:, expectedMode);
+                this.verifyEqual(actualMode, expectedMode);
+                this.verifyEqual(actualInput, expectedInput);
+            end
+            % now try to get the input for a future time steps, which is not
+            % part of the sequence any more
+            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength);
+            expectedMode = this.sequenceLength + 1; % default input is applied
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU);
+            
+            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength + 1);
+            expectedMode = newSeqLength + 1; % default input is applied
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU);
         end
     end
 end

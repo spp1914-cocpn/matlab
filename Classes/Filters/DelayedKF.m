@@ -5,16 +5,13 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
     % the expected control input applied to the system and possibly
     % time-delayed measurements of the state.
     %
+    % This implementation is based on the original one by Jörg Fischer and Maxim Dolgov.
+    %
     % Literature: 
     %   Maryam Moayedi, Yung Kuan Foo and Yeng Chai Soha
     %   Filtering for networked control systems with single/multiple measurement packets
     %   subject to multiple-step measurement delays and multiple packet dropouts
     %   International Journal of Systems Science (2011)
-    %
-    %
-    % AUTHOR:       Jörg Fischer
-    % LAST UPDATE:  Maxim Dolgov, 26.06.2013
-    %               Florian Rosenthal, 26.02.2018
     
     % >> This function/class is part of CoCPN-Sim
     %
@@ -26,7 +23,7 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -46,10 +43,9 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
         augmentedStateCov; % needed as augmented cov not necessarily pd
     end
    
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     methods (Access = public)
         %% DelayedKF
-        function s = DelayedKF(maxMeasDelay, name)
+        function this = DelayedKF(maxMeasDelay, name)
             % Class constructor.
             %
             % Parameters:
@@ -70,7 +66,7 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             if nargin == 1
                 name = 'Delayed KF';
             end
-            s@DelayedMeasurementsFilter(maxMeasDelay, name);
+            this@DelayedMeasurementsFilter(maxMeasDelay, name);
         end % function DelayedKF
        
         %% getState
@@ -106,7 +102,7 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             end
         end
         
-    end % methods public
+    end
 
     methods(Access = protected)
         %% performSetState

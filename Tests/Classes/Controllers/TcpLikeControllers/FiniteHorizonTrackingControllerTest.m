@@ -5,13 +5,13 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                         https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -35,6 +35,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
     end
     
     methods (Access = private)
+        %% computeFeedback
         function feedback = computeFeedback(this)
             % in this setup, the current input must arrive without delay,
             % or plant evolves open-loop
@@ -67,6 +68,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
     
         end
         
+        %% computeFeedforward
         function feedforward = computeFeedforward(this)
             % in this setup, the current input must arrive without delay,
             % or plant evolves open-loop

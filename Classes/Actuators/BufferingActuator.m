@@ -34,7 +34,7 @@ classdef BufferingActuator < handle
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -50,10 +50,6 @@ classdef BufferingActuator < handle
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = public)
-        %% input properties
-        % length of applicable control input sequences
-        % one sequence per received packet; (positive integer)
-        controlSequenceLength = -1;
         % maximum allowed packet delay (packets with control input sequences)
         maxPacketDelay = -1;
         % dimension of control input; (positive integer)
@@ -63,7 +59,9 @@ classdef BufferingActuator < handle
     end
     
     properties (SetAccess = private, GetAccess = public)
-        %% derived properties
+        % length of applicable control input sequences
+        % one sequence per received packet; (positive integer)
+        controlSequenceLength = -1;
         % buffer to store packet with active (i.e., most recent) control input sequence; (DataPacket)
         bufferedPacket = [];
     end
@@ -191,10 +189,46 @@ classdef BufferingActuator < handle
         
         %% reset
         function reset(this)
-            % Resets the actuator by removing the currently buffered
+            % Reset the actuator by removing the currently buffered
             % control sequence.
             %
             this.bufferedPacket = [];
         end 
+        
+        %% changeControlSequenceLength
+        function changeControlSequenceLength(this, newSequenceLength)
+            % Change the length of the control sequence expected to be
+            % received from the controller.
+            % If an old sequence is currently buffered, its size is adapted
+            % as follows. In case the new sequence length is greather than
+            % the old one, the specified default input is appended. In case
+            % the new sequence length is less than the old one, the
+            % last, now superfluous entries are discarded.
+            %
+            % Parameters:
+            %   >> newSequenceLength (Positive integer)
+            %      The new sequence length to used.
+            
+            Validator.validateSequenceLength(newSequenceLength);
+            if ~isempty(this.bufferedPacket) && newSequenceLength ~= this.controlSequenceLength
+                % fit the size of the buffered sequence
+                % that is, trim buffered sequence or append default input
+                % copy of DataPacket is required
+                        
+                srcAddr = this.bufferedPacket.sourceAddress;
+                dstAddr = this.bufferedPacket.destinationAddress;
+                delay = this.bufferedPacket.packetDelay;
+                
+                bufferedSequence = [this.bufferedPacket.payload(:, 1:min(this.controlSequenceLength, newSequenceLength)) ...
+                    repmat(this.defaultInput, 1, newSequenceLength - this.controlSequenceLength)];
+                
+                % don't forget to set properties of packet
+                this.bufferedPacket = DataPacket(bufferedSequence, this.bufferedPacket.timeStamp, this.bufferedPacket.id);
+                this.bufferedPacket.packetDelay = delay;
+                this.bufferedPacket.sourceAddress = srcAddr;
+                this.bufferedPacket.destinationAddress = dstAddr;
+            end
+            this.controlSequenceLength = newSequenceLength;
+        end
     end
 end

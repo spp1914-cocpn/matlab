@@ -6,28 +6,29 @@ classdef (Sealed) DelayedIMMF < DelayedMeasurementsFilter
     % networked control systems where both control inputs and measurements
     % are transmitted via networks subject to random packet delay and/or loss.
     %
+    % While this implementation is to some extent more general than the original one of Fischer et al., 
+    % which can be found <a href="matlab:
+    % web('http://www.cloudrunner.eu/algorithm/60/interacting-multiple-model-imm-filter-for-networked-control-systems-ncs/version/2/')"
+    % >here</a>, some parts are directly based thereof.
+    %
     % Literature: 
     %   Jörg Fischer, Achim Hekler, and Uwe D. Hanebeck,
     %   State Estimation in Networked Control Systems,
     %   Proceedings of the 15th International Conference on Information Fusion (Fusion 2012),
     %   Singapore, July 2012.
     %
-    % While this implementation is to some extent more general than the original one of Fischer et al., 
-    % which can be found <a href="matlab:
-    % web('http://www.cloudrunner.eu/algorithm/60/interacting-multiple-model-imm-filter-for-networked-control-systems-ncs/version/2/')"
-    % >here</a>, some parts are directly based thereof.
-    
+       
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by

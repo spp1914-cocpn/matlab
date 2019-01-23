@@ -5,13 +5,13 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -49,6 +49,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
     end
     
     methods (TestMethodSetup)
+        %% initProperties
         function initProperties(this)
             this.numPossibleInputs = 5;
             this.maxMeasDelay = 5;
@@ -141,29 +142,8 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             
             this.verifyEqual(augSysMatrix, expectedAugSysMatrix);
             this.verifyEqual(augNoiseMatrix, expectedAugNoiseMatrix);
-        end
-        
-        %% testReset
-        function testReset(this)
-            % set uncertain inputs, then reset the model
-            expectedPlantNoise = this.plantNoise;
-            [expectedMean, expectedCov] = this.plantNoise.getMeanAndCov();
-            
-            this.uncertainInputs = ones(this.dimU, this.numPossibleInputs) .* [1:this.numPossibleInputs];
-            this.modelUnderTest.setSystemInput(this.uncertainInputs);
-            
-            this.verifyNotEqual(this.modelUnderTest.noise, expectedPlantNoise);
-            
-            this.modelUnderTest.reset();
-            
-            actualPlantNoise = this.modelUnderTest.noise;
-            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
-            
-            this.verifyClass(actualPlantNoise, ?Gaussian);
-            this.verifyEqual(actualMean, expectedMean);
-            this.verifyEqual(actualCov, expectedCov);
-        end
-        
+        end        
+                
         %% testSetSystemMatrixInvalidMatrix
         function testSetSystemMatrixInvalidMatrix(this)
             expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
@@ -280,6 +260,41 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             expectedMean = this.B * inputMean;
             expectedCov = this.W + this.B * inputCov * this.B';
                   
+            this.modelUnderTest.setSystemInput(this.uncertainInputs);
+            
+            actualPlantNoise = this.modelUnderTest.noise;
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
+            
+            this.verifyClass(actualPlantNoise, ?Gaussian);
+            this.verifyEqual(actualMean, expectedMean);
+            this.verifyEqual(actualCov, expectedCov);
+        end
+        
+        %% testSetDelayWeightsInvalidProbs
+        function testSetDelayWeightsInvalidProbs(this)
+            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbsNum';
+            
+            invalidProbs = [this.inputProbs 0]; % too many elements
+            this.verifyError(@() this.modelUnderTest.setDelayWeights(invalidProbs), expectedErrId);
+            
+            invalidProbs = [this.inputProbs(1:end-1) this.inputProbs(end) + 0.1]; % does not sum up to 1
+            this.verifyError(@() this.modelUnderTest.setDelayWeights(invalidProbs), expectedErrId); 
+        end
+        
+        %% testSetDelayWeights
+        function testSetDelayWeights(this)
+            newProbs = [1 zeros(1, numel(this.inputProbs) -1)];
+            % compute the additional uncertainty resulting from these probs
+            % there should be none
+            inputMean = this.uncertainInputs(:, 1);
+            expectedMean = this.B * inputMean;
+            expectedCov = this.W;
+            
+            % set the new weights
+            this.modelUnderTest.setDelayWeights(newProbs)
+            
+            % set the input and check if the additional noise is as
+            % expected
             this.modelUnderTest.setSystemInput(this.uncertainInputs);
             
             actualPlantNoise = this.modelUnderTest.noise;

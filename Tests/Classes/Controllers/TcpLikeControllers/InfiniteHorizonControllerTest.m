@@ -5,13 +5,13 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -128,17 +128,24 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
                   
                 previousP = P;
                 % same for both modes
-                P1 = Q_1 + A_1' * previousP * A_1;
+                % ensure that matrices are symmetric
+                APA = A_1' * previousP * A_1;
+                BPB = B_1' * previousP * B_1;
+                B2PB2 = B_2' * previousP * B_2;
+                P1 = Q_1 + (APA + APA') / 2;
                 P2 = this.transitionMatrix(1,1) * A_1' * previousP * B_1 ...
                     + this.transitionMatrix(1,2) * A_2' * previousP * B_2;
-                P3 = this.transitionMatrix(1,1) * (R_1 + B_1' * previousP * B_1) ...
-                    + this.transitionMatrix(1,2) * (R_2 + B_2' * previousP * B_2);
-                P = P1 - P2 * pinv(P3) * P2';
-                        
+                P3 = this.transitionMatrix(1,1) * (R_1 + (BPB + BPB') / 2) ...
+                    + this.transitionMatrix(1,2) * (R_2 + (B2PB2 + B2PB2') / 2);
+                P4 = P2 * pinv(P3) * P2';
+                P = P1 - (P4 + P4') / 2; % should also be symmetric                        
             end
             % input for both modes
-            firstPart = pinv(this.transitionMatrix(1,1) * (R_1 + B_1' * P * B_1) ... 
-                + this.transitionMatrix(1,2) * (R_2 + B_2' * P * B_2));
+            % ensure that matrices are symmetric
+            BPB = B_1' * P * B_1;
+            B2PB2 = B_2' * P * B_2;
+            firstPart = pinv(this.transitionMatrix(1,1) * (R_1 + (BPB + BPB') / 2) ... 
+                + this.transitionMatrix(1,2) * (R_2 + (B2PB2 + B2PB2') / 2));
             secondPart = this.transitionMatrix(1,1) * B_1' * P * A_1 + ...
                 this.transitionMatrix(1,2) * B_2' * P * A_2;
             
@@ -312,11 +319,11 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % check both modes
             % first mode: previous input arrived at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1);
-            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-4);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
             
             % second mode: previous input did not arrive at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2);
-            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-4);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
         end
 %%
 %%

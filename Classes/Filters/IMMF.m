@@ -24,7 +24,7 @@ classdef IMMF < Filter
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -92,7 +92,7 @@ classdef IMMF < Filter
 
             this.modeFilters = modeFilters;
             this.numModes = numel(modeFilters);
-            if any(arrayfun(@(i) ~Checks.isClass(modeFilters{i}, 'LinearGaussianFilter'), 1:this.numModes))
+            if any(cellfun(@(filter) ~Checks.isClass(filter, 'LinearGaussianFilter'), this.modeFilters))
                 this.error('InvalidModeFilters:InvalidFilterType', ...
                      '** Each mode-conditioned filter must be a LinearGaussianFilter, i.e., a Kalman filter **');
             end
@@ -191,9 +191,7 @@ classdef IMMF < Filter
         function performSetStateMeanAndCov(this, stateMean, stateCov, stateCovSqrt)
             % no prior knowledge on modes available, so assume uniform distribution
             this.modeProbabilities = this.normalizeModeProbabilities(repmat(1 / this.numModes, 1, this.numModes));
-            for i=1:this.numModes
-                this.modeFilters{i}.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt);
-            end
+            cellfun(@(filter) filter.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt), this.modeFilters);
         end
         
         %% performUpdate
@@ -205,7 +203,7 @@ classdef IMMF < Filter
                 end
                 arrayfun(@(index) this.modeFilters{index}.update(measModels{index}, measurement), 1:this.numModes);
             else
-                arrayfun(@(index) this.modeFilters{index}.update(measModels, measurement), 1:this.numModes);
+                cellfun(@(filter) filter.update(measModels, measurement), this.modeFilters);
             end
             this.updateModeProbabilities();
         end
@@ -222,7 +220,7 @@ classdef IMMF < Filter
             elseif Checks.isClass(sysModel, 'SystemModel')
                 % use the given model for all filters
                 this.performStateEstimateMixing();
-                arrayfun(@(index) this.modeFilters{index}.predict(sysModel), 1:this.numModes)
+                cellfun(@(filter) filter.predict(sysModel), this.modeFilters)
             else
                 this.issueErrorSysModel();
             end
@@ -233,13 +231,13 @@ classdef IMMF < Filter
         %% issueErrorMeasModel
         function issueErrorMeasModel(this)
             this.errorMeasModel('MeasurementModel', ...
-                        sprintf('Cell array of %d MeasurementModels', this.numModes));
+                sprintf('Cell array of %d MeasurementModels', this.numModes));
         end
         
         %% issueErrorSysModel
         function issueErrorSysModel(this)
             this.errorSysModel(sprintf('JumpLinearSystemModel (%d modes)', this.numModes), ...
-                    'SystemModel (for all modes)');
+                'SystemModel (for all modes)');
         end
         
         %% performStateEstimateMixing

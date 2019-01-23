@@ -4,7 +4,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
     % filter developed by Moayedia et al. for networked control systems.
     
     % Literature: 
-    %   Maryam Moayedia, Yung Kuan Foo and Yeng Chai Soha
+    %   Maryam Moayedia, Yung Kuan Foo, and Yeng Chai Soha
     %   Filtering for networked control systems with single/multiple measurement packets
     %   subject to multiple-step measurement delays and multiple packet dropouts
     %   International Journal of Systems Science (2011).
@@ -19,7 +19,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -35,13 +35,16 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = private)
-        weights;
         numModes;
         noiseMean;
         noiseCov;
         plantInputMatrix;
     end
-      
+    
+    properties (Access = private)
+        weights;
+    end
+    
     properties (Dependent, Access = private)
         dimInput;
     end
@@ -119,14 +122,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
             this.numModes = numModes;
             % store weights as row vector, i.e., column-wise arranged
             this.weights = reshape(delayWeights, 1, numModes);
-        end
-        
-        %% reset
-        function reset(this)
-            % Resets the model by removing the additional system noise due
-            % to uncertain inputs.
-            this.resetNoise();
-        end
+        end        
         
         %% setSystemMatrix
         function setSystemMatrix(this, sysMatrix)
@@ -152,7 +148,8 @@ classdef DelayedKFSystemModel < LinearSystemModel
             setSystemMatrix@LinearSystemModel(this, newSysMatrix);
         end
         
-       function setSystemNoiseMatrix(this, sysNoiseMatrix)
+        %% setSystemNoiseMatrix 
+        function setSystemNoiseMatrix(this, sysNoiseMatrix)
             % Set the system noise matrix.
             %
             % This is not the system noise covariance matrix!
@@ -211,6 +208,20 @@ classdef DelayedKFSystemModel < LinearSystemModel
             virtualInput = this.plantInputMatrix * inputMean;
             virtualInputCov = this.plantInputMatrix * inputCov * this.plantInputMatrix';
             this.noise.set(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov);
+        end
+        
+        %% setDelayWeights
+        function setDelayWeights(this, delayWeights)
+            % Set the weights for the possible inputs, i.e., the
+            % probability of each possible input to be applied.
+            %
+            % Parameters:
+            %   >> delayWeights (Nonnegative Vector)
+            %      A vector where the i-th elements denotes the probability
+            %      of the i-th possible input to be applied.
+            
+            Validator.validateDiscreteProbabilityDistribution(delayWeights, numel(this.weights));
+            this.weights = delayWeights;
         end
     end
      

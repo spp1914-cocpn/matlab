@@ -11,7 +11,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -374,10 +374,26 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             
             this.assertEqual(this.controllerUnderTest.sequenceLength, this.sequenceLength);
             
-            newSeqLength = this.sequenceLength + 2;
+            newSeqLength = this.sequenceLength -1; % is smaller now
             this.controllerUnderTest.changeSequenceLength(newSeqLength);
             
             this.verifyEqual(this.controllerUnderTest.sequenceLength, newSeqLength);
+            
+            newSeqLength = this.horizonLength; % border case
+            this.controllerUnderTest.changeSequenceLength(newSeqLength);
+            
+            this.verifyEqual(this.controllerUnderTest.sequenceLength, newSeqLength);
+        end
+        
+        %% testChangeSequenceLengthInvalidSequenceLength
+        function testChangeSequenceLengthInvalidSequenceLength(this)
+            this.setupControllerUnderTest(false);
+            expectedErrId = 'LinearlyConstrainedPredictiveController:SetSequenceLength:InvalidSequenceLength';
+            
+            this.assertEqual(this.controllerUnderTest.sequenceLength, this.sequenceLength);
+            
+            invalidSeqLength = this.sequenceLength + 2; % exceeds the length of the horizon
+            this.verifyError(@() this.controllerUnderTest.changeSequenceLength(invalidSeqLength), expectedErrId);
         end
         
         %% testChangeStateConstraintsInvalidConstraints
@@ -477,6 +493,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             % now change the sequence length and compute again
             newSeqLength = this.sequenceLength + 2;
             expectedSequence = zeros(this.dimU * newSeqLength, 1);
+            this.controllerUnderTest.changeHorizonLength(newSeqLength);
             this.controllerUnderTest.changeSequenceLength(newSeqLength);
             
             actualSequence = this.verifyWarningFree(@() this.controllerUnderTest.computeControlSequence(zeroState, mode, timestep));

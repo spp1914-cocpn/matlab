@@ -3,6 +3,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     % NCS with a UDP-like networks connecting the controller and actuator, 
     % and sensor and controller, respectively.
     %
+    % This implementation is based on the original one by Maxim Dolgov.
+    %
     % Literature: 
     %   Maxim Dolgov, Jörg Fischer, and Uwe D. Hanebeck,
     %   Infinite-Horizon Sequence-based Networked Control without Acknowledgments,
@@ -19,7 +21,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -35,9 +37,6 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (Access = protected)
-        % packet delay probability density function of the controller-actuator-
-        % link; (vector of dimension >= <sequenceLength>)
-        caDelayProb;
         stationaryModeDistribution;
         
         sysState; % augmented system state
@@ -166,42 +165,23 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                     '** Input parameter <v_mean> (mean of measurement noise) must be a %d-dimensional vector **',...
                      this.dimMeas);    
                 this.measNoiseMean = v_mean(:);
-            end
+            end         
+            
+            Validator.validateDiscreteProbabilityDistribution(caDelayProb);
+            Validator.validateDiscreteProbabilityDistribution(scDelayProb);   
             
             % initially, there is no measurement available (modelled by
             % noise)
             noiseSamples = ...
                 Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
             this.augmentedMeasurement = noiseSamples(:);
-            this.availableMeasurements = bitget(0, 1:this.measBufferLength);
-     
-            Validator.validateDiscreteProbabilityDistribution(caDelayProb);
-            Validator.validateDiscreteProbabilityDistribution(scDelayProb);
-            
-            elementCount = numel(caDelayProb);
-            if elementCount <= sequenceLength
-                % fill up with zeros (row vector)
-                probHelp = [reshape(caDelayProb, 1, elementCount), zeros(1, sequenceLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                probHelp = [caDelayProb(1:sequenceLength), 1 - sum(caDelayProb(1:sequenceLength))];
-            end
-            % store as row vector, i.e., column-wise arranged
-            this.caDelayProb = probHelp;
-            
-            elementCount = numel(scDelayProb);
-            if elementCount <= this.measBufferLength
-                % fill up with zeros (row vector)
-                trueScDelayProbs = [reshape(scDelayProb, 1, elementCount), zeros(1, this.measBufferLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                trueScDelayProbs = [scDelayProb(1:this.measBufferLength), 1 - sum(scDelayProb(1:this.measBufferLength))];
-            end
-            
-            transitionMatrix = Utility.calculateDelayTransitionMatrix(this.caDelayProb);
+            this.availableMeasurements = zeros(1, this.measBufferLength);            
+                   
+            transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
+                Utility.truncateDiscreteProbabilityDistribution(caDelayProb, sequenceLength + 1));
             % we need the stationary distribution of the Markov chain
             this.stationaryModeDistribution = Utility.computeStationaryDistribution(transitionMatrix);
-               
+            
             % augmented state consists of x_k, psi_k and eta_k
             dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
             this.dimState = dimX * this.measBufferLength + dimEta;
@@ -213,7 +193,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 this.computeExpectedAugmentedSysMatrices(A, B, F, G, H, dimEta);
             [expAugQ, expAugR] = this.computeExpectedAugmentedCostMatrices(H);
             
-            [this.augC, probC] = this.computeAugmentedMeasMatrices(C, trueScDelayProbs);
+            [this.augC, probC] = this.computeAugmentedMeasMatrices(C, ...
+                Utility.truncateDiscreteProbabilityDistribution(scDelayProb, this.measBufferLength + 1));
             [this.L, this.K] = this.computeControllerGains(W, V, augA, augB, probC, expAugQ, expAugR);
         end
         
@@ -225,14 +206,34 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             noiseSamples = ...
                 Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
             this.augmentedMeasurement = noiseSamples(:);
-            this.availableMeasurements = bitget(0, 1:this.measBufferLength);
+            this.availableMeasurements = zeros(1, this.measBufferLength);
             this.lastNumUsedMeas = 0;
             this.lastNumDiscardedMeas = 0;
         end
         
+        %% setControllerPlantState
+        function setControllerPlantState(this, state)
+            % Set the estimate of the plant state.
+            %
+            % This function is mainly used to set an initial estimate, which is zero by default, as
+            % the controller's dynamics is used for updating the estimate of
+            % the plant state.
+            %
+            % Parameters:
+            %   >> state (Subclass of Distribution)
+            %      The new system state.
+            
+            assert(Checks.isClass(state, 'Distribution') && state.getDim() == this.dimPlantState, ...
+                'InfiniteHorizonUdpLikeController:SetControllerPlantState:InvalidState', ...
+                '** <state> must be a %d-dimensional Distribution **', this.dimPlantState);
+            
+            [x0, ~] = state.getMeanAndCov();
+            this.sysState = [x0; zeros(this.dimState - this.dimPlantState, 1)];
+        end
+        
         %% getControllerPlantState
         function plantState = getControllerPlantState(this)
-            % Get the plant state as currently perceived by the controller, i.e., its internal estimate of the plant state..
+            % Get the plant state as currently perceived by the controller, i.e., its internal estimate of the plant state.
             %
             % Returns:
             %   << plantState (Column vector)
@@ -258,7 +259,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         end
         
         %% computeControlSequence
-        function inputSequence = computeControlSequence(this, measurements, measurementDelays)
+        function inputSequence = computeControlSequence(this, measurements, measurementDelays, ~, ~)
             if nargin == 1 || isempty(measurements)
                 applicableMeas = [];
                 applicableDelays = [];
@@ -266,10 +267,13 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 this.checkMeasurementsAndDelays(measurements, measurementDelays);
                 [applicableMeas, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
             end
-            noiseSample = Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, 1);
-            this.augmentedMeasurement = [noiseSample; this.augmentedMeasurement(1:end-this.dimMeas)]; % shift measurements "one downwards"
-            this.availableMeasurements = [0 this.availableMeasurements(1:end-1)];
-
+            
+            % absence of measurement is modelled by noise
+            noiseSamples = ...
+                Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
+            this.augmentedMeasurement = noiseSamples(:);
+            this.availableMeasurements = zeros(1, this.measBufferLength);
+            % now incorporate the received measurements
             for i=1:numel(applicableDelays)
                 % store the measurement
                 delay = applicableDelays(i);
@@ -298,9 +302,9 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     
     methods (Access = protected)
         %% doControlSequenceComputation
-         function inputSequence = doControlSequenceComputation(this)
+        function inputSequence = doControlSequenceComputation(this)
             inputSequence = this.L * this.sysState;
-         end
+        end
          
         %% doStageCostsComputation
         function stageCosts = doStageCostsComputation(this, state, input, ~)
@@ -354,80 +358,83 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
 
                 BexpL = this.expAugB * L_old;
                 part = this.expAugA - BexpL;
-                part2 = part * UnderbarPsi_old * part';
-                KVK = K_old * augV * K_old'; % KVK'
-                LRL = L_old' * expAugR * L_old; % L'RL
-
+                part2 = part * UnderbarPsi_old * part'; % should be symmetric
+                part2 = (part2 + part2') / 2;
+                part3 = part' * UnderbarLambda_old * part; % should be symmetric
+                part3 = (part3 + part3') / 2;
+                KVK = K_old * augV * K_old'; % KVK' % should be symmetric
+                KVK = (KVK + KVK') / 2;
+                LRL = L_old' * expAugR * L_old; % L'RL % should be symmetric
+                LRL = (LRL + LRL') / 2;
+                
                 UnderbarPsi = part2 + KVK;
                 OverbarPsi = -part2 + KVK + augW;
-                OverbarLambda = LRL + expAugQ -part' * UnderbarLambda_old * part;
+                OverbarLambda = LRL + expAugQ - part3;
                 UnderbarLambda = LRL;
 
                 Lambda_sum = OverbarLambda_old + UnderbarLambda_old;
 
-                % two seperate terms required for L
-                Bexp_Lambda = -this.expAugB' * UnderbarLambda_old;
-                L1 = Bexp_Lambda * this.expAugB + expAugR;
-                L2 = Bexp_Lambda * this.expAugA;
-
-                % two seperate terms required for K
-                K1 = augV;
-                K2 = zeros(this.dimState, this.dimAugmentedMeas);
-
-                K_C = zeros(this.dimState, this.dimState, numCombinations);
-
-                for i=1:numCombinations
-                    K_C(:, :, i) = K_old * this.augC(:, :, i);
-                    UnderbarPsi = UnderbarPsi +  probC(i) * K_C(:, :, i) * OverbarPsi_old * K_C(:, :, i)'; % complete
-                    
-                    Aexp_KC = this.expAugA - K_C(:, :, i);
-                    BexpL_KC = BexpL - K_C(:, :, i);
-                    UnderbarLambda = UnderbarLambda + ...
-                        probC(i) * (Aexp_KC' * UnderbarLambda_old * Aexp_KC ...
-                                    - BexpL_KC' * UnderbarLambda_old * BexpL_KC);
-                    
-                    OverbarPsi_C = probC(i) * OverbarPsi_old * this.augC(:, :, i)';
-                                        
-                    K1 = K1 + this.augC(:, :, i) * OverbarPsi_C;
-                    K2 = K2 + OverbarPsi_C;
-                end
-
+                % two separate terms required for L
+                Bexp_Lambda = -this.expAugB' * UnderbarLambda_old;                              
+                % compute the feedback gain L
+                B_lambda_Sum = mtimesx(augB, 'T', Lambda_sum);
+                L1 = Bexp_Lambda * this.expAugB + expAugR + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
+                    .* mtimesx(B_lambda_Sum, augB), 3);  % should be symmetric
+                L2 = Bexp_Lambda * this.expAugA + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
+                    .* mtimesx(B_lambda_Sum, augA) , 3);   
+                L = pinv((L1 + L1') / 2) * L2;
+                
+                % two separate terms required for K
+                PsiC = mtimesx(OverbarPsi_old, this.augC, 'T');
+                CPsiC = mtimesx(this.augC, PsiC); % should be symmetric                
+                % expectation with respect to C
+                K2 = this.expAugA * sum(reshape(probC, 1, 1, numCombinations) .* PsiC, 3);
+                K1 = augV + sum(reshape(probC, 1, 1, numCombinations) .* CPsiC, 3); % should be symmetric  
+                K = K2 * pinv((K1 + K1') / 2);                
+ 
+                K_C = mtimesx(K_old, this.augC); % KC for all i
+                
+                % expectation with respect to C
+                KCOverbarPsiKC = K_old * sum(reshape(probC, 1, 1, numCombinations) .* CPsiC, 3) * K_old'; % should be symmetric
+                UnderbarPsi = UnderbarPsi + (KCOverbarPsiKC + KCOverbarPsiKC') / 2; % complete
+                
+                Aexp_KC = this.expAugA - K_C;
+                BexpL_KC = BexpL - K_C;                
+                Aexp_KCUnderbarLambdaAexp_KC = mtimesx(Aexp_KC, 'T', mtimesx(UnderbarLambda_old, Aexp_KC)); % should be symmetric
+                BexpL_KCUnderbarLambdaBexpL_KC = mtimesx(BexpL_KC, 'T', mtimesx(UnderbarLambda_old, BexpL_KC)); % should be symmetric
+                                
+                partSum = sum(reshape(probC, 1, 1, numCombinations) .* (Aexp_KCUnderbarLambdaAexp_KC - BexpL_KCUnderbarLambdaBexpL_KC), 3);               
+                UnderbarLambda = UnderbarLambda + (partSum + partSum') / 2;
+                
+                BL = mtimesx(augB, L_old); % BL for all modes i
+                ABL = augA - BL;
+                ABLPsiABL = mtimesx(ABL, mtimesx(UnderbarPsi_old, ABL, 'T')); % should be symmetric
+                ABLLambdaABL = mtimesx(ABL, 'T', mtimesx(Lambda_sum, ABL)); % should be symmetric
+                BLambdaB = mtimesx(augB, 'T', mtimesx(OverbarLambda_old, augB)); %B'*Lambda*B for all modes i
+                
+                OverbarPsi = OverbarPsi + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
+                    .* (ABLPsiABL + permute(ABLPsiABL, [2 1 3])) / 2, 3);
+                OverbarLambda = OverbarLambda + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
+                    .* (ABLLambdaABL + permute(ABLLambdaABL, [2 1 3])) / 2, 3); % complete
+                LBLambdaBL = L_old' * sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) .* BLambdaB, 3) * L_old;
+                UnderbarLambda = UnderbarLambda + (LBLambdaBL + LBLambdaBL') / 2;                
+                
                 for j=1:numModes
-                    BL = augB(:, :, j) * L_old;
-                    A_BL = augA(:, :, j) - BL;
+                    A_KC = augA(:, :, j) - K_C;
+                    BL_KC = BL(:, :, j) - K_C;
+                    AKCPsiAKC = mtimesx(A_KC, mtimesx(OverbarPsi_old, A_KC, 'T')); % should be symmetric
+                    BLKCLambdaBLKC = mtimesx(BL_KC, 'T', mtimesx(UnderbarLambda_old, BL_KC)); % should be symmetric
+                    
+                    innerExpectationOverbarPsi = sum(reshape(probC, 1, 1, numCombinations) ...
+                        .*  AKCPsiAKC, 3); % should be symmetric
+                    innerExpectationUnderbarLambda = sum(reshape(probC, 1, 1, numCombinations) ...
+                        .*  BLKCLambdaBLKC, 3); % should be symmetric
 
                     OverbarPsi = OverbarPsi + ...
-                        this.stationaryModeDistribution(j) * A_BL * UnderbarPsi_old * A_BL';
-                    OverbarLambda = OverbarLambda + ...
-                        this.stationaryModeDistribution(j) * (A_BL' * Lambda_sum * A_BL); % complete
+                        this.stationaryModeDistribution(j) * (innerExpectationOverbarPsi + innerExpectationOverbarPsi') / 2; % complete
                     UnderbarLambda = UnderbarLambda + ...
-                            this.stationaryModeDistribution(j) * (BL' * OverbarLambda_old * BL);
-
-                    % compute the feedback gain L
-                    B_LambdaSum = this.stationaryModeDistribution(j) * augB(:, :, j)' * Lambda_sum;
-                    L1 = L1 + B_LambdaSum * augB(:, :, j);
-                    L2 = L2 + B_LambdaSum * augA(:, :, j);
-
-                    innerExpectationOverbarPsi = zeros(this.dimState);
-                    innerExpectationUnderbarLambda = zeros(this.dimState);
-                    for i=1:numCombinations
-                        A_KC = augA(:, :, j) - K_C(:, :, i);
-                        BL_KC = BL - K_C(:, :, i);
-  
-                        innerExpectationOverbarPsi = innerExpectationOverbarPsi + ...
-                            probC(i) * A_KC * OverbarPsi_old * A_KC';
-
-                        innerExpectationUnderbarLambda = innerExpectationUnderbarLambda + ...
-                             probC(i) * BL_KC' * UnderbarLambda_old * BL_KC;
-                    end
-
-                    OverbarPsi = OverbarPsi + ...
-                        this.stationaryModeDistribution(j) * innerExpectationOverbarPsi; % complete
-                    UnderbarLambda = UnderbarLambda + ...
-                        this.stationaryModeDistribution(j) * innerExpectationUnderbarLambda; % complete
+                        this.stationaryModeDistribution(j) * (innerExpectationUnderbarLambda + innerExpectationUnderbarLambda') / 2; % complete
                 end
-                L = pinv(L1) * L2;
-                K = this.expAugA * K2 * pinv(K1);
                 % end compute next iterates
                 k = k + 1;
             end
@@ -479,14 +486,12 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
 
             % compute the expected augmented sys matrices
             % only the upper right corner of expAugA is stochastic,
-            % mode-dependent
-            expBH = zeros(this.dimPlantState, dimEta);
-            for i = 1:numModes
-                augA(1:this.dimPlantState, end - dimEta + 1:end, i) = B * H(:,:,i);
-                augA(this.dimPlantState + 1:2 * this.dimPlantState, 1:this.dimPlantState, i) = D;
-                
-                expBH = expBH + this.stationaryModeDistribution(i) * B * H(:,:,i);
-            end
+            % mode-dependent, but H is zero for first and last mode
+            BH = mtimesx(B, H(:, :, 2:this.sequenceLength)); % compute B * H(:, :, i) in one shot for all i (expect first and last mode)
+            augA(1:this.dimPlantState, end - dimEta + 1:end, 2:this.sequenceLength) = BH;
+            augA(this.dimPlantState + 1:2 * this.dimPlantState, 1:this.dimPlantState, :) = repmat(D, 1,1, numModes);
+            expBH = sum(reshape(this.stationaryModeDistribution(2:this.sequenceLength), 1, 1, numModes - 2) .* BH, 3);
+
             expAugA = blkdiag(A, E, F);
             expAugA(this.dimPlantState + 1:2 * this.dimPlantState, 1:this.dimPlantState) = D;
             expAugA(1:this.dimPlantState, end - dimEta + 1:end) = expBH;
@@ -502,14 +507,14 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         
         %% computeExpectedAugmentedCostMatrices
         function [expAugQ, expAugR] = computeExpectedAugmentedCostMatrices(this, H)
-            numModes = this.sequenceLength + 1;
             dimZeros = (this.measBufferLength - 1) * this.dimPlantState;
+  
+            % H is zero for first and last mode
+            HRH = mtimesx(H(:, :, 2:this.sequenceLength), 'T', ...
+                mtimesx(this.R, H(:, :, 2:this.sequenceLength))); % should be symmetric    
+            symmHRH =  (HRH + permute(HRH, [2 1 3])) / 2; % ensure the symmetry of each H'RH
             
-            expHRH = zeros(this.dimState - dimZeros - this.dimPlantState);
-
-            for i = 1:numModes
-                expHRH = expHRH + this.stationaryModeDistribution(i) * H(:, :, i)' * this.R * H(:, :, i);
-            end
+            expHRH = sum(reshape(this.stationaryModeDistribution(2:this.sequenceLength), 1, 1, []) .* symmHRH, 3);
             expAugQ = blkdiag(this.Q, zeros(dimZeros), expHRH);
             
             % J matrix is only nonzero for first mode, so only this

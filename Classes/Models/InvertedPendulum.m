@@ -6,6 +6,8 @@ classdef InvertedPendulum < NonlinearPlant
     % angular velocity of the pendulum.
     % Note that the state was chosen such that the unstable upward
     % equilibrium corresponds to an angle of pi.
+    % Moreover, the pendulum is assumed to be a uniform rod with center of
+    % mass located in the middle.
     
     % >> This function/class is part of CoCPN-Sim
     %
@@ -17,7 +19,7 @@ classdef InvertedPendulum < NonlinearPlant
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -48,7 +50,7 @@ classdef InvertedPendulum < NonlinearPlant
     
     methods (Access = public)
         %% InvertedPendulum
-        function this = InvertedPendulum(massCart, massPendulum, lengthPendulum, inertia, friction, samplingInterval)
+        function this = InvertedPendulum(massCart, massPendulum, lengthPendulum, friction, samplingInterval)
             % Class constructor.
             %
             % Parameters:
@@ -59,10 +61,7 @@ classdef InvertedPendulum < NonlinearPlant
             %      A positive scalar denoting the mass (in kg) of the pendulum.
             %
             %   >> lengthPendulum (Positive scalar)
-            %      A positive scalar denoting the length/distance to pendulum center of mass (in m).
-            %
-            %   >> inertia (Positive scalar)
-            %      A positive scalar denoting the moment of inertia of the pendulum (in kgm²).
+            %      A positive scalar denoting the length of the pendulum rod (in m).
             %
             %   >> friction (Positive scalar)
             %      A positive scalar denoting the coefficient of friction for the cart (in Ns/m).
@@ -80,7 +79,7 @@ classdef InvertedPendulum < NonlinearPlant
             this.massCart = massCart;
             this.massPendulum = massPendulum;
             this.lengthPendulum = lengthPendulum;
-            this.inertia = inertia;
+            this.inertia = massPendulum * lengthPendulum^2 / 3; % moment of inertia of the pendulum, assuming a uniform rod (center of mass in the middle)
             this.friction = friction;
             this.samplingInterval = samplingInterval;
         end

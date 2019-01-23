@@ -3,6 +3,10 @@ classdef InfiniteHorizonController < SequenceBasedController
     % NCS with a TCP-like network connecting the controller and the
     % actuator.
     %
+    % While this implementation is to some extent more general than the original one of Fischer et al., 
+    % which can be found <a href="matlab:web('http://www.cloudrunner.eu/algorithm/142/optimal-sequence-based-lqg-control-over-tcp-like-networks/version/1/')" >here</a>, 
+    % some parts are directly based thereof.
+    %
     % Literature: 
     %   Jörg Fischer, Achim Hekler, Maxim Dolgov, and Uwe D. Hanebeck,
     %   Optimal Sequence-Based LQG Control over TCP-like Networks Subject to Random Transmission Delays and Packet Losses,
@@ -13,12 +17,7 @@ classdef InfiniteHorizonController < SequenceBasedController
     %   On Stability of Sequence-Based LQG Control,
     %   Proceedings of the 52st IEEE Conference on Decision and Control (CDC 2013),
     %   Florence, Italy, December 2013.
-    %
-    % While this implementation is to some extent more general than the original one of Fischer et al., 
-    % which can be found <a href="matlab:
-    % web('http://www.cloudrunner.eu/algorithm/142/optimal-sequence-based-lqg-control-over-tcp-like-networks/version/1/')"
-    % >here</a>, some parts are directly based thereof.
-    
+        
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
@@ -29,7 +28,7 @@ classdef InfiniteHorizonController < SequenceBasedController
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -52,9 +51,6 @@ classdef InfiniteHorizonController < SequenceBasedController
         % input cost matrix;
         % (positive definite matrix of dimension <dimU> x <dimU>)
         R = [];
-        % packet delay probability density function of the controller-actuator-
-        % link; (vector of dimension >= <sequenceLength>)
-        delayProb = [];
         %% derived properties
         % CA-network-actuator system
         % mapping for propagation of possible control inputs;
@@ -144,8 +140,8 @@ classdef InfiniteHorizonController < SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
-           
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength);        
+                       
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
             this.Q = Q;
@@ -153,23 +149,14 @@ classdef InfiniteHorizonController < SequenceBasedController
                                      
             % delayProb
             Validator.validateDiscreteProbabilityDistribution(delayProb);
-            elementCount = numel(delayProb);
-            if elementCount <= sequenceLength
-                % fill up with zeros (row vector)
-                probHelp = [reshape(delayProb, 1, elementCount), zeros(1, sequenceLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                probHelp = [delayProb(1:sequenceLength), 1 - sum(delayProb(1:sequenceLength))];
-            end
-            % store as row vector, i.e., column-wise arranged
-            this.delayProb = probHelp;
-
-            % Check for stabilizablity of A by B
+                       
+            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1));
+            
+             % Check for stabilizablity of A by B
             assert(dimX -rank(ctrb(A, B)) == 0, ...
                 'InfiniteHorizonController:InvalidPlant', ...
                 '** Plant (A, B) has uncontrollable eigenvalues **');
-                        
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(this.delayProb);
             
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
                 = Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R);
@@ -178,11 +165,11 @@ classdef InfiniteHorizonController < SequenceBasedController
             % make controller covariance matrices and check result
             [P, this.status] = this.computeSteadyStateControlCovarianceMatrices(A, augA, augB, augQ, augR);
             if this.status == -2
-              error(['** Stabizilizing infinite time horizon controller', ...
-                'does not exist. **']);
+                error(['** Stabizilizing infinite time horizon controller', ...
+                    'does not exist. **']);
             end
             this.L = this.computeSteadyStateControlGainMatrices(augA, augB, augR, P);
-        end % function InfiniteHorizonController    
+        end
   
         %% reset
         function reset(this)
@@ -253,7 +240,9 @@ classdef InfiniteHorizonController < SequenceBasedController
             %
             % Pout(:,:,markovMode), markovMode: 1...packetLength+1 (1 = no delay)
             %========================================================================  
-            currP = zeros(this.dimState, this.dimState, this.sequenceLength + 1);
+            numModes = this.sequenceLength + 1;
+            
+            currP = zeros(this.dimState, this.dimState, numModes);
             previousP = currP;
             PreviousConvergeDiff = 0;
             %fallingFlag = 0;
@@ -338,22 +327,23 @@ classdef InfiniteHorizonController < SequenceBasedController
                 end
                 PreviousConvergeDiff = convergeDiff;
                 previousP = currP;
-                currP = zeros(this.dimState, this.dimState, this.sequenceLength+1);
-     
-                for j = 1 : this.sequenceLength + 1
-                    % temporary components of
-                    P1 = 0;
-                    P2 = 0;
-                    P3 = 0;
-                    for i = 1 : this.sequenceLength + 1
-                        P1 = P1 + this.transitionMatrix(j,i) * ( augQ(:,:,i) + ...
-                            augA(:,:,i)' * previousP(:,:,i) * augA(:,:,i) );
-                        P2 = P2 + this.transitionMatrix(j,i) * ...
-                            (augA(:,:,i)' * previousP(:,:,i) * augB(:,:,i));
-                        P3 = P3 + this.transitionMatrix(j,i) * ( augR(:,:,i) ...
-                            + augB(:,:,i)' * previousP(:,:,i) * augB(:,:,i) );
-                    end
-                    currP(:,:,j) = P1 - P2 * pinv(P3) * P2';
+                currP = zeros(this.dimState, this.dimState, numModes);
+                
+                AP = mtimesx(augA, 'T', previousP);
+                BP = mtimesx(augB, 'T', previousP);
+                APA = mtimesx(AP, augA);
+                QAPA = augQ + (APA + permute(APA, [2 1 3])) / 2; % ensure symmetry
+                BPB = mtimesx(BP, augB);
+                APB = mtimesx(AP, augB);
+                RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2; % ensure symmetry
+                
+                for j = 1:numModes
+                    P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAPA, 3);
+                    P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* APB, 3);
+                    P3 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBPB, 3);
+
+                    P4 = P2 * pinv(P3) * P2';
+                    currP(:,:,j) = P1 - (P4 + P4') / 2;   % ensure that symmetry is maintained                
                 end
             end
         end
@@ -379,15 +369,15 @@ classdef InfiniteHorizonController < SequenceBasedController
             dim = size(augR, 1);
             
             L = zeros(dim, this.dimState, numModes);
+            BP = mtimesx(augB, 'T', P);
+            BPB = mtimesx(BP, augB);
+            % ensure the symmetry 
+            RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2;
+            BPA = mtimesx(BP, augA);
+                        
             for j = 1:numModes
-                L_1 = zeros(dim);
-                L_2 = zeros(dim, this.dimState);
-                for i = 1:numModes
-                    L_1 = L_1 + this.transitionMatrix(j,i)*...
-                        (augR(:,:,i) + augB(:,:,i)'* P(:,:,i)* augB(:,:,i));
-                    L_2 = L_2 + this.transitionMatrix(j,i)*...
-                        (augB(:,:,i)'* P(:,:,i) * augA(:,:,i));
-                end
+                L_1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBPB, 3);
+                L_2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* BPA, 3);
                 L(:,:,j) = - pinv(L_1) * L_2;
             end
         end

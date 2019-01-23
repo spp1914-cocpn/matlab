@@ -8,6 +8,12 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     %   State Estimation in Networked Control Systems With Delayed And Lossy Acknowledgments,
     %   Proceedings of the 2017 IEEE International Conference on Multisensor Fusion and Integration for Intelligent Systems (MFI 2017),
     %   Daegu, Korea, November 2017.
+    %
+    %  	Florian Rosenthal, Benjamin Noack, and Uwe D. Hanebeck,
+    %   State Estimation in Networked Control Systems with Delayed and Lossy Acknowledgments,
+    %   Multisensor Fusion and Integration in the Wake of Big Data, Deep Learning and Cyber Physical System,
+    %   Lecture Notes in Electrical Engineering, Volume 501,
+    %   Springer, Cham, 2018.
     
     % >> This function/class is part of CoCPN-Sim
     %
@@ -19,7 +25,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -55,9 +61,13 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         trueModeHistory;
         % cell array where each entry is a matrix of inputs applied to the system in each
         % mode (might be empty)
-        % inputHistory{i} contains the inputs used at time k-i where k is
+        % inputHistory{i} contains the inputs used at time k-i, where k is
         % the current time
         inputHistory;
+        % 3D matrix, where each slice is a mode transition matrix
+        % i-th slice indicates the mode transition matrix of the MJLS at
+        % time k-i, where k is the current time
+        modeTransitionMatrixHistory;
     end
     
     methods (Access = public)
@@ -102,6 +112,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             this.measurementHistory = cell(1, maxMeasDelay);
             this.inputHistory = cell(1, maxMeasDelay + 1);
             this.trueModeHistory = cell(1, maxMeasDelay + 1);
+            
+            this.modeTransitionMatrixHistory = repmat(modeTransitionMatrix, 1, 1, maxMeasDelay + 1);
         end
         
         %% reset
@@ -283,14 +295,21 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 applicableModeDelays = [];
             end
             [applicableMeasurements, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
-            
-            if nargout == 1
-                s = tic;
-                this.tryPerformStep(sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays); 
-                runtime = toc(s);
-            else
-                this.tryPerformStep(sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays);
+                
+            s = tic;
+            try
+                this.performStep(sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays);
+            catch ex
+                % copied from Filter
+                if ~strcmp(ex.identifier, 'Filter:IgnoreMeasurement') ...
+                    && ~strcmp(ex.identifier, 'Filter:IgnorePrediction')
+                    % real error => do not catch it
+                    ex.rethrow();
+                end
             end
+            if nargout == 1
+                runtime = toc(s);
+            end            
             % save the update data
             numUsedMeas = size(applicableMeasurements, 2);
             this.setLastUpdateMeasurementData(numUsedMeas, size(measurements, 2) - numUsedMeas);
@@ -301,10 +320,9 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         %% performSetState
         function performSetState(this, state)
             this.immf.setState(state);
-            [means, covs, weights] = this.immf.getState().getComponents();
             % set history to new state
             for j=1:this.maxMeasurementDelay + 1
-                this.stateHistory{j} = GaussianMixture(means, covs, weights);
+                this.stateHistory{j} = this.immf.getState().copy();
             end            
         end
         
@@ -314,7 +332,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             [means, covs, weights] = this.immf.getState().getComponents();
             % set history to new state
             for j=1:this.maxMeasurementDelay + 1
-                this.stateHistory{j} = GaussianMixture(means, covs, weights);
+                this.stateHistory{j} = this.immf.getState().copy();
             end  
         end
                 
@@ -343,19 +361,17 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 % empty
                 maxDelay = 0;
             end
+            currentModeTransitionMatrix = this.immf.modeTransitionProbs; % we have to memorize the current matrix            
             currentMeasurements = this.incorporateDelayedMeasurements(applicableMeasurements, applicableDelays);
             currentMode = this.incorporateDelayedModeMeasurements(applicableModes, applicableModeDelays);
-            % remember the current inputs
-            currentInputs = [];%this.getSystemInputs(sysModel);
+    
             this.inputHistory{1} = this.getSystemInputs(sysModel);
             % handle border case that maxDelay is this.maxMeasurementDelay + 1 
             % (maximum allowed delay for a mode observation)
             delays = min(maxDelay, this.maxMeasurementDelay):-1:0;
             for i=delays %i = maxDelay:-1:0 using this expression directly does not seem to work correctly when compiled 
-                % check what filter to use, depending on whether true
-                % mode i+1 steps before (i.e., the previous mode) is known or not
+                % check whether true mode i+1 steps before (i.e., the previous mode) is known or not
                 trueMode = this.trueModeHistory{i + 1};
-                inputs = this.inputHistory{i + 1}; % inputs for prediction
                 if ~isempty(trueMode)
                     % we also have to update the posterior (mode probs) at this time
                     [modeStateMeans, modeStateCovs, ~] = this.stateHistory{i + 1}.getComponents();
@@ -369,7 +385,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                     measurements = currentMeasurements;
                 end
                 this.immf.setState(this.stateHistory{i + 1});
-                DelayedModeIMMF.applyInputs(sysModel, inputs);
+                this.immf.setModeTransitionMatrix(this.modeTransitionMatrixHistory(:, :, i + 1));
+                DelayedModeIMMF.applyInputs(sysModel, this.inputHistory{i + 1}); % inputs for prediction
                 this.immf.performPrediction(sysModel);
                 if ~isempty(measurements)
                     this.immf.performUpdate(measModel, measurements);
@@ -380,7 +397,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 end
             end                   
             % update history for the next step (i.e., proceed to k+1)
-            this.updateHistory(currentInputs, currentMeasurements, currentMode);
+            this.updateHistory(currentMeasurements, currentMode, currentModeTransitionMatrix);
         end
     end
     
@@ -389,7 +406,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         function delays = checkMeasurementsAndDelays(this, measurements, measDelays)
             if ~ismatrix(measurements)
                 this.error('InvalidMeasurements', ...
-                          '** measurements must be given as a (possibly empty) matrix **');
+                    '** measurements must be given as a (possibly empty) matrix **');
             end
             numMeas = size(measurements, 2);
             delays = [];
@@ -492,30 +509,10 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                     '** %s\nIgnoring %d of %d mode observations. **', 'Delay too large', ...
                     numel(modeDelays) - numel(idx), numel(modeDelays));
             end
-        end
-        
-        %% tryPerformStep
-        function tryPerformStep(this, sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays)
-            try
-                this.performStep(sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays);
-            catch ex
-                 % copied from Filter
-                if ~strcmp(ex.identifier, 'Filter:IgnoreMeasurement') ...
-                        && ~strcmp(ex.identifier, 'Filter:IgnorePrediction')
-                    % real error => do not catch it
-                   ex.rethrow();
-                end
-           end    
-        end
+        end      
         
         %% updateHistory
-        function updateHistory(this, currentInputs, currentMeasurements, currentTrueMode)
-            if nargin == 2
-                currentMeasurements = [];
-                currentTrueMode = [];
-            elseif nargin == 3
-                currentTrueMode = [];
-            end
+        function updateHistory(this, currentMeasurements, currentTrueMode, currentModeTransitionMatrix)
             % update state, input and measurement history for the next step
             this.stateHistory = circshift(this.stateHistory, 1, 2);
             this.stateHistory{1} = this.immf.getState();
@@ -524,11 +521,14 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             this.measurementHistory{1} = currentMeasurements;
             
             this.inputHistory = circshift(this.inputHistory, 1, 2);
-            this.inputHistory{1} = currentInputs;
+            this.inputHistory{1} = []; % not known, as we need estimate for computation of inputs
            
             this.trueModeHistory = circshift(this.trueModeHistory, 1, 2);
             this.trueModeHistory{1} = currentTrueMode;
-            
+      
+            this.modeTransitionMatrixHistory = cat(3, currentModeTransitionMatrix, ...
+                this.modeTransitionMatrixHistory(:, :, 1:this.maxMeasurementDelay));
+
             % if called at time k, the history is prepared for k+1
         end
         
@@ -539,29 +539,18 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             usedInputs{this.immf.numModes} = [];
             if ~isempty(modeSpecificInputs)
                  usedInputs = modeSpecificInputs;
-            end    
+            end
         end
               
     end
     
     methods (Access = private, Static)
         %% applyInputs
-        function applyInputs(sysModel, inputs, mode)
+        function applyInputs(sysModel, inputs)
             % assume that sysModel is a JumpLinearSystemModel and inputs is
             % an array of inputs
-            if nargin == 2
-                % i-th input to be applied to i-th system model
-                sysModel.setSystemInput(inputs);
-            else
-                % assume mode is in bounds
-                % only apply input for given mode
-                if isempty(inputs)
-                    input = [];
-                else
-                    input = inputs(:, mode);
-                end
-                sysModel.modeSystemModels{mode}.setSystemInput(input);
-            end
+            % so i-th input to be applied to i-th system model
+            sysModel.setSystemInput(inputs);
         end
     end
 end

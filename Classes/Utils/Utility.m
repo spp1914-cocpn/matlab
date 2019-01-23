@@ -5,13 +5,13 @@ classdef Utility < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -185,8 +185,8 @@ classdef Utility < handle
 
             if controlSequenceLength == 1
                 F = [];
-                G = zeros(0, dimPlantInput); % so that caller has not perform a check for length of sequence
-                H = zeros(dimPlantInput, 0, 2); % so that caller has not perform a check
+                G = zeros(0, dimPlantInput); % so that caller has not to perform a check for length of sequence
+                H = zeros(dimPlantInput, 0, 2); % so that caller has not to perform a check
                 J = cat(3, eye(dimPlantInput), zeros(dimPlantInput));
                 if nargout == 6
                     augA = repmat(A, 1, 1, 2);
@@ -222,17 +222,17 @@ classdef Utility < handle
                     H(:, colIdx:colIdx + dimPlantInput -1, i + 1) = speye(dimPlantInput);
                 end
 
-                % create J matrices
+                % create J matrices, zeros for all but first mode
                 J = zeros(dimPlantInput, dimPlantInput * controlSequenceLength, controlSequenceLength + 1);
                 J(:, 1:dimPlantInput, 1) = speye(dimPlantInput);
 
                 if nargout == 6
                     augA = repmat(blkdiag(A, F), 1, 1, controlSequenceLength + 1);
                     augB = repmat([zeros(dimPlantState, size(G,2)); G], 1, 1, controlSequenceLength + 1);
-                    augB(1:dimPlantState, 1:dimPlantInput, 1) = B; % upper part of augB is only non-zero for the first mode
-                    for i = 1:controlSequenceLength + 1
-                        augA(1:dimPlantState, dimPlantState + 1:end, i) = B * H(:,:,i);
-                    end
+                    % upper part of augB is only non-zero for the first mode
+                    augB(1:dimPlantState, 1:dimPlantInput, 1) = B;
+                    % augA mode-dependent, but H is zero for first and last mode
+                    augA(1:dimPlantState, dimPlantState + 1:end, 2:controlSequenceLength) = mtimesx(B, H(:, :, 2:controlSequenceLength));
                 end
             end   
         end
@@ -310,6 +310,7 @@ classdef Utility < handle
             end
         end
         
+        %% performModelAugmentation
         function [dimAugmentedState, F, G, augA, augB, augQ, augR] ...
             = performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R, Z)
             % Convenience function to compute the matrices of 1) the augmented state space which describes the
@@ -462,44 +463,87 @@ classdef Utility < handle
         
         %% calculateDelayTransitionMatrix
         function transitionMatrix = calculateDelayTransitionMatrix(delayProbs)
-            %========================================================================
-            % calculateDelayTransitionMatrix: calculates time delay transition matrix
-            % The function determines the transition matrix a the Markov chain whose
-            % state describes the time delay of the combined model of communication
-            % network and actuator.
+            % Compute the (possibly time-varying) transition matrix of the Markov chain that occurs in the combined stochastic model 
+            % of communication network and actuator. 
+            % Note that no parameter checks are carried out.
             %
-            % Synopsis:
-            % transitionMatrix = Utility.calculateDelayTransitionMatrix( delayProbs )
-            % 
-            % Input Prameter:
-            % - uDelProbs: describes the probabilities of control input time delays.
-            %   Thereby the i-th entry of delayProb is the probability that a delay 
-            %   of i - 1 time steps occurs. Sum of vector must be equal to 1;
-            %   E.g.: uDelProbls = [0.1 0.9] means that a packet will pass the 
-            %   network without delay with probability 0.1. A delay of one time step
-            %   occurs with probability 0.9.
-            %   (vector of positive floats)
+            % Literature: 
+            %   Jörg Fischer, Achim Hekler, and Uwe D. Hanebeck,
+            %   State Estimation in Networked Control Systems,
+            %   Proceedings of the 15th International Conference on Information Fusion (Fusion 2012),
+            %   Singapore, July 2012.
             %
-            % Output Paramter:
-            % - trans: transition matrix of the Markov chain
-            %   (matrix with dimension numel(uDelProbs) x numel(uDelProbs))
+            %   Jörg Fischer, Achim Hekler, Maxim Dolgov and Uwe D. Hanebeck,
+            %   Optimal Sequence-Based LQG Control over TCP-like Networks Subject
+            %   to Random Transmission Delays and Packet Losses,
+            %   Proceedings of the 2013 American Control Conference (ACC 2013), 
+            %   Washington D. C., USA, June 2013.
             %
-            %========================================================================
-           
+            % Parameters:
+            %   >> delayProbs (Nonnegative vector or matrix)
+            %      -If a vector is passed:
+            %       A vector with nonnegative entries that sum up to 1
+            %       that describes the probability distribution specifying
+            %       the (time-invariant) delays of the control sequences.
+            %       The i-th entry denotes the probability that a delay of
+            %       (i-1) time steps occurs, and the last entry specifies
+            %       the loss probability (i.e., infinite delay).
+            %      -If a matrix is passed:
+            %       A matrix where each column is a vector with nonnegative 
+            %       entries that sum up to 1 to describe the probability
+            %       distributions of the (time-varying) delays of the
+            %       control sequences.
+            %       In particular, the first column specifies the delay
+            %       distribution of the control sequence from the current
+            %       time step, the second column the delay distribution of
+            %       the control sequence from the previous time step, and
+            %       so forth. In total, N-1 distributions (i.e. columns) must
+            %       be given, where N-1 is the sequence length.
+            %       The i-th entry of each column denotes the probability that a delay of
+            %       (i-1) time steps occurs, and the last entry specifies
+            %       the loss probability (i.e., infinite delay).
+            %
+            % Returns:
+            %   << transitionMatrix (Square matrix)
+            %      The transition matrix of the resulting Markov chain,
+            %      which is of dimension N-by-N where N is the number of
+            %      elements of the given delay distribution.
+            %      Note that this matrix is always lower Hessenberg.
+                       
             probabilityBound = 1e-12;
             idx = find(delayProbs <= probabilityBound);
             normalizedDelayProbs = delayProbs;
             if ~isempty(idx)
                 normalizedDelayProbs(idx) = probabilityBound;
-                normalizedDelayProbs = normalizedDelayProbs / sum(normalizedDelayProbs);
+                normalizedDelayProbs = normalizedDelayProbs ./ sum(normalizedDelayProbs);
             end
             sums = cumsum(normalizedDelayProbs);
-            transitionMatrix = diag(1 - sums(1:end -1), 1);
-            % calculate Transition matrix
-            for j=1:numel(normalizedDelayProbs)
-                transitionMatrix(j:end, j) = normalizedDelayProbs(j);
+            if isvector(normalizedDelayProbs)
+                % probability vector given -> time-invariant transition matrix
+                transitionMatrix = diag(1 - sums(1:end -1), 1);
+                % calculate Transition matrix
+                for j=1:numel(normalizedDelayProbs)
+                    transitionMatrix(j:end, j) = normalizedDelayProbs(j);
+                end
+            else
+                % matrix given, with column-wise arranged delay
+                % distributions: the one for packet from the current time step in the first
+                % colum, and so forth
+                [numModes, seqLength] = size(normalizedDelayProbs);
+                % number of rows =  modes 
+                % number of columns should be numModes-1 = sequence length
+                
+                % compute q_tilde(m)
+                q_tilde = diag(normalizedDelayProbs) ./ [1; 1 - diag(sums, 1)];
+                prods = cumprod(1-q_tilde);
+                transitionMatrix = diag(prods, 1);
+                transitionMatrix(1:seqLength, 1) = q_tilde(1);
+                for j = 2:seqLength
+                    transitionMatrix(j:seqLength, j) = q_tilde(j) * prods(j-1);
+                end
+                transitionMatrix(numModes, :) = transitionMatrix(seqLength, :);
             end
-        end
+        end      
         
         %% computeStationaryDistribution
         function stationaryDist = computeStationaryDistribution(transitionMatrix, useEig)
@@ -558,6 +602,39 @@ classdef Utility < handle
             end
         end
         
+        %% truncateDiscreteProbabilityDistribution
+        function distribution = truncateDiscreteProbabilityDistribution(probs, numElements)
+            % Convenience function to truncate or extend a given discrete
+            % probability distribution to a given number of elements.
+            % Note that no parameter checks are carried out.
+            %
+            % Parameters:
+            %   >> probs (Nonnegative vector)
+            %      A vector with nonnegative entries that sum up to 1
+            %      that describes a discrete probability distribution.
+            %
+            %   >> numElements (Positive integer)
+            %      The desired number of elements in the resulting
+            %      probability vector.
+            %
+            % Returns:
+            %   << distribution (Nonnegative column vector)
+            %      A column vector with nonnegative entries that sum up to 1
+            %      that describes a discrete probability distribution with the desired number of elements.
+            
+            numProbs = length(probs);
+            
+            if numProbs <= numElements
+                % fill up with zeros
+                distribution = [probs(:); zeros(numElements - numProbs, 1)];
+            else
+                % cut the distribution and fill up with an entry so that
+                % sum is 1 again
+                distribution = [reshape(probs(1:1:numElements -1), numElements -1, 1); 1 - sum(probs(1:1:numElements -1))];            
+            end
+        end
+        
+        %% calculateRMSE
         function rmse = calculateRMSE(trueStates, estimates)
             % Calculate the Root mean squared error (RMSE) of a collection of
             % estimates resulting from a Monte Carlo simulation.

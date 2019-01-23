@@ -12,7 +12,7 @@ classdef (Abstract) SequenceBasedController < handle
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -44,12 +44,13 @@ classdef (Abstract) SequenceBasedController < handle
     
     methods 
         function set.sequenceLength(this, seqLength)
-            Validator.validateSequenceLength(seqLength);
+            this.validateSequenceLengthOnSet(seqLength);
             this.sequenceLength = seqLength;
         end
     end
     
     methods (Access = protected)
+        %% SequenceBasedController
         function this = SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength)
             % Class constructor.
             %
@@ -71,6 +72,23 @@ classdef (Abstract) SequenceBasedController < handle
             this.dimPlantState = dimPlantState;
             this.dimPlantInput = dimPlantInput;
             this.sequenceLength = sequenceLength;
+        end
+        
+        %% validateSequenceLengthOnSet
+        function validateSequenceLengthOnSet(this, seqLength)
+            % This function is called upon change of the sequence length to
+            % validate the new value. 
+            % By default it simply checks whether the given value is a
+            % positive integer, and errors if not.
+            % It can be overidden by subclasses in order to perform
+            % additional checks.
+            % In any case, it should error if given value is invalid.
+            %
+            % Parameters:
+            %   >> seqLength (Positive integer)
+            %      The desired new value of the sequence length.
+            %
+            Validator.validateSequenceLength(seqLength);
         end
     end
     
@@ -104,7 +122,7 @@ classdef (Abstract) SequenceBasedController < handle
             assert(Checks.isVec(state, this.dimPlantState) ...
                     && Checks.isVec(input, this.dimPlantInput), ...
                 'SequenceBasedController:ComputeStageCosts:InvalidStateInput', ...
-                '** <state> must be a %d-dimensional vector rows and <input> must be %d-dimensional vector', ...
+                '** <state> must be a %d-dimensional vector and <input> must be %d-dimensional vector', ...
                 this.dimPlantState, this.dimPlantInput);
             
             assert(Checks.isPosScalar(timestep) && mod(timestep, 1) == 0, ...

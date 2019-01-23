@@ -11,7 +11,7 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -46,8 +46,8 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
         expectedL;
         
         % for reaching a nonzero setpoint
-        setpoint;
         feedforward;
+        setpoint;
         stateTrajectoryNonzeroSetpoint;
         inputTrajectoryNonzeroSetpoint;
         
@@ -63,6 +63,9 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             % Wiley-Interscience, New York, 1972.
             %
             
+            this.dimX = 2;
+            this.dimU = 2;
+            
             V = diag([0.01, 1]); % in the book: z = V*x
             this.A = diag([0.9512, 0.9048]);
            
@@ -73,30 +76,29 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             this.expectedL = -[ 0.07125 -0.07029;
                                 0.01357 0.04548]; % F in the book
     
+            closedLoopSystem = feedback(ss(this.A, this.B, eye(this.dimX), [], []), ss(this.expectedL), +1); % discrete-time model
+                            
             this.sequenceLength = 10;
-            this.dimX = 2;
-            this.dimU = 2;
+            
             this.horizonLength = this.sequenceLength;
             this.initialPlantState = [0.1; 0];
-            [this.stateTrajectory, this.inputTrajectory] = this.computeTrajectories();
+            [this.stateTrajectory, this.inputTrajectory] = this.computeTrajectories(closedLoopSystem);
             
             this.setpoint = [42; 42];
-            % we require the feedforward term, computed according to
-            % Thereom 6.34 (p. 509, which is applicable as dimX = dimU) from
+            % we require a feedforward term now, computed according to
+            % Thereom 6.34 (p. 506), which is applicable as dimX = dimU, from
             %
             % Huibert Kwakernaak, and Raphael Sivan, 
             % Linear Optimal Control Systems,
             % Wiley-Interscience, New York, 1972.
             %
             
-            % connect plant and controller to obtain transfer matrix of
-            % closed loop system
+            % obtain transfer matrix of closed loop system
             % could also be computed directly: H(z) = I * inv(z*I - A -B*L) * B
-            closedLoopSystem = feedback(ss(this.A, this.B, eye(this.dimX), [], []), ss(this.expectedL), +1); % discrete-time model
             closedLoopTransferMatrix = tf(closedLoopSystem);
-            this.feedforward = inv(evalfr(closedLoopTransferMatrix, 1)) * this.setpoint; %#ok
+            this.feedforward = inv(dcgain(closedLoopTransferMatrix)) * this.setpoint; %#ok  
             [this.stateTrajectoryNonzeroSetpoint, this.inputTrajectoryNonzeroSetpoint] ...
-                = this.computeTrajectoriesNonzeroSetpoint();
+                = this.computeTrajectoriesNonzeroSetpoint(closedLoopSystem);
 
             this.controllerUnderTest = NominalPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength);
         end
@@ -104,30 +106,23 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
     
     methods (Access = private)
         %% computeTrajectories
-        function [stateTrajectory, inputTrajectory] = computeTrajectories(this)
-            stateTrajectory = zeros(this.dimX, this.horizonLength + 1);
-            inputTrajectory = zeros(this.dimU, this.horizonLength);
+        function [stateTrajectory, inputTrajectory] = computeTrajectories(this, closedLoopSystem)
+            [~, ~, stateTrajectory] = initial(closedLoopSystem, this.initialPlantState, this.horizonLength);
+            stateTrajectory = stateTrajectory';
             
-            stateTrajectory(:, 1) = this.initialPlantState;
-            for j = 1:this.horizonLength
-                % compute new input
-                inputTrajectory(:, j) = this.expectedL * stateTrajectory(:, j);
-                stateTrajectory(:, j + 1) = this.A * stateTrajectory(:, j) + this.B * inputTrajectory(:, j);
-            end
+            % compute the correspondig, expected inputs
+            inputTrajectory = this.expectedL * stateTrajectory(:, 1:this.horizonLength);
         end
         
         %% computeTrajectoriesNonzeroSetpoint
-        function [stateTrajectory, inputTrajectory] = computeTrajectoriesNonzeroSetpoint(this)
-                       
-            stateTrajectory = zeros(this.dimX, this.horizonLength + 1);
-            inputTrajectory = zeros(this.dimU, this.horizonLength);
+        function [stateTrajectory, inputTrajectory] = computeTrajectoriesNonzeroSetpoint(this, closedLoopSystem)            
+                      
+            [~,~, stateTrajectory] = lsim(closedLoopSystem, repmat(this.feedforward', this.horizonLength + 1, 1), ...
+                0:this.horizonLength, this.initialPlantState);
             
-            stateTrajectory(:, 1) = this.initialPlantState;
-            for j = 1:this.horizonLength
-                % compute new input
-                inputTrajectory(:, j) = this.expectedL * stateTrajectory(:, j) + this.feedforward;
-                stateTrajectory(:, j + 1) = this.A * stateTrajectory(:, j) + this.B * inputTrajectory(:, j);
-            end
+            stateTrajectory = stateTrajectory';
+            % compute the correspondig, expected inputs
+            inputTrajectory = this.expectedL * stateTrajectory(:, 1:this.horizonLength) + this.feedforward;            
         end
         
         %% computeCosts

@@ -8,6 +8,10 @@ classdef FiniteHorizonController < SequenceBasedController
     % i.e., soft expectation-type integral constraints, where a_i, b_i are state
     % and input weighting, c is a constant and K is the horizon length.
     %
+    % While this implementation is to some extent more general than the original one one by Maxim Dolgov, 
+    % which can be found <a href="matlab:web('http://www.cloudrunner.eu/algorithm/160/constrained-slqg-controller/version/1/')" >here</a>, 
+    % some parts are directly based thereof.
+    %
     % Literature: 
     %   Jörg Fischer, Achim Hekler, Maxim Dolgov, and Uwe D. Hanebeck,
     %   Optimal Sequence-Based LQG Control over TCP-like Networks Subject to Random Transmission Delays and Packet Losses,
@@ -18,12 +22,7 @@ classdef FiniteHorizonController < SequenceBasedController
     %   Sequence-based LQG Control over Stochastic Networks with Linear Integral Constraints,
     %   Proceedings of the 53rd IEEE Conference on Decision and Control (CDC 2014), 
     %   Los Angeles, California, USA, December 2014.
-    %
-    % While this implementation is to some extent more general than the original one by Maxim Dolgov, 
-    % which can be found <a href="matlab:
-    % web('http://www.cloudrunner.eu/algorithm/160/constrained-slqg-controller/version/1/')"
-    % >here</a>, some parts are directly based thereof.
-    
+
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
@@ -34,7 +33,7 @@ classdef FiniteHorizonController < SequenceBasedController
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -55,10 +54,7 @@ classdef FiniteHorizonController < SequenceBasedController
         Q = [];
         % input cost matrix;
         % (positive definite matrix of dimension <dimU> x <dimU>)
-        R = [];
-        % packet delay probability density function of the controller-actuator-
-        % link; (vector of dimension >= <sequenceLength>)
-        delayProb = [];
+        R = [];       
         % CA-network-actuator system
         % mapping for propagation of possible control inputs;
         % (matrix of dimension <dimU*sequenceLength*(sequenceLength-1)/2> x 
@@ -171,26 +167,16 @@ classdef FiniteHorizonController < SequenceBasedController
             
             % delayProb
             Validator.validateDiscreteProbabilityDistribution(delayProb);
-            elementCount = numel(delayProb);
-            if elementCount <= sequenceLength
-                % fill up with zeros (row vector)
-                probHelp = [reshape(delayProb, 1, elementCount), zeros(1, sequenceLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                probHelp = [delayProb(1:sequenceLength), 1 - sum(delayProb(1:sequenceLength))];
-            end
-            % store as row vector, i.e., column-wise arranged
-            this.delayProb = probHelp;
-
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(this.delayProb); 
+            this.transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
+                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1)); 
                         
             % augmented initial system state
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
                 = Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R);
             this.sysState = zeros(this.dimState, 1);
          
-            terminalK = blkdiag(this.Q, zeros(this.dimState - dimX)); % K_N for all modes (P_N in second paper mentioned above)
-            
+            terminalK = blkdiag(this.Q, zeros(this.dimState - dimX)); % K_N for all modes (P_N in second paper mentioned above), symmetric
+
             if this.constraintsPresent
                 terminalStateConstraintWeightings = squeeze(stateConstraintWeightings(:, end, :));
                 numConstraints = numel(constraintBounds);
@@ -296,22 +282,21 @@ classdef FiniteHorizonController < SequenceBasedController
             L = zeros(dim, this.dimState, numModes, this.horizonLength);
             for k=this.horizonLength:-1:1
                 K_prev = K_k; % K_{k+1}
+                KA = mtimesx(K_prev, augA);
+                AKA = mtimesx(augA, 'T', KA);
+                QAKA = augQ + (AKA + permute(AKA, [2 1 3])) / 2; % ensure symmetry
+                BKA = mtimesx(augB, 'T', KA);
+                BKB = mtimesx(augB, 'T', mtimesx(K_prev, augB));
+                RBKB = augR + (BKB + permute(BKB, [2 1 3])) / 2; % ensure symmetry
                 for j=1:numModes
-                    P1 = zeros(this.dimState);
-                    P2 = zeros(dim, this.dimState);
-                    P3 = zeros(dim);
-
-                    for i=1:numModes
-                        modeK = K_prev(:, :, i);
-                        
-                        p_ji = this.transitionMatrix(j, i);
-                         
-                        P1 = P1 + p_ji * (augQ(:, :, i) + augA(:, :, i)' * modeK * augA(:, :, i));
-                        P2 = P2 + p_ji * augB(:, :, i)' * modeK * augA(:, :, i);
-                        P3 = P3 + p_ji * (augR(:, :, i) + augB(:, :, i)' * modeK * augB(:, :, i));
-                    end
-                    K_k(:,:, j) = P1 - P2' * pinv(P3) * P2; % K_k for mode j
-                    L(:,:, j, k) = -pinv(P3) * P2;
+                    P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAKA, 3);
+                    P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* BKA, 3);
+                    P3 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBKB, 3);
+                    P4 = pinv(P3) * P2;
+                    P5 = P2' * P4;
+                    
+                    K_k(:,:, j) = P1 - (P5 + P5')/2; % K_k for mode j, ensure that second part is symmetric
+                    L(:,:, j, k) = -P4;
                 end
             end
         end
@@ -358,65 +343,57 @@ classdef FiniteHorizonController < SequenceBasedController
                 Q_tilde = zeros(this.dimState, numConstraints, numModes);
                 Q_tilde(1:this.dimPlantState, :, :) = repmat(squeeze(stateWeightings(:, k, :)), 1, 1, numModes);
                 
+                % Q_tilde (per mode) depends on H matrix which is
+                % zero for first and last mode
+                % inline code (with index shift) from Utility.createAugmentedLinearIntegralConstraints
+                % to compute the mode-dependent Q_tilde
+                for i=2:numModes-1
+                    Q_tilde(startIdx(i-1):endIdx(i-1), :, i) = inputWeightings(:, k, :);
+                end     
+                
+                BKB = mtimesx(mtimesx(augB, 'T', K_prev), augB); % shall be symmetric as K_prev is
+                RBKB = augR + (BKB + permute(BKB, [2 1 3])) / 2;
+                AK = mtimesx(augA, 'T', K_prev);
+                AKA = mtimesx(AK, augA); % shall be symmetric
+                QAKA = augQ + (AKA + permute(AKA, [2 1 3])) / 2;
+                AKB = mtimesx(AK, augB);
+                
+                APQ_tilde = mtimesx(augA, 'T', P_prev) + Q_tilde;
+                % R_tilde (augmented input constraint weightings) only nonzero for the first mode
+                BPR_tilde = mtimesx(augB, 'T', P_prev);
+                BPR_tilde(:, :, 1) = BPR_tilde(:, :, 1) + R_tilde_mode1; 
+                
                 for j=1:numModes
-                    P1 = zeros(this.dimState);
-                    P2 = zeros(this.dimState, dim);
-                    P3 = zeros(dim);
-                    P4 = zeros(this.dimState, numConstraints);
-                    P5 = zeros(this.dimPlantInput * this.sequenceLength, numConstraints);
-                    S1 = zeros(numConstraints);
+                    P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAKA, 3);
+                    P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* AKB, 3);
+                    P3 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBKB, 3);
                     
-                    for i=1:numModes
-                        modeK = K_prev(:, :, i);
-                        modeP = P_prev(:, :, i);
-                        
-                        A_iK_i = augA(:, :, i)' * modeK;
-                        p_ji = this.transitionMatrix(j, i);
-                        P1 = P1 + p_ji * (augQ(:, :, i) + A_iK_i * augA(:, :, i));
-                        P2 = P2 + p_ji * A_iK_i * augB(:, :, i);
-                        P3 = P3 + p_ji * (augR(:, :, i) + augB(:, :, i)' * modeK * augB(:, :, i));
-                      
-                        Q_tilde_mode = Q_tilde(:, :, i);
-                        % Q_tilde (per mode) depends on H matrix which is
-                        % zero for first and last mode
-                        % inline code (with index shift) from Utility.createAugmentedLinearIntegralConstraints
-                        % to compute the mode-dependent Q_tilde
-                        if i ~= numModes && i~= 1
-                            Q_tilde_mode(startIdx(i-1):endIdx(i-1), :) = inputWeightings(:, k, :);
-                        end
-                        P4 = P4 + p_ji * (augA(:, :, i)' * modeP + Q_tilde_mode);
-                        P5 = P5 + p_ji * augB(:, :, i)' * modeP; 
-                        if i == 1
-                            P5 = P5 + p_ji * R_tilde_mode1;
-                        end
-                        S1 = S1 + p_ji * S_prev(:, :, i);
-                    end
+                    P4 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* APQ_tilde, 3);
+                    P5 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* BPR_tilde, 3);
+                    
+                    S1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* S_prev, 3);
+
                     P6 = pinv(P3);
                     P7 = P6 * P5;
-                    K_k(:,:, j) = P1 - P2 * P6 * P2'; % K_k for mode j
+                    P8 = P2 * P6 * P2';
+                    P9 = P5' * P7;
+  
+                    K_k(:,:, j) = P1 - (P8 + P8') / 2; % K_k for mode j, shall be symmetric
                     P_k(:, :, j) = P4 - P2 * P7; % P_tilde for mode j
-                    S_k(:, :, j) = S1 - P5' * P7;
+                    S_k(:, :, j) = S1 - (P9 + P9') / 2; % shall be symmetric
                     L(:,:, j, k) = -P6  * P2';
                     feedforward(:, :, j, k) = -P7;
                 end
                 S_0 = S_k;
-                P_0 = P_k;
+                P_0 = P_k; % P_tilde in the paper
             end
         end
              
         %% computeMultiplier
         function lambda_opt = computeMultiplier(this, initialMode, initialState)
-            % requires MOSEK and yalmip
-%             lambda = sdpvar(numel(this.constraintBounds), 1);
-%             settings = sdpsettings('solver', 'mosek', 'verbose', 0);
-%             objective = dot(this.constraintBounds, lambda) - lambda' * this.S_0(:, :, initialMode) * lambda ...
-%                 - initialState' * this.P_0(:, :, initialMode) * lambda;
-%             optimize(lambda >= 0, objective, settings);
-%             lambda_opt = value(lambda)
-
             % directly use matlab's quadprog function (or MOSEK's variant) with interior point
             % algorithm: requires objective to be 1/2x'Hx+f'x
-            H = -2 * this.S_0(:, :, initialMode);
+            H = -this.S_0(:, :, initialMode);
             f = this.constraintBounds(:) - transpose(initialState' * this.P_0(:, :, initialMode));
             
             lambda_opt = quadprog(H, f, [], [], [], [], zeros(numel(this.constraintBounds), 1), []);

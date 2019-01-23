@@ -5,13 +5,13 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             Q_2 = this.Q;
             A_2 = this.A;
             B_2 = zeros(this.dimX, this.dimU);
-            
+
             % input for both modes
             firstPart = pinv(this.transitionMatrix(1,1) * (R_1 + B_1' * Q_1 * B_1) ... 
                 + this.transitionMatrix(1,2) * (R_2 + B_2' * Q_2 * B_2));
@@ -110,7 +110,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             ub = inf(this.numConstraints, 1);
             options = optimoptions(@fmincon, 'Algorithm', 'interior-point', ...
                 'OptimalityTolerance', 1e-21, 'Display', 'off');
-            lambda = fmincon(@(l) -l'* S_0 * l - this.state' * P_tilde_0 * l + reshape(this.constraintBounds, 1, this.numConstraints) * l, ...
+            lambda = fmincon(@(l) -0.5 * l'* S_0 * l - this.state' * P_tilde_0 * l + dot(this.constraintBounds, l), ...
                 lambda_0, [], [], [], [], lb, ub, [], options);
             
             feedforward = -pinv(this.transitionMatrix(1,1) * (R_1 + B_1' * Q_1 * B_1) + this.transitionMatrix(1,2) * (R_2 + B_2' * Q_2 * B_2)) ...

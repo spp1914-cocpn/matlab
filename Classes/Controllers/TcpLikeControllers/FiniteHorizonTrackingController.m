@@ -3,6 +3,8 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     % NCS with a TCP-like network connecting the controller and the
     % actuator.
     %
+    % This implementation is based on the original one by Jörg Fischer and Maxim Dolgov.
+    %
     % Literature: 
     %   Jörg Fischer, Maxim Dolgov, and Uwe D. Hanebeck,
     %   Optimal Sequence-Based Tracking Control over Unreliable Networks,
@@ -13,10 +15,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     %   Optimal sequence-based control of networked linear systems,
     %   Karlsruhe series on intelligent sensor-actuator-systems, Volume 15,
     %   KIT Scientific Publishing, 2015.
-    %
-    % This implementation is based on the original one by Jörg Fischer and
-    % Maxim Dolgov.
-
+    
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
@@ -27,7 +26,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -49,9 +48,6 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
         % input cost matrix;
         % (positive definite matrix of dimension <dimU> x <dimU>)
         R = [];
-        % packet delay probability density function of the controller-actuator-
-        % link; (vector of dimension >= <sequenceLength>)
-        delayProb = [];
         % CA-network-actuator system
         % mapping for propagation of possible control inputs;
         % (matrix of dimension <dimU*sequenceLength*(sequenceLength-1)/2> x 
@@ -141,18 +137,8 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             
             % delayProb
             Validator.validateDiscreteProbabilityDistribution(delayProb);
-            elementCount = numel(delayProb);
-            if elementCount <= sequenceLength
-                % fill up with zeros (row vector)
-                probHelp = [reshape(delayProb, 1, elementCount), zeros(1, sequenceLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                probHelp = [delayProb(1:sequenceLength), 1 - sum(delayProb(1:sequenceLength))];
-            end
-            % store as row vector, i.e., column-wise arranged
-            this.delayProb = probHelp;
-
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(this.delayProb); 
+            this.transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
+                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1)); 
              
             % augment the model
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
@@ -229,68 +215,49 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
         %% computeControlLaws
         function [L, feedforward] = computeControlLaws(this, augA, augB, augQ, augR)
             numModes = this.sequenceLength + 1;
-            K = zeros(this.dimState, this.dimState, numModes, this.horizonLength + 1);
             dimZero = this.dimState - this.dimPlantState;
-            %K(:,:, :, end) = repmat(blkdiag(this.Z' * this.Q * this.Z, zeros(dimZero)), 1, 1, numModes);
-            stateWeighting = augQ(1:this.dimPlantState, 1:this.dimPlantState, end);
-            K(:,:, :, end) = repmat(blkdiag(stateWeighting, zeros(dimZero)), 1, 1, numModes);
+            dimR = size(augR, 1);
+            stateWeighting = augQ(1:this.dimPlantState, 1:this.dimPlantState, end); % this Z' * Q * Z
+            
+            % we only need K_{k+1} to compute K_k and L_k and the
+            % feedforward
+            K = repmat(blkdiag(stateWeighting, zeros(dimZero)), 1, 1, numModes); % symmetric matrix
             
             % directly compute the transpose
             Qref = [(this.Q * this.Z)'; 
                     zeros(dimZero, this.dimRef)];
             refWeightings = Qref * this.refTrajectory;
-            sigma = zeros(size(refWeightings, 1), numModes, this.horizonLength + 1);
-            sigma(:, :, end) = repmat(refWeightings(:, end), 1, numModes);
-            dim = size(augR, 1);
+            % the same for sigma: only sigma_{k+1} required
+            sigma = repmat(refWeightings(:, end), 1, 1, numModes);
           
-            % perform a Riccati-like recursion (backwards) for K and
-            % another backward recursion for sigma
+            feedforward = zeros(dimR, numModes, this.horizonLength);
+            L = zeros(dimR, this.dimState, numModes, this.horizonLength);
             for k = this.horizonLength:-1:1
-                for j=1:numModes
-                    P1 = zeros(this.dimState);
-                    P2 = zeros(this.dimState, dim);
-                    P3 = zeros(dim);
-                    S1 = zeros(this.dimState, 1); 
-                    S2 = zeros(dim, 1);
+                K_prev = K;
+                sigma_prev = sigma;
+                AK = mtimesx(augA, 'T', K_prev);
+                AKA = mtimesx(AK, augA); % this one should be symmetric
+                QAKA = augQ + (AKA + permute(AKA, [2 1 3])) / 2; % ensure symmetry
+                AKB = mtimesx(AK, augB);
+                BKB = mtimesx(augB, 'T', mtimesx(K_prev, augB)); % this one should be symmetric
+                RBKB = augR + (BKB + permute(BKB, [2 1 3])) / 2; % ensure symmetry
+                
+                for j=1:numModes                      
+                    P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAKA, 3);
+                    P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* AKB, 3);
+                    P3 = pinv(sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBKB, 3));
+                    S1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augA, 'T', sigma_prev), 3);
+                    S2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augB, 'T', sigma_prev), 3);
+
+                    P4 = P2 * P3 * P2'; % should be symmetric
                     
-                    for i =1:numModes
-                        modeK = K(:, :, i, k + 1);
-                        A_iK_i = augA(:, :, i)' * modeK;
-                        p_ji = this.transitionMatrix(j, i);
-                        P1 = P1 + p_ji * (augQ(:, :, i) + A_iK_i * augA(:, :, i));
-                        P2 = P2 + p_ji * A_iK_i * augB(:, :, i);
-                        P3 = P3 + p_ji * (augR(:, :, i) + augB(:, :, i)' * modeK * augB(:, :, i));
-                        
-                        modeSigma = sigma(:, i, k + 1);
-                        S1 = S1 + p_ji * augA(:, :, i)' * modeSigma;
-                        S2 = S2 + p_ji * augB(:, :, i)' * modeSigma;
-                    end
-                    K(:,:, j, k) = P1 - P2 * pinv(P3) * P2';
-                    sigma(:, j, k) = refWeightings(:, k) + S1 - P2 * pinv(P3) * S2;
+                    K(:, :, j) = P1 - (P4 + P4') / 2; % ensure symmetry
+                    sigma(:, 1, j) = refWeightings(:, k) + S1 - P2 * P3 * S2;
+                    
+                    L(:,:, j, k) = -P3 * P2';
+                    feedforward(:, j, k) = P3 * S2;
                 end
-            end
-            % no compute feedback and feedforward law
-            feedforward = zeros(dim, numModes, this.horizonLength);
-            L = zeros(dim, this.dimState, numModes, this.horizonLength);
-            for k = 1:this.horizonLength
-                for j=1:numModes
-                    L1 = zeros(dim);
-                    L2 = zeros(dim, this.dimState);
-                    S2 = zeros(dim, 1);
-                    for i =1:numModes
-                        B_iK_i = augB(:, :, i)' * K(:, :, i, k + 1);
-                        p_ji = this.transitionMatrix(j, i);
-                        
-                        L1 = L1 + p_ji * (augR(:, :, i) + B_iK_i * augB(:, :, i));
-                        L2 = L2 + p_ji * B_iK_i * augA(:, :, i);
-                        S2 = S2 + p_ji * augB(:, :, i)' * sigma(:, i, k + 1);
-                    end
-                    L(:,:, j, k) = -pinv(L1) * L2;
-                    % compute the negative feedforward offsets and
-                    % substract from the feedback term
-                    feedforward(:, j, k) = pinv(L1) * S2;
-                end    
-            end
+            end            
         end 
      end
 end

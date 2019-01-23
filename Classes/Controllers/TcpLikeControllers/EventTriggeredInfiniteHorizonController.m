@@ -2,6 +2,8 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     % Implementation of the infinite horizon event-triggered linear sequence-based LQG controller for
     % NCS with a TCP-like network connecting the controller and the actuator.
     %
+    % This implementation is based on the original one by Maxim Dolgov and Jörg Fischer.
+    %
     % Literature: 
     %   Maxim Dolgov, Jörg Fischer, and Uwe D. Hanebeck,
     %   Event-based LQG Control over Networks Subject to Random Transmission Delays and Packet Losses,
@@ -12,10 +14,7 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     %   Optimal sequence-based control of networked linear systems,
     %   Karlsruhe series on intelligent sensor-actuator-systems, Volume 15,
     %   KIT Scientific Publishing, 2015.
-    %
-    % This implementation is based on the original one by Maxim Dolgov and
-    % Jörg Fischer.
-        
+            
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
@@ -26,7 +25,7 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -50,8 +49,8 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
         % (positive definite matrix of dimension <dimU> x <dimU>)
         R = [];
         % packet delay probability density function of the controller-actuator-
-        % link; (vector of dimension >= <sequenceLength>)
-        delayProb = [];
+        % link; (vector of dimension <sequenceLength> + 1)
+        delayProbs = [];
         %% derived properties
         % CA-network-actuator system
         % mapping for propagation of possible control inputs;
@@ -105,6 +104,37 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     methods (Access = public)
         %% EventTriggeredInfiniteHorizonController
         function this = EventTriggeredInfiniteHorizonController(A, B, Q, R, delayProb, packetLength, transmissionCosts)
+            % Class constructor.
+            %
+            % Parameters:
+            %   >> A (Square Matrix)
+            %      The system matrix of the plant.
+            %
+            %   >> B (Matrix)
+            %      The input matrix of the plant.
+            %
+            %   >> Q (Positive semi-definite matrix)
+            %      The state weighting matrix in the controller's underlying cost function.
+            %
+            %   >> R (Positive definite matrix)
+            %      The input weighting matrix in the controller's underlying cost function.
+            %
+            %   >> delayProb (Nonnegative vector)
+            %      The vector describing the delay distribution of the
+            %      CA-network.
+            %
+            %   >> packetLength (Positive integer)
+            %      The length of the input sequence (i.e., the number of
+            %      control inputs) to be computed by the controller.
+            %
+            %   >> transmissionCosts (Nonnegative scalar)
+            %      The transmission costs s_k for sending a single control
+            %      sequence.
+            %
+            % Returns:
+            %   << this (EventTriggeredInfiniteHorizonController)
+            %      A new EventTriggeredInfiniteHorizonController instance.
+            
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
@@ -125,19 +155,11 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             
              % delayProb
             Validator.validateDiscreteProbabilityDistribution(delayProb);
-            elementCount = numel(delayProb);
-            if elementCount <= packetLength
-                % fill up with zeros (row vector)
-                probHelp = [reshape(delayProb, 1, elementCount), zeros(1, packetLength + 1 - elementCount)];
-            else
-                % cut up the distribution and normalize
-                probHelp = [delayProb(1:packetLength), 1 - sum(delayProb(1:packetLength))];
-            end
-            % store as row vector, i.e., column-wise arranged
-            this.delayProb = probHelp;
-            
+            this.delayProbs = Utility.truncateDiscreteProbabilityDistribution(delayProb, packetLength + 1);
+                                    
             this.transitionMatrices = this.computeAllTransitionMatrices();
-            this.transmissionHistory = 2 ^ (packetLength + 1); % all sent until now
+            %this.transmissionHistory = 2 ^ (packetLength + 1); % all sent until now
+            this.transmissionHistory = 1; % none sent until now
             
             % augmented initial system state
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
@@ -159,10 +181,11 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
     methods (Access = protected)
         %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, mode, ~)
-            assert(Checks.isScalarIn(mode, 1, this.sequenceLength + 1) && mod(mode, 1) == 0, ...
+            numModes = this.sequenceLength + 1;
+            assert(Checks.isScalarIn(mode, 1, numModes) && mod(mode, 1) == 0, ...
                 'EventTriggeredInfiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
                 '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
-                this.sequenceLength + 1);
+                numModes);
             
             [stateMean, stateCovariance] = state.getMeanAndCov();
             this.sysState(1:this.dimPlantState) = stateMean(:);
@@ -173,14 +196,12 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             
             augmentedStateSecondMoment = this.sysState * this.sysState'  ...
                 + blkdiag(stateCovariance, zeros(this.dimState - this.dimPlantState));
-            sumSend = zeros(this.dimState);
-            sumNotSend = zeros(this.dimState);
            
-            for i = 1:this.sequenceLength + 1
-                sumSend = sumSend + this.transitionMatrices(mode, i, futureHistorySend) * this.P(:, :, i, futureHistorySend);
-                sumNotSend = sumNotSend + this.transitionMatrices(mode, i, futureHistoryNotSend) * this.P(:, :, i, futureHistoryNotSend);
-            end
-            
+            sumSend = sum(reshape(this.transitionMatrices(mode, :, futureHistorySend), 1, 1, numModes) ...
+                .* this.P(:, :, :, futureHistorySend), 3);
+            sumNotSend = sum(reshape(this.transitionMatrices(mode, :, futureHistoryNotSend), 1, 1, numModes) ...
+                .* this.P(:, :, :, futureHistoryNotSend), 3);
+
             if this.transmissionCosts + trace((sumSend - sumNotSend) * augmentedStateSecondMoment) > 0
                 % do not send
                 this.transmissionHistory = futureHistoryNotSend;
@@ -225,31 +246,31 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
                 
                 for i = 1:this.sequenceLength % all but last row
                     for j=1:i
-                        T(i,j,h) = bin2dec(history(i+1)) * bin2dec(history(j)) * this.delayProb(j) / (1 - sum(this.delayProb(1:j-1)));
+                        T(i,j,h) = bin2dec(history(i+1)) * bin2dec(history(j)) * this.delayProbs(j) / (1 - sum(this.delayProbs(1:j-1)));
                         for t = 1:j-1
                             T(i,j,h) = T(i,j,h) * (1 - bin2dec(history(t)) ...
-                                + bin2dec(history(t)) * (1-sum(this.delayProb(1:t))) / (1-sum(this.delayProb(1:t-1))));
+                                + bin2dec(history(t)) * (1-sum(this.delayProbs(1:t))) / (1-sum(this.delayProbs(1:t-1))));
                         end 
                     end
                     T(i,i+1,h) = bin2dec(history(i+1));
                     for t = 1:i
                         T(i,i+1,h) = T(i,i+1,h) * (1 - bin2dec(history(t)) ...
-                            + bin2dec(history(t))*(1-sum(this.delayProb(1:t))) / (1-sum(this.delayProb(1:t-1))));
+                            + bin2dec(history(t))*(1-sum(this.delayProbs(1:t))) / (1-sum(this.delayProbs(1:t-1))));
                     end 
                 end
                 
                 for j = 1:this.sequenceLength % last row
-                    T(numModes,j,h) = bin2dec(history(j)) * this.delayProb(j)/(1-sum(this.delayProb(1:j-1)));
+                    T(numModes,j,h) = bin2dec(history(j)) * this.delayProbs(j)/(1-sum(this.delayProbs(1:j-1)));
                     for t = 1:j-1
                         T(numModes,j,h) = T(numModes,j,h) * (1 - bin2dec(history(t)) ...
-                            + bin2dec(history(t)) * (1-sum(this.delayProb(1:t))) / (1-sum(this.delayProb(1:t-1))));
+                            + bin2dec(history(t)) * (1-sum(this.delayProbs(1:t))) / (1-sum(this.delayProbs(1:t-1))));
                     end 
                 end
                 
                 T(numModes, numModes, h) = 1;
                 for t = 1:this.sequenceLength
                     T(numModes, numModes, h) = T(numModes, numModes, h) * (1 - bin2dec(history(t)) ...
-                        + bin2dec(history(t)) * (1-sum(this.delayProb(1:t))) / (1-sum(this.delayProb(1:t-1))));
+                        + bin2dec(history(t)) * (1-sum(this.delayProbs(1:t))) / (1-sum(this.delayProbs(1:t-1))));
                 end
             end
         end
@@ -259,17 +280,15 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             numModes = this.sequenceLength + 1;
             numTransmissionCombinations = 2 ^ numModes;
             L = zeros(this.dimPlantInput * this.sequenceLength, this.dimState, numModes, numTransmissionCombinations);
-            sizeL = size(L);
-            for h = 1:numTransmissionCombinations
-                for j = 1:numModes
-                    L1 = zeros(this.dimPlantInput * this.sequenceLength);
-                    L2 = zeros(sizeL(1:2));
-                    for i = 1:numModes
-                        B_iP_i = augB(:, :, i)' * this.P(:, :, i, h);
-                        L1 = L1 + this.transitionMatrices(j, i, h)* (augR(:, :, i) + B_iP_i * augB(:, :, i));
-                        L2 = L2 + this.transitionMatrices(j, i, h) * (B_iP_i * augA(:,:,i));
-                    end
-                    L(:,:,j, h) = -pinv(L1) * L2;
+            for h=1:numTransmissionCombinations
+                BP = mtimesx(augB, 'T', this.P(:, :, :, h));
+                BPB = mtimesx(BP, augB); % shall be symmetric as P is (B'*P*B)
+                BPA = mtimesx(BP, augA);
+                RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2; % ensure symmetry
+                                
+                for j=1:numModes
+                    L(:, :, j, h) = -pinv(sum(reshape(this.transitionMatrices(j, :, h), 1, 1, numModes) .* RBPB, 3)) ...
+                        * sum(reshape(this.transitionMatrices(j, :, h), 1, 1, numModes) .* BPA, 3);
                 end
             end
         end
@@ -283,14 +302,10 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             previousP = P;
 
             convergeDiffmin = InfiniteHorizonController.maxIterationDiff;
-    
+            
             % initialize P
-            for i = 1:numModes
-                for h = 1:numTransmissionCombinations
-                    P(1:this.dimPlantState, 1:this.dimPlantState, i, h) = this.Q;
-                end
-            end 
-    
+            P(1:this.dimPlantState, 1:this.dimPlantState, :, :) = repmat(this.Q, 1, 1, numModes, numTransmissionCombinations);
+               
             counter = 0; % counts the number of performed iterations
     
             while(1)
@@ -346,25 +361,29 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
 
                 previousP = P;
                 P = zeros(this.dimState, this.dimState, numModes, numTransmissionCombinations);
-      
-                for h = 1 : numTransmissionCombinations
-                    for j = 1 : numModes
-                        P1 = 0;
-                        P2 = 0;
-                        P3 = 0;
-                        for i = 1 : numModes
-                            hFuture = bin2dec(['1', dec2bin(bitshift(h-1,-1), this.sequenceLength-1)]) + 1;
-                            T = this.transitionMatrices(:,:,hFuture);
-                            A_iP_i = augA(:,:,i)' * previousP(:,:,i,hFuture);
-                            P1 = P1 + T(j,i) * (augQ(:,:,i) + A_iP_i * augA(:,:,i));
-                            P2 = P2 + T(j,i) * A_iP_i * augB(:,:,i);
-                            P3 = P3 + T(j,i) * (augR(:,:,i) + augB(:,:,i)'* previousP(:,:,i,hFuture) * augB(:,:,i));
-                        end
-                        P(:,:,j,h) = P1 - P2 * pinv(P3) * P2';
+
+                for h = 1:numTransmissionCombinations
+                    hFuture = bin2dec(['1', dec2bin(bitshift(h-1,-1), this.sequenceLength-1)]) + 1;
+                    T = this.transitionMatrices(:,:,hFuture);
+                    P_prev = previousP(:,:,:,hFuture);
+                    AP = mtimesx(augA, 'T', P_prev);
+                    APA = mtimesx(AP, augA); % shall be symmetric as P is (A'*P*A)
+                    QAPA = augQ + (APA + permute(APA, [2 1 3])) / 2; % ensure symmetry
+                    APB = mtimesx(AP, augB);
+                    BPB = mtimesx(mtimesx(augB, 'T', P_prev), augB); % shall be symmetric B'*P*B
+                    RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2; % ensure symmetry
+                    
+                    for j = 1:numModes
+                        P1 = sum(reshape(T(j, :), 1, 1, numModes) .* QAPA, 3);
+                        P2 = sum(reshape(T(j, :), 1, 1, numModes) .* APB, 3);
+                        P3 = pinv(sum(reshape(T(j, :), 1, 1, numModes) .* RBPB, 3));
+                        
+                        P4 = P2 * P3 * P2'; % should by symmetric
+                        P(:, :, j, h) = P1 - (P4 + P4') / 2; % ensure symmetry
                     end
                 end
             end  
-        end % function makeSteadyStateControlCovarianceMatrices
+        end 
     end
 end
 

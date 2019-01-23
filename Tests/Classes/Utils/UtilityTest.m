@@ -5,13 +5,13 @@ classdef UtilityTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -484,6 +484,65 @@ classdef UtilityTest < matlab.unittest.TestCase
             
             actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbs);
             this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % should also work if probabilities are given as column vector
+            actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbs(:));
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % the same result should be obtained if we pass a matrix with
+            % column-wise arranged delay probabilities per time step and
+            % which are equal
+            delayProbMatrix = [delayProbs; delayProbs; delayProbs; delayProbs]';
+            actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbMatrix);
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+        end
+        
+        %% testCalculateDelayTransitionMatrixTimeVaryingDelayProbs
+        function testCalculateDelayTransitionMatrixTimeVaryingDelayProbs(this)
+            % sequence length 4, so we have 5 modes
+            delayProbsCurrentTimeStep = [0.1 0.3 0.4 0.1 0.1]';
+            delayProbsPreviousTimeStep = [0.3 0.4 0.1 0.1 0.1]';
+            delayProbsPreviousTimeStep2 = [0.2 0.2 0.2 0.2 0.2]';
+            delayProbsPreviousTimeStep3 = [0.1 0.1 0.1 0.1 0.6]';
+            delayProbMatrix = [delayProbsCurrentTimeStep delayProbsPreviousTimeStep delayProbsPreviousTimeStep2 delayProbsPreviousTimeStep3];
+            
+            % compute transition matrix straightforwardly as described in
+            %
+            % Jörg Fischer, Achim Hekler, Maxim Dolgov, and Uwe D. Hanebeck,
+            % Optimal Sequence-Based LQG Control over TCP-like Networks Subject to Random Transmission Delays and Packet Losses,
+            % Proceedings of the 2013 American Control Conference (ACC 2013),
+            % Washington D. C., USA, June 2013
+            %
+            q_tilde = zeros(1, 4);
+            q_tilde(1) = delayProbsCurrentTimeStep(1);
+            q_tilde(2) = delayProbsPreviousTimeStep(2) / (1-delayProbsPreviousTimeStep(1));
+            q_tilde(3) = delayProbsPreviousTimeStep2(3) / (1-(delayProbsPreviousTimeStep2(1) + delayProbsPreviousTimeStep2(2)));
+            q_tilde(4) = delayProbsPreviousTimeStep3(4) / (1-(delayProbsPreviousTimeStep3(1) + delayProbsPreviousTimeStep3(2) + delayProbsPreviousTimeStep3(3)));
+            
+            expectedTransitionMatrix = zeros(5);
+            
+            expectedTransitionMatrix(1,1) = q_tilde(1);
+            expectedTransitionMatrix(1,2) = 1 - q_tilde(1);
+            expectedTransitionMatrix(2,1) = q_tilde(1);
+            expectedTransitionMatrix(2,2) = q_tilde(2) * (1-q_tilde(1));
+            expectedTransitionMatrix(2,3) = (1 - q_tilde(1)) * (1- q_tilde(2));
+            expectedTransitionMatrix(3,1) = q_tilde(1);
+            expectedTransitionMatrix(3,2) = q_tilde(2) * (1-q_tilde(1));
+            expectedTransitionMatrix(3,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(3,4) = (1 - q_tilde(1)) * (1- q_tilde(2)) * (1-q_tilde(3));
+            expectedTransitionMatrix(4,1) = q_tilde(1);
+            expectedTransitionMatrix(4,2) = q_tilde(2) * (1-q_tilde(1));
+            expectedTransitionMatrix(4,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(4,4) = q_tilde(4) * (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
+            expectedTransitionMatrix(4,5) = (1 - q_tilde(1)) * (1- q_tilde(2)) * (1-q_tilde(3)) * (1-q_tilde(4));
+            expectedTransitionMatrix(5,1) = q_tilde(1);
+            expectedTransitionMatrix(5,2) = q_tilde(2) * (1-q_tilde(1));
+            expectedTransitionMatrix(5,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(5,4) = q_tilde(4) * (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
+            expectedTransitionMatrix(5,5) = (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3)) * (1-q_tilde(4));
+            
+            actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbMatrix);
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
         end
         
         %% testComputeStationaryDistribution
@@ -514,6 +573,30 @@ classdef UtilityTest < matlab.unittest.TestCase
             % compute the stationary distribution by iterating
             stationaryDist = Utility.computeStationaryDistribution(transitionMatrix, false);
             this.verifyEqualWithAbsTol(stationaryDist(:), expectedStationaryDist);
+        end
+        
+        %% testTruncateDiscreteProbabilityDistribution
+        function testTruncateDiscreteProbabilityDistribution(this)
+           probs = repmat(0.1, 10, 1); 
+           
+           % test all three cases 
+           numElements = 12;
+           expectedProbs = [probs; 0; 0];
+           actualProbs = Utility.truncateDiscreteProbabilityDistribution(probs, numElements);
+           
+           this.verifyEqualWithAbsTol(actualProbs, expectedProbs);
+           
+           numElements = 8;
+           expectedProbs = [probs(1:7); 0.3];
+           actualProbs = Utility.truncateDiscreteProbabilityDistribution(probs, numElements);
+           
+           this.verifyEqualWithAbsTol(actualProbs, expectedProbs);
+           
+           numElements = 10;
+           expectedProbs = probs;
+           actualProbs = Utility.truncateDiscreteProbabilityDistribution(probs, numElements);
+           
+           this.verifyEqualWithAbsTol(actualProbs, expectedProbs);
         end
         
         %% testCalculateRMSE

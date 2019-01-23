@@ -15,7 +15,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
     %                        Karlsruhe Institute of Technology (KIT), Germany
     %
-    %                        http://isas.uka.de
+    %                        https://isas.iar.kit.edu
     %
     %    This program is free software: you can redistribute it and/or modify
     %    it under the terms of the GNU General Public License as published by
@@ -45,6 +45,10 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
         solver;
     end
     
+    properties (SetAccess = private, GetAccess = public)
+        horizonLength;
+    end   
+    
     methods (Access = public)
         %% LinearlyConstrainedPredictiveController
         function this = LinearlyConstrainedPredictiveController(A, B, Q, R, sequenceLength, ...
@@ -69,7 +73,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
             %      control inputs) to be computed by the controller, which
-            %      equals the prediction horizon employed.
+            %      (by default) equals the prediction horizon employed.
             %
             %   >> stateConstraintWeightings (Matrix, dimPlantState-by-s)
             %      The weightings a of the individual
@@ -127,6 +131,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             this.R = R;
             this.A = A;
             this.B = B;
+            this.horizonLength = this.sequenceLength;
                                            
             % constraints
             this.validateStateConstraints(stateConstraintWeightings, stateConstraints);
@@ -185,9 +190,23 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             % Parameters:
             %  >> newSequenceLength (Positive integer)
             %     The new length of the input sequences (i.e., the number of
-            %     control inputs) to be computed by the controller.
+            %     control inputs) to be computed by the controller, which
+            %     must not exceed the current length of the optimization
+            %     horizon.
             %
-            this.sequenceLength = newSequenceLength;
+            this.sequenceLength = newSequenceLength;           
+        end
+        
+        %% changeHorizonLength
+        function changeHorizonLength(this, newHorizonLength)
+            % Change the length of the optimization horizon to be considered in
+            % the future.
+            %
+            % Parameters:
+            %  >> newHorizonLength (Positive integer)
+            %     The new length of the optimization horizon to be considered by the controller.
+            %
+            this.horizonLength = newHorizonLength;
             % the optimization problem to solve changes
             this.solver = this.createConstrainedOptimizationProblem();
         end
@@ -236,6 +255,25 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
     end
     
     methods (Access = protected)
+         %% validateSequenceLengthOnSet
+        function validateSequenceLengthOnSet(this, seqLength)
+            % This function is called upon change of the sequence length to
+            % validate the new value. 
+            % It checks whether the value is a
+            % positive integer and does not exceed the current optimization horizon, and errors if not.
+            %
+            % Parameters:
+            %   >> seqLength (Positive integer)
+            %      The desired new value of the sequence length.
+            %
+            if ~isempty(this.horizonLength)
+                assert(seqLength <= this.horizonLength, ...
+                    'LinearlyConstrainedPredictiveController:SetSequenceLength:InvalidSequenceLength', ...
+                    '** <seqLength> must not exceed the current optimization horizon, i.e., {1, ... %d} **', ...
+                    this.horizonLength);
+            end
+        end
+        
         %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, state, ~, timestep)
             % time step is only required for picking the correct reference
@@ -258,7 +296,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
                     '** Optimization problem seems to be infeasible. Returning zero input **');
                 inputSequence = zeros(this.sequenceLength * this.dimPlantInput, 1);
             else
-                inputSequence = inputs(:);
+                inputSequence = reshape(inputs(:, 1:this.sequenceLength), this.sequenceLength * this.dimPlantInput, 1);
             end
         end
         
@@ -277,19 +315,19 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
         
         %% doCostsComputation
         function costs = doCostsComputation(this, stateTrajectory, appliedInputs)
-            horizonLength = size(appliedInputs, 2);
-            assert(size(stateTrajectory, 2) == horizonLength + 1, ...
+            numInputs = size(appliedInputs, 2);
+            assert(size(stateTrajectory, 2) == numInputs + 1, ...
                 'LinearlyConstrainedPredictiveController:DoCostsComputation:InvalidStateTrajectory', ...
-                '** <stateTrajectory> is expected to have %d columns ', horizonLength + 1);
+                '** <stateTrajectory> is expected to have %d columns ', numInputs + 1);
             
             if ~isempty(this.Z)
                 % compute performance output and difference to reference
                 % trajectory
-                performance = this.Z * stateTrajectory - this.refTrajectory(:, 1:horizonLength + 1);
+                performance = this.Z * stateTrajectory - this.refTrajectory(:, 1:numInputs + 1);
             else
                 performance = stateTrajectory;
             end
-            costs = Utility.computeLQGCosts(horizonLength, performance, appliedInputs, this.Q, this.R);
+            costs = Utility.computeLQGCosts(numInputs, performance, appliedInputs, this.Q, this.R);
         end
         
         %% doGetDeviationFromRefForState
@@ -314,12 +352,12 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
         function solver = createConstrainedOptimizationProblem(this)
             Rsqrt = chol(this.R); % upper Cholesky factor of R, R = Rsqrt' * Rsqrt
             % ensure that matrices are not symmetric
-            states = sdpvar(this.dimPlantState, this.sequenceLength + 1, 'full');
-            inputs = sdpvar(this.dimPlantInput, this.sequenceLength, 'full');
+            states = sdpvar(this.dimPlantState, this.horizonLength + 1, 'full');
+            inputs = sdpvar(this.dimPlantInput, this.horizonLength, 'full');
             
             if ~isempty(this.Z)
                 % reference tracking
-                zRef = sdpvar(this.dimRef, this.sequenceLength + 1);
+                zRef = sdpvar(this.dimRef, this.horizonLength + 1);
                 % construct for driving differences to the origin
                 performance = this.Z * states - zRef;
                 
@@ -340,7 +378,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             end
                     
             costs = performance(:, end)' * this.Q * performance(:, end); % terminal costs
-            for k=1:this.sequenceLength
+            for k=1:this.horizonLength
                 % additional constraints due to nominal system equation
                 constraints = [constraints; states(:, k + 1) == this.A * states(:, k) + this.B * inputs(:, k)]; 
                 costs = costs + sum((Rsqrt * inputs(:, k)) .^2) + performance(:, k)' * this.Q * performance(:, k);
