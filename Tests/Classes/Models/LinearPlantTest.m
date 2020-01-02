@@ -84,7 +84,23 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             this.verifyClass(noise, ?Gaussian);
             this.verifyEqual(noise, this.plantNoise);
         end
-
+         
+        %% testLinearPlantSysNoiseMatrix
+        function testLinearPlantSysNoiseMatrix(this)
+            subW = this.W(1:2, 1:2);
+            G = ones(this.dimX, 2);
+            actualNoise = Gaussian(zeros(2,1), subW);
+            
+            linearPlant = LinearPlant(this.A, this.B, subW, G);
+            this.verifyEqual(linearPlant.dimState, this.dimX);
+            this.verifyEqual(linearPlant.inputMatrix, this.B);
+            noise = linearPlant.noise;
+            
+            this.verifyClass(noise, ?Gaussian);
+            this.verifyEqual(noise, actualNoise);
+            
+        end
+        
         %% testSetNoise
         function testSetNoise(this)
             W_new = this.W * 0.75; % less noise now
@@ -99,6 +115,61 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             % now specify covariance in terms of a vector
             W_new = 1:1:this.dimX;
             expectedNoise = Gaussian(zeros(this.dimX, 1), W_new);
+            
+            this.plantUnderTest.setNoise(W_new);
+            
+            newNoise = this.plantUnderTest.noise;
+            this.verifyClass(newNoise, ?Gaussian);
+            this.verifyEqual(newNoise, expectedNoise);
+        end
+        
+        %% testSetNoiseInvalidCov
+        function testSetNoiseInvalidCov(this)
+            expectedErrId = 'LinearPlant:SetNoise:InvalidCovariance';
+                        
+            this.assertEmpty(this.plantUnderTest.sysNoiseMatrix); % no G matrix
+            
+            subW = this.W(1:2, 1:2);
+            this.verifyError(@() this.plantUnderTest.setNoise(subW), expectedErrId);
+                        
+            % now specify covariance in terms of a vector
+            subW = [1 1];
+            this.verifyError(@() this.plantUnderTest.setNoise(subW), expectedErrId);
+        end
+        
+        %% testSetNoiseSysNoiseMatrixInvalidCov
+        function testSetNoiseSysNoiseMatrixInvalidCov(this)
+            expectedErrId = 'LinearPlant:SetNoise:InvalidCovariance';
+            
+            G = ones(this.dimX, 2);
+            this.plantUnderTest.setSystemNoiseMatrix(G);
+            this.assertEqual(this.plantUnderTest.sysNoiseMatrix, G);
+                       
+            this.verifyError(@() this.plantUnderTest.setNoise(this.W), expectedErrId);
+                        
+            % now specify covariance in terms of a vector
+            W_new = 1:1:this.dimX;
+            this.verifyError(@() this.plantUnderTest.setNoise(W_new), expectedErrId);
+        end
+        
+        %% testSetNoiseSysNoiseMatrix
+        function testSetNoiseSysNoiseMatrix(this)
+            subW = this.W(1:2, 1:2);
+            G = ones(this.dimX, 2);
+            this.plantUnderTest.setSystemNoiseMatrix(G);
+            this.assertEqual(this.plantUnderTest.sysNoiseMatrix, G);
+                        
+            expectedNoise = Gaussian(zeros(2, 1), subW);
+            
+            this.plantUnderTest.setNoise(subW);
+            
+            newNoise = this.plantUnderTest.noise;
+            this.verifyClass(newNoise, ?Gaussian);
+            this.verifyEqual(newNoise, expectedNoise);
+            
+            % now specify covariance in terms of a vector
+            W_new = [1 1];
+            expectedNoise = Gaussian(zeros(2, 1), W_new);
             
             this.plantUnderTest.setNoise(W_new);
             
@@ -188,6 +259,128 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             this.plantUnderTest.setSystemMatrix(expectedA);
             this.verifyEqual(this.plantUnderTest.sysMatrix, expectedA);
             this.verifyEqual(this.plantUnderTest.dimState, this.dimX * 3);
+        end
+        
+        %% testSetStateConstraintsInvalidLowerBound
+        function testSetStateConstraintsInvalidLowerBound(this)
+            expectedErrId = 'LinearPlant:SetStateConstraints:InvalidLowerBound';
+            
+            upperBound = inf(this.dimX, 1);
+            invalidLowerBound = this; % not a vector
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(invalidLowerBound, upperBound), ...
+                expectedErrId);
+            
+            invalidLowerBound = -inf(this.dimX +1, 1); %invalid dim
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(invalidLowerBound, upperBound), ...
+                expectedErrId);            
+            
+            invalidLowerBound = -inf(this.dimX +1, 1); %contains nan
+            invalidLowerBound(end-1) = nan;
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(invalidLowerBound, upperBound), ...
+                expectedErrId);
+        end
+        
+        %% testSetStateConstraintsInvalidUpperBound
+        function testSetStateConstraintsInvalidUpperBound(this)
+            expectedErrId = 'LinearPlant:SetStateConstraints:InvalidUpperBound';
+            
+            lowerBound = inf(this.dimX, 1);
+            invalidUpperBound = this; % not a vector
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(lowerBound, invalidUpperBound), ...
+                expectedErrId);
+            
+            invalidUpperBound = inf(this.dimX +1, 1); %invalid dim
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(lowerBound, invalidUpperBound), ...
+                expectedErrId);            
+            
+            invalidUpperBound = inf(this.dimX +1, 1); %contains nan
+            invalidUpperBound(end-1) = -nan;
+            this.verifyError(@() this.plantUnderTest.setStateConstraints(lowerBound, invalidUpperBound), ...
+                expectedErrId);
+        end
+        
+        %% setStateConstraints
+        function setStateConstraints(this)
+            lowerBound = ones(this.dimX, 1);
+            lowerBound(end) = -inf;
+            upperBound = 10 * ones(1, this.dimX); % use row vector here
+            upperBound(end-1) = inf;
+            
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            this.verifyEqual(this.plantUnderTest.stateConstraints, [lowerBound upperBound(:)]);
+        end
+        
+        %% testIsValidStateError
+        function testIsValidStateError(this)
+            expectedErrId = 'LinearPlant:IsValidState:InvalidSystemState';
+            
+            errState = this; % not a vector
+            this.verifyError(@() this.plantUnderTest.isValidState(errState), expectedErrId);
+            
+            errState = ones(this.dimX-1, 1); % wrong dimension
+            this.verifyError(@() this.plantUnderTest.isValidState(errState), expectedErrId);
+            
+            errState = ones(1, this.dimX); % not a col vector
+            this.verifyError(@() this.plantUnderTest.isValidState(errState), expectedErrId);
+            
+            errState = ones(this.dimX, 1);
+            errState(end-1) = -inf; % not finite
+            this.verifyError(@() this.plantUnderTest.isValidState(errState), expectedErrId);
+        end
+        
+        %% testIsValidStateNoConstraints
+        function testIsValidStateNoConstraints(this)
+            this.assertEmpty(this.plantUnderTest.stateConstraints);
+            
+            validState = ones(this.dimX, 1);
+            this.verifyTrue(this.plantUnderTest.isValidState(validState));
+        end
+        
+        %% testIsValidStateOnlyLowerBound
+        function testIsValidStateOnlyLowerBound(this)
+            lowerBound = ones(this.dimX, 1);
+            upperBound = inf(1, this.dimX);
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            
+            this.assertNotEmpty(this.plantUnderTest.stateConstraints);
+            
+            validState = 42 * ones(this.dimX, 1);
+            invalidState = -validState;
+            this.verifyTrue(this.plantUnderTest.isValidState(validState));
+            this.verifyFalse(this.plantUnderTest.isValidState(invalidState));
+        end
+        
+        %% testIsValidStateOnlyUpperBound
+        function testIsValidStateOnlyUpperBound(this)
+            lowerBound = -inf(this.dimX, 1);
+            upperBound = ones(1, this.dimX);
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            
+            this.assertNotEmpty(this.plantUnderTest.stateConstraints);
+            
+            validState = -42 * ones(this.dimX, 1);
+            invalidState = -validState;
+            this.verifyTrue(this.plantUnderTest.isValidState(validState));
+            this.verifyFalse(this.plantUnderTest.isValidState(invalidState));
+        end
+        
+        %% testIsValidState
+        function testIsValidState(this)
+            lowerBound = ones(this.dimX, 1);
+            lowerBound(end) = -inf;
+            upperBound = 10 * ones(1, this.dimX); % use row vector here
+            upperBound(end-1) = inf;
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            
+            this.assertNotEmpty(this.plantUnderTest.stateConstraints);
+            
+            validState = ones(this.dimX, 1);
+            validState2 = ones(this.dimX, 1);
+            validState2(end-1) = 1e52;
+            invalidState = -validState;
+            this.verifyTrue(this.plantUnderTest.isValidState(validState));
+            this.verifyTrue(this.plantUnderTest.isValidState(validState2));
+            this.verifyFalse(this.plantUnderTest.isValidState(invalidState));
         end
     end
     

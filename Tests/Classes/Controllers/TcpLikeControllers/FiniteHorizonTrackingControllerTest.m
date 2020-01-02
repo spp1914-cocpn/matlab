@@ -5,7 +5,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -236,6 +236,15 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
                 invalidDelayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
         end
         
+        %% testFiniteHorizonTrackingControllerInvalidFlag
+        function testFiniteHorizonTrackingControllerInvalidFlag(this)
+            expectedErrId = 'FiniteHorizonTrackingController:InvalidUseMexFlag';
+            invalidUseMexFlag = 'invalid'; % not a flag
+            
+            this.verifyError(@()  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, invalidUseMexFlag), expectedErrId);
+        end     
+        
         %% testFiniteHorizonTrackingController
         function testFiniteHorizonTrackingController(this)
             controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
@@ -243,8 +252,19 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyEqual(controller.refTrajectory, this.refTrajectory);
+            this.verifyTrue(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate);
+            
+            controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+            
+            this.verifyEqual(controller.horizonLength, this.horizonLength);
+            this.verifyEqual(controller.refTrajectory, this.refTrajectory);
+            this.verifyFalse(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate);
         end
-                    
+%%
+%%
         %% testGetDeviationFromRefForStateInvalidTimestep
         function testGetDeviationFromRefForStateInvalidTimestep(this)
             trueState = zeros(this.dimX, 1);
@@ -287,35 +307,87 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             % feedforward term due to the underlying linear feedback control law, independent of the
             % previous mode
             expectedSequence = this.computeFeedforward();
-
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
+            
             % first mode
             actualSequence = this.controllerUnderTest.computeControlSequence(this.zeroStateDistribution, 1, ...
                     this.horizonLength);
             
-            this.verifyEqual(actualSequence, expectedSequence);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
             
             %second mode
             actualSequence = this.controllerUnderTest.computeControlSequence(this.zeroStateDistribution, 2, ...
                     this.horizonLength);
             
-            this.verifyEqual(actualSequence, expectedSequence);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
+        end
+        
+        %% testDoControlSequenceComputationZeroStateNoMex
+        function testDoControlSequenceComputationZeroStateNoMex(this)
+            % perform a sanity check: given state is origin so computed
+            % control sequence (length 1) should only consist of a
+            % feedforward term due to the underlying linear feedback control law, independent of the
+            % previous mode
+            expectedSequence = this.computeFeedforward();
+            
+            % do not use the mex implementation to compute the controller
+            % gains
+            controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+            this.assertFalse(controller.useMexImplementation);
+            
+            % first mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 1, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
+            
+            %second mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 2, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
         end
         
         %% testDoControlSequenceComputation
         function testDoControlSequenceComputation(this)
             % now the state is not the origin
             expectedSequence = this.computeFeedback() + this.computeFeedforward();
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
             
             % check both modes
             % first mode: previous input arrived at plant
             actualSequence = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1, ...
                     this.horizonLength);
-            this.verifyEqual(actualSequence, expectedSequence);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
             
-            % second mode: previous input dot not arrive at plant
+            % second mode: previous input did not arrive at plant
             actualSequence = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2, ...
                     this.horizonLength);
-            this.verifyEqual(actualSequence, expectedSequence);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
+        end
+        
+        %% testDoControlSequenceComputationNoMex
+        function testDoControlSequenceComputationNoMex(this)
+            % now the state is not the origin
+            expectedSequence = this.computeFeedback() + this.computeFeedforward();
+            
+            % do not use the mex implementation to compute the controller
+            % gains
+            controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+            this.assertFalse(controller.useMexImplementation);
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualSequence = controller.computeControlSequence(this.stateDistribution, 1, ...
+                    this.horizonLength);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
+            
+            % second mode: previous input did not arrive at plant
+            actualSequence = controller.computeControlSequence(this.stateDistribution, 2, ...
+                    this.horizonLength);
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-12);
         end
     end
 end

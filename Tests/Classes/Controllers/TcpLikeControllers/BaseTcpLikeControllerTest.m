@@ -7,7 +7,7 @@ classdef (Abstract) BaseTcpLikeControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -89,6 +89,32 @@ classdef (Abstract) BaseTcpLikeControllerTest < matlab.unittest.TestCase
     end
     
      methods (Test)
+         
+         %% testSetEtaStateInvalidEta
+        function testSetEtaStateInvalidEta(this)
+            expectedErrId = [class(this.controllerUnderTest) ':SetEtaState:InvalidEta'];
+            
+            etaDim = this.dimU * (this.sequenceLength) * (this.sequenceLength - 1) / 2;
+            
+            invalidEta = this; % not a vector
+            this.verifyError(@() this.controllerUnderTest.setEtaState(invalidEta), ...
+                expectedErrId);
+            
+            invalidEta = ones(etaDim, etaDim); % not a vector
+            this.verifyError(@() this.controllerUnderTest.setEtaState(invalidEta), ...
+                expectedErrId);            
+            
+            invalidEta = ones(etaDim +1, 1); % invalid dimension
+            this.verifyError(@() this.controllerUnderTest.setEtaState(invalidEta), ...
+                expectedErrId);            
+            
+            invalidEta = ones(etaDim, 1);
+            invalidEta(1) = -inf; % not finite
+            this.verifyError(@() this.controllerUnderTest.setEtaState(invalidEta), ...
+                expectedErrId);
+        end        
+%%
+%%
          
          %% testDoStageCostsComputation
          function testDoStageCostsComputation(this)

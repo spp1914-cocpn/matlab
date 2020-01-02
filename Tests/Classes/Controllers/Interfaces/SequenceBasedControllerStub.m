@@ -6,7 +6,7 @@
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -29,8 +29,8 @@
      
      methods (Access = public)
          %% SequenceBasedControllerStub
-         function this = SequenceBasedControllerStub(dimX, dimU, sequenceLength)
-             this@SequenceBasedController(dimX, dimU, sequenceLength);
+         function this = SequenceBasedControllerStub(dimX, dimU, sequenceLength, needsFilter)
+             this@SequenceBasedController(dimX, dimU, sequenceLength, needsFilter);
          end
          
          function reset(~)
@@ -40,7 +40,7 @@
          function [dimX, dimU, seqLength] = getProperties(this)
              dimX = this.dimPlantState;
              dimU = this.dimPlantInput;
-             seqLength = this.sequenceLength;
+             seqLength = this.sequenceLength;;
          end
      end
     

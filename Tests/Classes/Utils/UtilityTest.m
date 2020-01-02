@@ -67,6 +67,38 @@ classdef UtilityTest < matlab.unittest.TestCase
             this.verifyEqual(actualAugB(:, :, 2), zeros(this.dimX, this.dimU));
         end
         
+        %% verifyAugmentedPlantMatricesTwoElementSequence
+        function verifyAugmentedPlantMatricesTwoElementSequence(this, actualF, actualG, actualAugA, actualAugB, ...
+                actualH, actualJ)
+            
+            numModes = 3;
+            dimAugState = this.dimX + this.dimU; % 2+3 = 5
+            expectedF = zeros(3);
+            expectedG = zeros(3, 6);
+            expectedG(1:3, 4:6) = eye(3);
+            
+            expectedH = zeros(3,3,numModes);
+            expectedH(:, 1:3, 2) = eye(3);
+            
+            expectedJ = zeros(3, 6, numModes);
+            expectedJ(:, 1:3, 1) = eye(3);
+            
+            expectedAugA = zeros(dimAugState, dimAugState, numModes);
+            expectedAugB = zeros(dimAugState, 2 * this.dimU, numModes);
+            for j=1:numModes
+                expectedAugA(:, :, j) = [   this.A, this.B * expectedH(:, :, j);
+                                            zeros(dimAugState - this.dimX,this.dimX), expectedF
+                                            ];
+                expectedAugB(:, :, j) = [this.B * expectedJ(:, :, j); expectedG];
+            end            
+            this.verifyEqual(actualF, expectedF);
+            this.verifyEqual(actualG, expectedG);
+            this.verifyEqual(actualH, expectedH);
+            this.verifyEqual(actualJ, expectedJ);            
+            this.verifyEqual(actualAugA, expectedAugA);
+            this.verifyEqual(actualAugB, expectedAugB);            
+        end
+        
         %% verifyAugmentedPlantMatrices
         function verifyAugmentedPlantMatrices(this, actualF, actualG, actualAugA, actualAugB, controlSequenceLength, ...
                 actualH, actualJ)
@@ -122,6 +154,28 @@ classdef UtilityTest < matlab.unittest.TestCase
             this.verifySize(actualAugR, [this.dimU this.dimU 2]);
             this.verifyEqual(actualAugR(:, :, 1), this.R);
             this.verifyEqual(actualAugR(:, :, 2), zeros(this.dimU));
+        end
+        
+        %% verifyAugmentedCostMatricesTwoElementSequence
+        function verifyAugmentedCostMatricesTwoElementSequence(this, actualAugQ, actualAugR)
+            numModes = 3;
+            dimAugState = this.dimX + this.dimU; % 2+3 = 5
+                        
+            H = zeros(3,3,numModes);
+            H(:, 1:3, 2) = eye(3);
+            
+            J = zeros(3, 6, numModes);
+            J(:, 1:3, 1) = eye(3);
+            
+            expectedAugQ = zeros(dimAugState, dimAugState, numModes);
+            expectedAugR = zeros(6, 6, numModes);
+            
+            for j=1:numModes                
+                expectedAugQ(:, :, j) = blkdiag(this.Q, H(:, :, j)' * this.R * H(:, :, j));                
+                expectedAugR(:, :, j) = J(:, :, j)' * this.R * J(:, :, j);
+            end
+            this.verifyEqual(actualAugQ, expectedAugQ);
+            this.verifyEqual(actualAugR, expectedAugR);
         end
         
         %% verifyAugmentedCostMatrices
@@ -297,6 +351,17 @@ classdef UtilityTest < matlab.unittest.TestCase
             this.verifyEqual(actualJ(:, :, 2), zeros(this.dimU));
         end
         
+        %% testCreateAugmentedPlantModelTwoElementSequence
+        function testCreateAugmentedPlantModelTwoElementSequence(this)
+            controlSequenceLength = 2;
+                        
+            [actualF, actualG, actualH, actualJ, actualAugA, actualAugB] = ...
+                Utility.createAugmentedPlantModel(controlSequenceLength, this.A, this.B);
+  
+            this.verifyAugmentedPlantMatricesTwoElementSequence(actualF, actualG, actualAugA, actualAugB, ...
+                actualH, actualJ);
+        end
+        
         %% testCreateAugmentedPlantModel
         function testCreateAugmentedPlantModel(this)
             
@@ -325,6 +390,15 @@ classdef UtilityTest < matlab.unittest.TestCase
             [actualAugQ, actualAugR] = Utility.createAugmentedCostModel(controlSequenceLength, this.Q_z, this.R, this.Z);
    
             this.verifyAugmentedCostMatricesOneElementSequence(actualAugQ, actualAugR, true);
+        end
+        
+        %% testAugmentedCostModelTwoeElementSequence
+        function testAugmentedCostModelTwoeElementSequence(this)
+            controlSequenceLength = 2;
+            
+            [actualAugQ, actualAugR] = Utility.createAugmentedCostModel(controlSequenceLength, this.Q, this.R);
+            
+            this.verifyAugmentedCostMatricesTwoElementSequence(actualAugQ, actualAugR);
         end
         
         %% testCreateAugmentedCostModel
@@ -506,40 +580,40 @@ classdef UtilityTest < matlab.unittest.TestCase
             delayProbsPreviousTimeStep3 = [0.1 0.1 0.1 0.1 0.6]';
             delayProbMatrix = [delayProbsCurrentTimeStep delayProbsPreviousTimeStep delayProbsPreviousTimeStep2 delayProbsPreviousTimeStep3];
             
-            % compute transition matrix straightforwardly as described in
+            % compute transition matrix straightforwardly (we compute P_{k-1} with entries p_{k-1,ij}) as described in
             %
-            % Jörg Fischer, Achim Hekler, Maxim Dolgov, and Uwe D. Hanebeck,
-            % Optimal Sequence-Based LQG Control over TCP-like Networks Subject to Random Transmission Delays and Packet Losses,
-            % Proceedings of the 2013 American Control Conference (ACC 2013),
-            % Washington D. C., USA, June 2013
-            %
-            q_tilde = zeros(1, 4);
-            q_tilde(1) = delayProbsCurrentTimeStep(1);
-            q_tilde(2) = delayProbsPreviousTimeStep(2) / (1-delayProbsPreviousTimeStep(1));
-            q_tilde(3) = delayProbsPreviousTimeStep2(3) / (1-(delayProbsPreviousTimeStep2(1) + delayProbsPreviousTimeStep2(2)));
-            q_tilde(4) = delayProbsPreviousTimeStep3(4) / (1-(delayProbsPreviousTimeStep3(1) + delayProbsPreviousTimeStep3(2) + delayProbsPreviousTimeStep3(3)));
+            % Florian Rosenthal and Uwe D. Hanebeck,
+            % Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks (submitted),
+            % Proceedings of the 21th IFAC World Congress (IFAC 2020),
+            % Berlin, Germany, July 2020
+            %            
+            q = delayProbsCurrentTimeStep(1);
+            q_tilde = zeros(3,1);
+            q_tilde(1) = delayProbsPreviousTimeStep(2) / (1-delayProbsPreviousTimeStep(1));
+            q_tilde(2) = delayProbsPreviousTimeStep2(3) / (1-delayProbsPreviousTimeStep2(1) - delayProbsPreviousTimeStep2(2));
+            q_tilde(3) = delayProbsPreviousTimeStep3(4) / (1-delayProbsPreviousTimeStep3(1) - delayProbsPreviousTimeStep3(2) - delayProbsPreviousTimeStep3(3));
             
             expectedTransitionMatrix = zeros(5);
             
-            expectedTransitionMatrix(1,1) = q_tilde(1);
-            expectedTransitionMatrix(1,2) = 1 - q_tilde(1);
-            expectedTransitionMatrix(2,1) = q_tilde(1);
-            expectedTransitionMatrix(2,2) = q_tilde(2) * (1-q_tilde(1));
-            expectedTransitionMatrix(2,3) = (1 - q_tilde(1)) * (1- q_tilde(2));
-            expectedTransitionMatrix(3,1) = q_tilde(1);
-            expectedTransitionMatrix(3,2) = q_tilde(2) * (1-q_tilde(1));
-            expectedTransitionMatrix(3,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
-            expectedTransitionMatrix(3,4) = (1 - q_tilde(1)) * (1- q_tilde(2)) * (1-q_tilde(3));
-            expectedTransitionMatrix(4,1) = q_tilde(1);
-            expectedTransitionMatrix(4,2) = q_tilde(2) * (1-q_tilde(1));
-            expectedTransitionMatrix(4,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
-            expectedTransitionMatrix(4,4) = q_tilde(4) * (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
-            expectedTransitionMatrix(4,5) = (1 - q_tilde(1)) * (1- q_tilde(2)) * (1-q_tilde(3)) * (1-q_tilde(4));
-            expectedTransitionMatrix(5,1) = q_tilde(1);
-            expectedTransitionMatrix(5,2) = q_tilde(2) * (1-q_tilde(1));
-            expectedTransitionMatrix(5,3) = q_tilde(3) * (1-q_tilde(1)) * (1-q_tilde(2));
-            expectedTransitionMatrix(5,4) = q_tilde(4) * (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
-            expectedTransitionMatrix(5,5) = (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3)) * (1-q_tilde(4));
+            expectedTransitionMatrix(1,1) = q;
+            expectedTransitionMatrix(1,2) = 1 - q;
+            expectedTransitionMatrix(2,1) = q;
+            expectedTransitionMatrix(2,2) = q_tilde(1) * (1-q);
+            expectedTransitionMatrix(2,3) = (1 - q) * (1- q_tilde(1));
+            expectedTransitionMatrix(3,1) = q;
+            expectedTransitionMatrix(3,2) = q_tilde(1) * (1-q);
+            expectedTransitionMatrix(3,3) = q_tilde(2) * (1-q) * (1-q_tilde(1));
+            expectedTransitionMatrix(3,4) = (1 - q) * (1- q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(4,1) = q;
+            expectedTransitionMatrix(4,2) = q_tilde(1) * (1-q);
+            expectedTransitionMatrix(4,3) = q_tilde(2) * (1-q) * (1-q_tilde(1));
+            expectedTransitionMatrix(4,4) = q_tilde(3) * (1-q) * (1-q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(4,5) = (1 - q) * (1- q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
+            expectedTransitionMatrix(5,1) = q;
+            expectedTransitionMatrix(5,2) = q_tilde(1) * (1-q);
+            expectedTransitionMatrix(5,3) = q_tilde(2) * (1-q) * (1-q_tilde(1));
+            expectedTransitionMatrix(5,4) = q_tilde(3) * (1-q) * (1-q_tilde(1)) * (1-q_tilde(2));
+            expectedTransitionMatrix(5,5) = (1-q) * (1-q_tilde(1)) * (1-q_tilde(2)) * (1-q_tilde(3));
             
             actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbMatrix);
             this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);

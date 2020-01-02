@@ -222,6 +222,7 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             
             this.verifyEqual(controller.L, this.expectedL, 'AbsTol', NominalPredictiveControllerTest.absTol);
             this.verifyEmpty(controller.setpoint);
+            this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback
         end
         
         %% testChangeSequenceLength

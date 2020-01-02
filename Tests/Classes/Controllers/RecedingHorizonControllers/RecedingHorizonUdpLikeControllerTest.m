@@ -42,8 +42,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         dimY;
         
         modeTransitionMatrix;
-        stationaryModeDistribution;
-                
+                        
         W;
         V;
 
@@ -687,6 +686,16 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                 this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
                 expectedErrId);
         end
+        
+        %% testRecedingHorizonUdpLikeControllerInvalidFlag
+        function testRecedingHorizonUdpLikeControllerInvalidFlag(this)
+            expectedErrId = 'RecedingHorizonUdpLikeController:InvalidUseMexFlag';
+            invalidUseMexFlag = 'invalid'; % not a flag
+            
+            this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov, invalidUseMexFlag), ...
+                expectedErrId);
+        end
 %%
 %%
         %% RecedingHorizonUdpLikeController
@@ -699,6 +708,11 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyEqual(controller.sequenceLength, this.sequenceLength);
             this.verifyEqual(controller.lastNumIterations, 0);
+            this.verifyFalse(controller.requiresExternalStateEstimate); % does not require a filter or state feedback
+            
+            %by default, we use the mex implementation to obtain the
+            %controller gains
+            this.verifyTrue(controller.useMexImplementation);
         end
 %%
 %%
@@ -1009,6 +1023,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.setControllerPlantState(Gaussian(zeroState, this.x0Cov));
                         
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), zeroState);
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
             % the initial state is the origin, and we have a linear control
             % law, so perform a sanity check
             expectedInputSequence = zeros(this.dimU * this.sequenceLength, 1);
@@ -1025,8 +1040,42 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
                 RecedingHorizonUdpLikeController.maxNumIterations);
-            this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
+            this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);            
+        end
+        
+        
+        %% testComputeControlSequenceZeroStateNoMeasurementsNoModesNoMex
+        function testComputeControlSequenceZeroStateNoMeasurementsNoModesNoMex(this)
+            import matlab.unittest.constraints.IsScalar;
+
+            % use the matlab implementation to obtain the controller gains
+            useMexImplementation = false;
+            controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
+                        
+            zeroState = zeros(this.dimX, 1);
+            controller.setControllerPlantState(Gaussian(zeroState, this.x0Cov));
+                        
+            this.assertEqual(controller.getControllerPlantState(), zeroState);
+            this.assertFalse(controller.useMexImplementation);
+            % the initial state is the origin, and we have a linear control
+            % law, so perform a sanity check
+            expectedInputSequence = zeros(this.dimU * this.sequenceLength, 1);
             
+            actualInputSequence = controller.computeControlSequence();
+            
+            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            % the controller state should not have changed, as we have no
+            % measurements that could be used to correct it
+            this.verifyEqual(controller.getControllerPlantState(), zeroState);
+            
+            % check that at least one iteration was performed to obtain the
+            % gains
+            this.verifyGreaterThan(controller.lastNumIterations, 0);
+            this.verifyLessThanOrEqual(controller.lastNumIterations, ...
+                RecedingHorizonUdpLikeController.maxNumIterations);
+            this.verifyThat(controller.lastNumIterations, IsScalar);            
         end
         
         %% testComputeControlSequenceNoMeasurementsNodeModes
@@ -1036,6 +1085,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
             [M, K, L] = this.computeGainsNoMeasurementsNoModes();
@@ -1057,6 +1107,42 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
+        %% testComputeControlSequenceNoMeasurementsNodeModesNoMex
+        function testComputeControlSequenceNoMeasurementsNodeModesNoMex(this)
+            import matlab.unittest.constraints.IsScalar;
+            
+            % use the matlab implementation to obtain the controller gains
+            useMexImplementation = false;
+            controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
+            
+            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(controller.getControllerPlantState(), this.x0);
+            % ensure that matlab implementation is used
+            this.assertFalse(controller.useMexImplementation);
+
+            % expected controller gains                  
+            [M, K, L] = this.computeGainsNoMeasurementsNoModes();
+     
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            expectedNewControllerState = M(:, :, 1) * this.augX0;
+            
+            actualInputSequence = controller.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence);
+
+            this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+            % check that at least one iteration was performed to obtain the
+            % gains
+            this.verifyGreaterThan(controller.lastNumIterations, 0);
+            this.verifyLessThanOrEqual(controller.lastNumIterations, ...
+                RecedingHorizonUdpLikeController.maxNumIterations);
+            this.verifyThat(controller.lastNumIterations, IsScalar);
+        end
+        
         %% testComputeControlSequenceNoModes
         function testComputeControlSequenceNoModes(this)
             import matlab.unittest.constraints.IsScalar;
@@ -1067,6 +1153,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
             [M, K, L] = this.computeGainsNoModes();
@@ -1088,6 +1175,44 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
+        %% testComputeControlSequenceNoModesNoMex
+        function testComputeControlSequenceNoModesNoMex(this)
+            import matlab.unittest.constraints.IsScalar;
+            
+            % use the matlab implementation to obtain the controller gains
+            useMexImplementation = false;
+            controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
+            
+            receivedMeasurement = ones(this.dimY, 1);
+            measurementDelay = 0;
+            
+            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(controller.getControllerPlantState(), this.x0);
+            this.assertFalse(controller.useMexImplementation);
+
+            % expected controller gains                  
+            [M, K, L] = this.computeGainsNoModes();
+
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurement; zeros(this.dimY, 1)];
+            
+            actualInputSequence = controller.computeControlSequence(receivedMeasurement, measurementDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence);
+
+            this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+            % check that at least one iteration was performed to obtain the
+            % gains
+            this.verifyGreaterThan(controller.lastNumIterations, 0);
+            this.verifyLessThanOrEqual(controller.lastNumIterations, ...
+                RecedingHorizonUdpLikeController.maxNumIterations);
+            this.verifyThat(controller.lastNumIterations, IsScalar);
+        end
+        
         %% testComputeControlSequenceMeasurementsMode
         function testComputeControlSequenceMeasurementsMode(this)
             import matlab.unittest.constraints.IsScalar;
@@ -1101,6 +1226,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
             [M, K, L] = this.computeGainsMeasurementAndMode();
@@ -1120,6 +1246,48 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
                 RecedingHorizonUdpLikeController.maxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
+        end
+        
+        %% testComputeControlSequenceMeasurementsModeNoMex
+        function testComputeControlSequenceMeasurementsModeNoMex(this)
+            import matlab.unittest.constraints.IsScalar;
+            
+            % use the matlab implementation to obtain the controller gains
+            useMexImplementation = false;
+            controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
+                        
+            receivedMeasurements = [ones(this.dimY, 1) 1.5 * ones(this.dimY, 1)];
+            measurementDelays = [1 0];
+            % we observed the previous mode
+            previousMode = 1;
+            modeDelay = 1;
+            
+            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(controller.getControllerPlantState(), this.x0);
+            % and we use Matlab to compute the gains
+            this.assertFalse(controller.useMexImplementation);
+
+            % expected controller gains                  
+            [M, K, L] = this.computeGainsMeasurementAndMode();
+
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurements(:, 2); receivedMeasurements(:, 1)];
+            
+            actualInputSequence = controller.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence);
+
+            this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+            % check that at least one iteration was performed to obtain the
+            % gains
+            this.verifyGreaterThan(controller.lastNumIterations, 0);
+            this.verifyLessThanOrEqual(controller.lastNumIterations, ...
+                RecedingHorizonUdpLikeController.maxNumIterations);
+            this.verifyThat(controller.lastNumIterations, IsScalar);
         end
 %%
 %%

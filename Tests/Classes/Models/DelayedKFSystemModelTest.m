@@ -5,7 +5,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -283,7 +283,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
         
         %% testSetDelayWeights
         function testSetDelayWeights(this)
-            newProbs = [1 zeros(1, numel(this.inputProbs) -1)];
+            newProbs = [1 zeros(1, numel(this.inputProbs) -1)]';
             % compute the additional uncertainty resulting from these probs
             % there should be none
             inputMean = this.uncertainInputs(:, 1);

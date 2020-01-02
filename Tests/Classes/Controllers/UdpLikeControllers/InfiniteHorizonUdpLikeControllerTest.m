@@ -5,7 +5,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -63,10 +63,21 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         expAugR;
         expAugQ;
         
+        L;
+        K;
+        
         controllerUnderTest;
     end
     
     methods (TestMethodSetup)
+        %% initController
+        function initController(this)                 
+            this.controllerUnderTest = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.v_mean);
+        end
+    end
+    
+    methods (TestClassSetup)
         %% initProperties
         function initProperties(this)
             this.dimX = 3;
@@ -93,12 +104,103 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             this.W = eye(this.dimX) * 0.01;
             this.V = eye(this.dimY) * 0.001;
-            this.v_mean = repmat(0.5, 1, this.dimY);
-            
+            this.v_mean = repmat(0.5, 1, this.dimY);            
+              
             this.initAdditionalProperties();
-       
-            this.controllerUnderTest = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.v_mean);
+        end
+        
+        %% computeGains
+        function computeGains(this)
+            dimAugState = 2 * this.dimX;           
+            numMeasMatrices = 4;          
+            
+            augW = blkdiag(this.W, zeros(this.dimX));
+            augV = blkdiag(this.V, this.V);
+            
+            % now compute the gain matrices K, L
+            OverbarPsi = zeros(dimAugState);
+            UnderbarPsi = zeros(dimAugState);
+            OverbarLambda = zeros(dimAugState);
+            UnderbarLambda = zeros(dimAugState);
+            
+            this.K = zeros(dimAugState, 2 * this.dimY);
+            this.L = zeros(this.dimU, dimAugState);
+
+            OverbarPsi_old = inf(dimAugState);
+            UnderbarPsi_old = inf(dimAugState);
+            
+            maxIterNum = 10000;
+            convergenceDiff = 1e-10;
+            
+            numModes = 2;
+            
+            % use straightforward implementation for the computation of the gains
+            k = 1;
+            while (k <= maxIterNum) && (sum(sum(abs(OverbarPsi_old - OverbarPsi))) > convergenceDiff ...
+                    || sum(sum(abs(UnderbarPsi_old - UnderbarPsi))) > convergenceDiff)           
+                % compute the next iterates
+                K_old = this.K;
+                L_old = this.L;
+                OverbarPsi_old = OverbarPsi;
+                UnderbarPsi_old = UnderbarPsi;
+                OverbarLambda_old = OverbarLambda;
+                UnderbarLambda_old = UnderbarLambda;
+                
+                OverbarPsi = augW + K_old * augV * K_old' ...
+                    - (this.expAugA - this.expAugB * L_old) * UnderbarPsi_old * (this.expAugA - this.expAugB * L_old)';
+                UnderbarPsi = (this.expAugA - this.expAugB * L_old) * UnderbarPsi_old * (this.expAugA - this.expAugB * L_old)' ...
+                    + K_old * augV * K_old';
+                OverbarLambda = this.expAugQ + L_old' * this.expAugR * L_old ...
+                    - (this.expAugA - this.expAugB * L_old)' * UnderbarLambda_old * (this.expAugA - this.expAugB * L_old);
+                UnderbarLambda = L_old' * this.expAugR * L_old;
+                
+                K1 = 0;
+                K2 = augV;
+                L1 = this.expAugR - this.expAugB' * UnderbarLambda_old * this.expAugB;
+                L2 = -this.expAugB' * UnderbarLambda_old * this.expAugA;
+                
+                for i= 1:numModes
+                    for j=1:numMeasMatrices
+                        UnderbarPsi = UnderbarPsi + this.stationaryModeDistribution(i) * this.probC(j) * ...
+                            (K_old * this.augC(:,:,j) * OverbarPsi_old * this.augC(:,:,j)'* K_old');
+                                                                            
+                        OverbarPsi = OverbarPsi + this.stationaryModeDistribution(i) * this.probC(j)* ...
+                            ((this.augA(:,:,i)- K_old * this.augC(:,:,j)) * OverbarPsi_old * (this.augA(:,:,i) - K_old * this.augC(:,:,j))' ...
+                            + (this.augA(:,:,i) - this.augB(:,:,i) * L_old) * UnderbarPsi_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old)');                           
+                                 
+                        UnderbarLambda = UnderbarLambda + this.stationaryModeDistribution(i) * this.probC(j) ...
+                            * ((this.expAugA - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.expAugA - K_old * this.augC(:,:,j)) ...
+                            + L_old' * this.augB(:,:,i)' * OverbarLambda_old * this.augB(:,:,i) * L_old ...
+                            + (this.augB(:,:,i) * L_old - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.augB(:,:,i) * L_old - K_old * this.augC(:,:,j)) ...
+                            - (this.expAugB * L_old - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.expAugB * L_old - K_old * this.augC(:,:,j)));  
+                        
+                        K1 = K1 + this.stationaryModeDistribution(i) * this.probC(j) ...
+                            * (this.augA(:,:,i) * OverbarPsi_old  * this.augC(:,:,j)');
+                        K2 = K2 + this.stationaryModeDistribution(i) * this.probC(j) ...
+                            * (this.augC(:,:,j) * OverbarPsi_old * this.augC(:,:,j)');
+                    end
+                    OverbarLambda = OverbarLambda + this.stationaryModeDistribution(i) ...
+                        * ((this.augA(:,:,i) - this.augB(:,:,i) * L_old)' * OverbarLambda_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old) ...
+                        + (this.augA(:,:,i) - this.augB(:,:,i) * L_old)' * UnderbarLambda_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old));
+                                            
+                    L1 = L1 + this.stationaryModeDistribution(i) ...
+                        * (this.augB(:,:,i)' * OverbarLambda_old * this.augB(:,:,i) ...
+                        + this.augB(:,:,i)' * UnderbarLambda_old * this.augB(:,:,i));
+                    L2 = L2 + this.stationaryModeDistribution(i) ...
+                        * (this.augB(:,:,i)' * OverbarLambda_old * this.augA(:,:,i) ...
+                        + this.augB(:,:,i)' * UnderbarLambda_old * this.augA(:,:,i));
+                end
+                this.K = K1 * pinv(K2);
+                this.L = pinv(L1) * L2;
+                
+                k= k+1;
+                
+                % ensure symmetry of matrices
+                UnderbarPsi = (UnderbarPsi + UnderbarPsi') / 2;
+                OverbarPsi = (OverbarPsi + OverbarPsi') / 2;
+                OverbarLambda = (OverbarLambda + OverbarLambda') / 2;
+                UnderbarLambda = (UnderbarLambda + UnderbarLambda') / 2;
+            end  
         end
     end
     
@@ -153,99 +255,6 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                     end
                 end
             end
-        end
-        
-        %% computeGains
-        function [K, L] = computeGains(this)
-            dimAugState = 2 * this.dimX;           
-            numMeasMatrices = 4;          
-            
-            augW = blkdiag(this.W, zeros(this.dimX));
-            augV = blkdiag(this.V, this.V);
-            
-            % now compute the gain matrices K, L
-            OverbarPsi = zeros(dimAugState);
-            UnderbarPsi = zeros(dimAugState);
-            OverbarLambda = zeros(dimAugState);
-            UnderbarLambda = zeros(dimAugState);
-            
-            K = zeros(dimAugState, 2 * this.dimY);
-            L = zeros(this.dimU, dimAugState);
-            K_old = inf(dimAugState, 2 * this.dimY);
-            L_old = inf(this.dimU, dimAugState);
-            
-            maxIterNum = 10000;
-            convergenceDiff = 1e-10;
-            
-            numModes = 2;
-            
-            % use straightforward implementation for the computation of the gains
-            k = 1;
-            while k <= maxIterNum && (k == 2 || norm (K_old - K) > convergenceDiff ...
-                    && norm (L_old - L) > convergenceDiff)                
-                % compute the next iterates
-                K_old = K;
-                L_old = L;
-                OverbarPsi_old = OverbarPsi;
-                UnderbarPsi_old = UnderbarPsi;
-                OverbarLambda_old = OverbarLambda;
-                UnderbarLambda_old = UnderbarLambda;
-                
-                OverbarPsi = augW + K_old * augV * K_old' ...
-                    - (this.expAugA - this.expAugB * L_old) * UnderbarPsi_old * (this.expAugA - this.expAugB * L_old)';
-                UnderbarPsi = (this.expAugA - this.expAugB * L_old) * UnderbarPsi_old * (this.expAugA - this.expAugB * L_old)' ...
-                    + K_old * augV * K_old';
-                OverbarLambda = this.expAugQ + L_old' * this.expAugR * L_old ...
-                    - (this.expAugA - this.expAugB * L_old)' * UnderbarLambda_old * (this.expAugA - this.expAugB * L_old);
-                UnderbarLambda = L_old' * this.expAugR * L_old;
-                
-                K1 = 0;
-                K2 = augV;
-                L1 = this.expAugR - this.expAugB' * UnderbarLambda_old * this.expAugB;
-                L2 = -this.expAugB' * UnderbarLambda_old * this.expAugA;
-                
-                for i= 1:numModes
-                    for j=1:numMeasMatrices
-                        UnderbarPsi = UnderbarPsi + this.stationaryModeDistribution(i) * this.probC(j) * ...
-                            (K_old * this.augC(:,:,j) * OverbarPsi_old * this.augC(:,:,j)'* K_old');
-                                                                            
-                        OverbarPsi = OverbarPsi + this.stationaryModeDistribution(i) * this.probC(j)* ...
-                            ((this.augA(:,:,i)- K_old * this.augC(:,:,j)) * OverbarPsi_old * (this.augA(:,:,i) - K_old * this.augC(:,:,j))' ...
-                            + (this.augA(:,:,i) - this.augB(:,:,i) * L_old) * UnderbarPsi_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old)');                           
-                                 
-                        UnderbarLambda = UnderbarLambda + this.stationaryModeDistribution(i) * this.probC(j) ...
-                            * ((this.expAugA - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.expAugA - K_old * this.augC(:,:,j)) ...
-                            + L_old' * this.augB(:,:,i)' * OverbarLambda_old * this.augB(:,:,i) * L_old ...
-                            + (this.augB(:,:,i) * L_old - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.augB(:,:,i) * L_old - K_old * this.augC(:,:,j)) ...
-                            - (this.expAugB * L_old - K_old * this.augC(:,:,j))' * UnderbarLambda_old * (this.expAugB * L_old - K_old * this.augC(:,:,j)));  
-                        
-                        K1 = K1 + this.stationaryModeDistribution(i) * this.probC(j) ...
-                            * (this.augA(:,:,i) * OverbarPsi_old  * this.augC(:,:,j)');
-                        K2 = K2 + this.stationaryModeDistribution(i) * this.probC(j) ...
-                            * (this.augC(:,:,j) * OverbarPsi_old * this.augC(:,:,j)');
-                    end
-                    OverbarLambda = OverbarLambda + this.stationaryModeDistribution(i) ...
-                        * ((this.augA(:,:,i) - this.augB(:,:,i) * L_old)' * OverbarLambda_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old) ...
-                        + (this.augA(:,:,i) - this.augB(:,:,i) * L_old)' * UnderbarLambda_old * (this.augA(:,:,i) - this.augB(:,:,i) * L_old));
-                                            
-                    L1 = L1 + this.stationaryModeDistribution(i) ...
-                        * (this.augB(:,:,i)' * OverbarLambda_old * this.augB(:,:,i) ...
-                        + this.augB(:,:,i)' * UnderbarLambda_old * this.augB(:,:,i));
-                    L2 = L2 + this.stationaryModeDistribution(i) ...
-                        * (this.augB(:,:,i)' * OverbarLambda_old * this.augA(:,:,i) ...
-                        + this.augB(:,:,i)' * UnderbarLambda_old * this.augA(:,:,i));
-                end
-                K = K1 * pinv(K2);
-                L = pinv(L1) * L2;
-                
-                k= k+1;
-                
-                % ensure symmetry of matrices
-                UnderbarPsi = (UnderbarPsi + UnderbarPsi') / 2;
-                OverbarPsi = (OverbarPsi + OverbarPsi') / 2;
-                OverbarLambda = (OverbarLambda + OverbarLambda') / 2;
-                UnderbarLambda = (UnderbarLambda + UnderbarLambda') / 2;
-            end       
         end
     end
     
@@ -477,6 +486,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyEqual(controller.getControllerPlantState(), expectedControllerPlantState);
             this.verifyEqual(controller.maxMeasurementDelay, this.maxMeasDelay);
             this.verifyEqual(controller.sequenceLength, this.sequenceLength);
+            this.verifyFalse(controller.requiresExternalStateEstimate); % does not require a filter or state feedback
         end
 %%
 %%
@@ -569,8 +579,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % set an non-zero state
             this.controllerUnderTest.setControllerPlantState(stateDistribution);
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), state);
-            
-            [K, L] = this.computeGains();
+                        
             augmentedState = [state; zeros(this.dimX, 1)];
             % create two measurements
             firstMeas = ones(this.dimY, 1);
@@ -579,8 +588,8 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             augmentedMeas = [firstMeas; secondMeas];
             innovation = augmentedMeas - this.augC(:, :, 4) * augmentedState;
             % now the expected input and new state
-            expectedInputs = -L * augmentedState;
-            expectedNewState = this.expAugA * augmentedState  + K * innovation + this.expAugB * expectedInputs;
+            expectedInputs = -this.L * augmentedState;
+            expectedNewState = this.expAugA * augmentedState  + this.K * innovation + this.expAugB * expectedInputs;
             
             % two measurements available for the controller
             actualInputSequence = this.controllerUnderTest.computeControlSequence([firstMeas secondMeas], [0 1]);
@@ -598,13 +607,11 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % set an non-zero state
             this.controllerUnderTest.setControllerPlantState(stateDistribution);
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), state);
-            
-            [~, L] = this.computeGains();
-   
+         
             augmentedState = [state; zeros(this.dimX, 1)];
             
             % now the expected input and new state
-            expectedInputs = -L * augmentedState;
+            expectedInputs = -this.L * augmentedState;
                         
             % no measurements available for the controller
             actualInputSequence = this.controllerUnderTest.computeControlSequence();

@@ -44,6 +44,10 @@ classdef TestPlantModel < NonlinearPlant
         function states = simulateForInput(this, stateSamples, input)
             states = this.nonlinearDynamics(stateSamples, repmat(input, 1, size(stateSamples, 2)), []);
         end
+        
+        function isValid = isValidState(this, state)
+            isValid = true;
+        end
     end
     
     methods (Access = protected)

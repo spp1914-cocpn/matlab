@@ -6,7 +6,7 @@ classdef SequenceBasedControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -33,6 +33,7 @@ classdef SequenceBasedControllerTest < matlab.unittest.TestCase
         sequenceLength;
         stateTrajectory;
         inputTrajectory;
+        needsFilter;
         plantState;
         
         controllerUnderTest;
@@ -47,10 +48,11 @@ classdef SequenceBasedControllerTest < matlab.unittest.TestCase
             this.sequenceLength = 6;
             this.stateTrajectory = ones(this.dimX, 10);
             this.inputTrajectory = ones(this.dimU, 10);
+            this.needsFilter = true;
         
             this.plantState = Gaussian(zeros(this.dimX, 1), eye(this.dimX));
             
-            this.controllerUnderTest = SequenceBasedControllerStub(this.dimX, this.dimU, this.sequenceLength);
+            this.controllerUnderTest = SequenceBasedControllerStub(this.dimX, this.dimU, this.sequenceLength, this.needsFilter);
         end
     end
 
@@ -62,33 +64,34 @@ classdef SequenceBasedControllerTest < matlab.unittest.TestCase
             
             % must be positive
             invalidSequenceLength = 0;
-            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength), ...
+            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength, this.needsFilter), ...
                 expectedErrId);
             
             % must be integer
             invalidSequenceLength = 4.5;
-            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength), ...
+            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength, this.needsFilter), ...
                 expectedErrId);
             
             % must be finite
             invalidSequenceLength = inf;
-            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength), ...
+            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength, this.needsFilter), ...
                 expectedErrId);
             
             % must be finite
             invalidSequenceLength = nan;
-            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength), ...
+            this.verifyError(@() SequenceBasedControllerStub(this.dimX, this.dimU, invalidSequenceLength, this.needsFilter), ...
                 expectedErrId);
         end
         
         %% testSequenceBasedController
         function testSequenceBasedController(this)
-            controller = SequenceBasedControllerStub(this.dimX, this.dimU, this.sequenceLength);
+            controller = SequenceBasedControllerStub(this.dimX, this.dimU, this.sequenceLength, this.needsFilter);
             [actualDimX, actualDimU, actualSeqLength] = controller.getProperties();
             
             this.verifyEqual(actualDimX, this.dimX);
             this.verifyEqual(actualDimU, this.dimU);
             this.verifyEqual(actualSeqLength, this.sequenceLength);
+            this.verifyEqual(controller.requiresExternalStateEstimate, this.needsFilter);
         end
         
         %% testComputeStageCostsInvalidStateInput

@@ -5,7 +5,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -166,11 +166,11 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
                 this.delayProbs, this.sequenceLength), expectedErrId);
                  
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings), expectedErrId);
             
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings), expectedErrId);
         end
     
@@ -286,6 +286,16 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
         end
 %%
 %%
+        %% testFiniteHorizonControllerInvalidFlag
+        function testFiniteHorizonControllerInvalidFlag(this)
+            expectedErrId = 'FiniteHorizonController:InvalidUseMexFlag';
+            invalidUseMexFlag = 'invalid'; % not a flag
+            
+            this.verifyError(@()  FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, invalidUseMexFlag), expectedErrId);
+        end        
+%%
+%%
         %% testFiniteHorizonControllerInvalidLinearIntegralConstraints
         function testFiniteHorizonControllerInvalidLinearIntegralConstraints(this)
             expectedErrId = 'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidStateWeightings';
@@ -293,19 +303,19 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidStateWeightings = ones(this.dimX, this.horizonLength + 1, this.numConstraints, this.numConstraints);
             % not a 3D matrix
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             invalidStateWeightings = ones(this.dimX, this.horizonLength, this.numConstraints);
             % not 3D matrix, but incorrect dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             invalidStateWeightings = ones(this.dimX + 2, this.horizonLength + 1, this.numConstraints);
             % not 3D matrix, but incorrect dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             expectedErrId = 'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidInputWeightings';
@@ -313,19 +323,19 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidInputWeightings = ones(this.dimX, this.horizonLength, this.numConstraints);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             invalidInputWeightings = ones(this.dimU, this.horizonLength + 1, this.numConstraints);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             invalidInputWeightings = ones(this.dimU, this.horizonLength, this.numConstraints + 1);
             % wrong number of slices
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             expectedErrId = 'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidConstraints';
@@ -333,13 +343,13 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidConstraintBounds = ones(this.dimX, this.horizonLength, this.numConstraints);
             % not a vector
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, invalidConstraintBounds), expectedErrId);
             
             invalidConstraintBounds = ones(1, this.numConstraints + 2);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, invalidConstraintBounds), expectedErrId);
         end
 %%
@@ -352,24 +362,30 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyFalse(controller.constraintsPresent);
+            this.verifyTrue(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate);
             
             % now one with constraints given
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyTrue(controller.constraintsPresent);
+            this.verifyTrue(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate);
             
             % now the border case where only a single constraint is present
             stateWeightings = squeeze(this.stateConstraintWeightings(:, :, 1));
             inputWeightings = squeeze(this.inputConstraintWeightings(:, :, 1));
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, false, ...
                 stateWeightings, inputWeightings, this.constraintBounds(1));
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyTrue(controller.constraintsPresent);
+            this.verifyFalse(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate);
         end
 %%        
 %%               
@@ -381,6 +397,8 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             % previous mode
             expectedSequence = zeros(this.dimU, 1);
 
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
+            
             % first mode
             actualSequence = this.controllerUnderTest.computeControlSequence(this.zeroStateDistribution, 1, ...
                     this.horizonLength);
@@ -394,6 +412,32 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualSequence, expectedSequence);
         end
         
+        %% testDoControlSequenceComputationZeroStateWithoutConstraintsNoMex
+        function testDoControlSequenceComputationZeroStateWithoutConstraintsNoMex(this)
+            % perform a sanity check: given state is origin, so compute
+            % control sequence (length 1) should be also the zero vector
+            % due to the underlying linear control law, independent of the
+            % previous mode
+            expectedSequence = zeros(this.dimU, 1);
+            useMex = false;
+            
+            controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex);
+            this.assertFalse(controller.useMexImplementation);
+            
+            % first mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 1, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+            
+            %second mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 2, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+        end
+        
         %% testDoControlSequenceComputationZeroStateWithConstraints
         function testDoControlSequenceComputationZeroStateWithConstraints(this)
             % perform a sanity check: given state is origin,
@@ -402,11 +446,14 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             % due to the underlying linear control law, independent of the
             % previous mode
             expectedSequence = zeros(this.dimU, 1);
-                       
+            useMex = true;
+            
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
+            
+            this.assertTrue(controllerWithConstraints.useMexImplementation);
             
             % first mode
             actualSequence = controllerWithConstraints.computeControlSequence(this.zeroStateDistribution, 1, ...
@@ -415,9 +462,48 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualSequence, expectedSequence);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
+            
+            this.assertTrue(controllerWithConstraints.useMexImplementation);
+            
+            %second mode
+            actualSequence = controllerWithConstraints.computeControlSequence(this.zeroStateDistribution, 2, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+        end
+        
+        %% testDoControlSequenceComputationZeroStateWithConstraintsNoMex
+        function testDoControlSequenceComputationZeroStateWithConstraintsNoMex(this)
+            % perform a sanity check: given state is origin,
+            % and weightings for constraints are zero
+            % so computed control sequence (length 1) should be also the zero vector
+            % due to the underlying linear control law, independent of the
+            % previous mode
+            expectedSequence = zeros(this.dimU, 1);
+            useMex = false;
+            
+            controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                zeros(this.dimX, 2, this.numConstraints), ...
+                zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
+            
+            this.assertFalse(controllerWithConstraints.useMexImplementation);
+            
+            % first mode
+            actualSequence = controllerWithConstraints.computeControlSequence(this.zeroStateDistribution, 1, ...
+                    this.horizonLength);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+            
+            controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                zeros(this.dimX, 2, this.numConstraints), ...
+                zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
+            
+            this.assertFalse(controllerWithConstraints.useMexImplementation);
             
             %second mode
             actualSequence = controllerWithConstraints.computeControlSequence(this.zeroStateDistribution, 2, ...
@@ -431,6 +517,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
         function testDoControlSequenceComputationWithoutConstraints(this)
             expectedInputs = this.computeExpectedInputsWithoutConstraints();
             
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
             % check both modes
             % first mode: previous input arrived at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1, ...
@@ -443,13 +530,38 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualInput, expectedInputs);
         end
         
+        %% testDoControlSequenceComputationWithoutConstraintsNoMex
+        function testDoControlSequenceComputationWithoutConstraintsNoMex(this)
+            expectedInputs = this.computeExpectedInputsWithoutConstraints();
+            
+            useMex = false;
+            
+            controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex);
+            this.assertFalse(controller.useMexImplementation);
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 1, ...
+                    this.horizonLength);
+            this.verifyEqual(actualInput, expectedInputs);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 2, ...
+                    this.horizonLength);
+            this.verifyEqual(actualInput, expectedInputs);
+        end
+        
         %% testDoControlSequenceComputationWithConstraints
         function testDoControlSequenceComputationWithConstraints(this)
             expectedInputs = this.computeExpectedInputsWithConstraints();
             
+            useMex = true;
+            
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
+            this.assertTrue(controllerWithConstraints.useMexImplementation);
             
             % check both modes
             % first mode: previous input arrived at plant
@@ -458,14 +570,44 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
+            this.assertTrue(controllerWithConstraints.useMexImplementation);
             
             % second mode: previous input dot not arrive at plant
             actualInput = controllerWithConstraints.computeControlSequence(this.stateDistribution, 2, ...
                     this.horizonLength);
             this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
         end
+        
+        %% testDoControlSequenceComputationWithConstraintsNoMex
+        function testDoControlSequenceComputationWithConstraintsNoMex(this)
+            expectedInputs = this.computeExpectedInputsWithConstraints();
+            
+            useMex = false;
+            
+            controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
+            this.assertFalse(controllerWithConstraints.useMexImplementation);
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = controllerWithConstraints.computeControlSequence(this.stateDistribution, 1, ...
+                    this.horizonLength);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
+            
+            controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
+            this.assertFalse(controllerWithConstraints.useMexImplementation);
+            
+            % second mode: previous input dot not arrive at plant
+            actualInput = controllerWithConstraints.computeControlSequence(this.stateDistribution, 2, ...
+                    this.horizonLength);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
+        end
+        
     end
 end
 

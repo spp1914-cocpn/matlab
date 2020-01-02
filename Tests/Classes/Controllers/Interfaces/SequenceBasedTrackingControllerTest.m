@@ -5,7 +5,7 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -30,6 +30,7 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
         dimX;
         dimU;
         sequenceLength;
+        needsFilter;
         stateTrajectory;
         inputTrajectory;
         plantState;
@@ -45,6 +46,7 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
             this.dimU = 2;
             
             this.sequenceLength = 6;
+            this.needsFilter = false;
             this.stateTrajectory = ones(this.dimX, 10);
             this.inputTrajectory = ones(this.dimU, 10);
         
@@ -53,7 +55,7 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
             this.Z = [1 1 1];
             this.refTrajectory = ones(1, this.sequenceLength + 1);
             this.controllerUnderTest = SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, this.refTrajectory, this.sequenceLength + 1);
+                this.needsFilter, this.Z, this.refTrajectory, this.sequenceLength + 1);
         end
     end
     
@@ -64,12 +66,12 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
             
             invalidZ = ones(1, this.dimU); % invalid number of cols
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                invalidZ, this.refTrajectory, this.sequenceLength + 1), expectedErrId);
+                this.needsFilter, invalidZ, this.refTrajectory, this.sequenceLength + 1), expectedErrId);
                
             invalidZ = this.Z; 
             invalidZ(2) = nan; % must be finite
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                invalidZ, this.refTrajectory, this.sequenceLength + 1), expectedErrId);
+                this.needsFilter, invalidZ, this.refTrajectory, this.sequenceLength + 1), expectedErrId);
             
         end
         
@@ -79,53 +81,56 @@ classdef SequenceBasedTrackingControllerTest < matlab.unittest.TestCase
             
             invalidRefTrajectory = [this.refTrajectory this.refTrajectory]; % too long
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
+                this.needsFilter, this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
                
             invalidRefTrajectory = this.refTrajectory(:, 1:end-1); % too short
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
+                this.needsFilter, this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
             
             invalidRefTrajectory = [this.refTrajectory; this.refTrajectory]; % wrong dimension
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
+                this.needsFilter, this.Z, invalidRefTrajectory, this.sequenceLength + 1), expectedErrId);
             
             % now we do not check the length
             invalidRefTrajectory = [this.refTrajectory; this.refTrajectory]; % wrong dimension
             this.verifyError(@() SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, invalidRefTrajectory, []), expectedErrId);
+                this.needsFilter, this.Z, invalidRefTrajectory, []), expectedErrId);
         end
         
         %% testSequenceBasedTrackingController
         function testSequenceBasedTrackingController(this)
             % successful call of ctor
             controller = SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, this.refTrajectory, this.sequenceLength + 1);
+                this.needsFilter, this.Z, this.refTrajectory, this.sequenceLength + 1);
             
             [actualZ, actualDimRef] = controller.getProperties();
             
             this.verifyEqual(controller.refTrajectory, this.refTrajectory);
             this.verifyEqual(actualZ, this.Z);
             this.verifyEqual(actualDimRef, 1);
+            this.verifyEqual(controller.requiresExternalStateEstimate, this.needsFilter);
             
             newRefTrajectory = [this.refTrajectory this.refTrajectory];
             % now a successfull call whith longer trajectory but no check
             controller = SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                this.Z, newRefTrajectory, []);
+                this.needsFilter, this.Z, newRefTrajectory, []);
             
             [actualZ, actualDimRef] = controller.getProperties();
             
             this.verifyEqual(controller.refTrajectory, newRefTrajectory);
             this.verifyEqual(actualZ, this.Z);
             this.verifyEqual(actualDimRef, 1);
+            this.verifyEqual(controller.requiresExternalStateEstimate, this.needsFilter);
             
             % finally, a successful call without Z
             controller = SequenceBasedTrackingControllerStub(this.dimX, this.dimU, this.sequenceLength, ...
-                [], this.refTrajectory, this.sequenceLength + 1);
+                this.needsFilter, [], this.refTrajectory, this.sequenceLength + 1);
             
             [actualZ, actualDimRef] = controller.getProperties();
             this.verifyEmpty(controller.refTrajectory);
             this.verifyEmpty(actualZ);
             this.verifyEqual(actualDimRef, this.dimX);
+            this.verifyEqual(controller.requiresExternalStateEstimate, this.needsFilter);
         end
         
         %% testGetDeviationFromRefForStateInvalidState

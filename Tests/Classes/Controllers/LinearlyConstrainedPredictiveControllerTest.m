@@ -5,7 +5,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -345,9 +345,11 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
         %% testLinearlyConstrainedPredictiveController
         function testLinearlyConstrainedPredictiveController(this)
             % should not crash
-            LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, ...
+            controller = LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, ...
                 this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints);
-                        
+              
+            this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback
+            this.verifyEqual(controller.horizonLength, this.sequenceLength); % horizon is by default equal to sequence length
         end
         
         %% testGetStateConstraints

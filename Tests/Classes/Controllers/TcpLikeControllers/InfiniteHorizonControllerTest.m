@@ -5,7 +5,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -64,7 +64,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     end
     
     methods (Access = private)
-        %% computeExpectedInputsWithout
+        %% computeExpectedInputs
         function inputs = computeExpectedInputs(this)
             % in this setup, the current input must arrive without delay,
             % or plant evolves open-loop
@@ -252,6 +252,26 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
                 this.delayProbs, this.sequenceLength), expectedErrId);
         end
+        
+        %% testInfiniteHorizonControllerInvalidFlag
+        function testInfiniteHorizonControllerInvalidFlag(this)
+            expectedErrId = 'InfiniteHorizonController:InvalidUseMexFlag';
+            invalidUseMexFlag = 'invalid'; % not a flag
+            
+            this.verifyError(@() InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, invalidUseMexFlag), expectedErrId);
+        end
+        
+        %% testInifiniteHorizonControllerConvergenceImpossible
+        function testInifiniteHorizonControllerConvergenceImpossible(this)
+            % sufficient condition for non-existance of stabilizing controller
+            % is given (thereom 4d) of CDC paper
+            expectedErrId = 'InfiniteHorizonController:ConvergenceImpossible';
+            
+            A_invalid = 10 * this.A_ctrb; % the spectral radius of this matrix is 10
+            this.verifyError(@() InfiniteHorizonController(A_invalid, this.B_ctrb, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength), expectedErrId);
+        end
 %%
 %%
         %% testInfiniteHorizonController
@@ -261,12 +281,21 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
                 this.delayProbs, this.sequenceLength);
             
             this.verifyNotEmpty(controller);
+            
+            %by default, we use the mex implementation to obtain the
+            %controller gains
+            this.verifyTrue(controller.useMexImplementation);
+            this.verifyTrue(controller.requiresExternalStateEstimate); % controller needs a filter
+            
             % status must be integer within [-2, 1]
             this.verifyGreaterThanOrEqual(controller.status, -2);
             this.verifyLessThanOrEqual(controller.status, 1);
+            % status should be integer value and 1 (convergence)
             this.verifyTrue(mod(controller.status, 1) == 0);
+            this.verifyEqual(controller.status, 1);
         end
-        
+%%
+%%
         %% testDoControlSequenceComputationInvalidMode
         function testDoControlSequenceComputationInvalidMode(this)
             % call function without a mode given
@@ -299,6 +328,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % control sequence (length 1) should be also the zero vector
             % due to the underlying linear control law, independent of the
             % previous mode
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
             expectedSequence = zeros(this.dimU, 1);
 
             % first mode
@@ -312,18 +342,62 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             this.verifyEqual(actualSequence, expectedSequence);
         end
         
+        %% testDoControlSequenceComputationZeroStateNoMex
+        function testDoControlSequenceComputationZeroStateNoMex(this)
+            % perform a sanity check: given state is origin, so computed
+            % control sequence (length 1) should be also the zero vector
+            % due to the underlying linear control law, independent of the
+            % previous mode
+            useMexImplementation = false;
+            controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, useMexImplementation);
+            this.assertFalse(controller.useMexImplementation);
+            
+            expectedSequence = zeros(this.dimU, 1);
+
+            % first mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 1);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+            
+            %second mode
+            actualSequence = controller.computeControlSequence(this.zeroStateDistribution, 2);
+            
+            this.verifyEqual(actualSequence, expectedSequence);
+        end
+        
         %% testDoControlSequenceComputation
         function testDoControlSequenceComputation(this)
+            this.assertTrue(this.controllerUnderTest.useMexImplementation);
             expectedInputs = this.computeExpectedInputs();
             
             % check both modes
             % first mode: previous input arrived at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1);
-            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-12);
             
             % second mode: previous input did not arrive at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2);
-            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-12);
+        end
+        
+         %% testDoControlSequenceComputationNoMex
+        function testDoControlSequenceComputationNoMex(this)
+            useMexImplementation = false;
+            controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
+                this.delayProbs, this.sequenceLength, useMexImplementation);
+            
+            this.assertFalse(controller.useMexImplementation);
+            expectedInputs = this.computeExpectedInputs();
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-12);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-12);
         end
 %%
 %%
