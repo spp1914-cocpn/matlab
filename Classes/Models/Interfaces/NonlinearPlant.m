@@ -194,6 +194,22 @@ classdef (Abstract) NonlinearPlant < SystemModel
         end
     end
     
+    methods (Access = public, Abstract)
+        % Function to check whether a given plant state is valid (e.g.,
+        % does not violate constraints).
+        %
+        % Parameters:
+        %   >> state (Column vector)
+        %      The system state to check.
+        %
+        % Returns:
+        %   << isValid (Flag, i.e., boolean)
+        %      Flag to indicate whether the given state is valid (e.g.,
+        %      admissible with regards to contraints).
+        
+        isValid = isValidState(this, state);
+    end
+    
     methods (Access = protected, Abstract)
         % The nonlinear plant dynamics, i.e., the system equation.
         %

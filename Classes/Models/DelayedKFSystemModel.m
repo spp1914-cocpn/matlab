@@ -13,7 +13,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -220,8 +220,9 @@ classdef DelayedKFSystemModel < LinearSystemModel
             %      A vector where the i-th elements denotes the probability
             %      of the i-th possible input to be applied.
             
-            Validator.validateDiscreteProbabilityDistribution(delayWeights, numel(this.weights));
-            this.weights = delayWeights;
+            Validator.validateDiscreteProbabilityDistribution(delayWeights, this.numModes);
+            % store weights as row vector, i.e., column-wise arranged
+            this.weights = reshape(delayWeights, 1, this.numModes);
         end
     end
      

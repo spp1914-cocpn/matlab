@@ -5,7 +5,7 @@ classdef Utility < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -478,6 +478,11 @@ classdef Utility < handle
             %   to Random Transmission Delays and Packet Losses,
             %   Proceedings of the 2013 American Control Conference (ACC 2013), 
             %   Washington D. C., USA, June 2013.
+            %
+            %   Florian Rosenthal and Uwe D. Hanebeck,
+            %   Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks (submitted),
+            %   Proceedings of the 21th IFAC World Congress (IFAC 2020),
+            %   Berlin, Germany, July 2020
             %
             % Parameters:
             %   >> delayProbs (Nonnegative vector or matrix)
