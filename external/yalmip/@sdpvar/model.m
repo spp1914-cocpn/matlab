@@ -82,6 +82,7 @@ if ~isempty(properties)
         properties{i} = assertProperty(properties{i},'convexhull',[]);
         properties{i} = assertProperty(properties{i},'bounds',[]);
         properties{i} = assertProperty(properties{i},'domain',[-inf inf]);
+        properties{i} = assertProperty(properties{i},'replace',[]);
         switch properties{i}.definiteness
             case 'positive'
                 properties{i} = assertProperty(properties{i},'range',[0 inf]);
@@ -97,7 +98,7 @@ end
 % Normalize the callback expression and check for some obsoleted stuff
 if ~isempty(properties)
     if isequal(properties{1}.model,'callback')
-        F_normalizing = NormalizeCallback(method,extstruct.var,extstruct.arg{:});
+        F_normalizing = NormalizeCallback(method,extstruct.var,extstruct.arg{:},options.usex0);
         F = F + F_normalizing;
     end
     if length(extstruct.computes)>1

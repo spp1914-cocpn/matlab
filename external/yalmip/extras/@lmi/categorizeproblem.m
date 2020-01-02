@@ -55,7 +55,8 @@ problem.constraint.inequalities.rank = 0;
 
 problem.constraint.inequalities.secondordercone.linear = 0;
 problem.constraint.inequalities.secondordercone.nonlinear = 0;
-problem.constraint.inequalities.rotatedsecondordercone = 0;
+problem.constraint.inequalities.rotatedsecondordercone.linear = 0;
+problem.constraint.inequalities.rotatedsecondordercone.nonlinear = 0;
 problem.constraint.inequalities.powercone = 0;
 
 problem.constraint.complementarity.variable = 0;
@@ -178,9 +179,11 @@ for i = 1:Counter
             case {4,54}
                 problem.constraint.inequalities.secondordercone.linear = 1;
             case 5
-                problem.constraint.inequalities.rotatedsecondordercone = 1;
+                problem.constraint.inequalities.rotatedsecondordercone.linear = 1;
             case 20
                 problem.constraint.inequalities.powercone = 1;
+            case 21
+                problem.exponentialcone = 1;
             case 50
                 problem.constraint.sos2 = 1;
             case 51
@@ -234,7 +237,7 @@ for i = 1:Counter
                             case {4,54}
                                 problem.constraint.inequalities.secondordercone.linear = 1;
                             case 5
-                                problem.constraint.inequalities.rotatedsecondordercone = 1;
+                                problem.constraint.inequalities.rotatedsecondordercone.linear = 1;
                             case 20
                                 problem.constraint.inequalities.powercone = 1;
                                 
@@ -269,7 +272,7 @@ for i = 1:Counter
                             case {4,54}
                                 problem.constraint.inequalities.secondordercone.nonlinear = 1;
                             case 5
-                                error
+                                problem.constraint.inequalities.rotatedsecondordercone.nonlinear = 1;
                             case 55
                                 problem.constraint.complementarity.nonlinear = 1;
                             otherwise
@@ -286,7 +289,7 @@ for i = 1:Counter
                             case {4,54}
                                 problem.constraint.inequalities.secondordercone.nonlinear = 1;
                             case 5
-                                %   problem.constraint.inequalities.rotatedsecondordercone = 1;
+                                problem.constraint.inequalities.rotatedsecondordercone.nonlinear = 1;
                             case 55
                                 problem.constraint.complementarity.nonlinear = 1;
                             otherwise
@@ -306,7 +309,7 @@ for i = 1:Counter
                 case {4,54}
                     problem.constraint.inequalities.secondordercone.linear = 1;
                 case 5
-                    problem.constraint.inequalities.rotatedsecondordercone = 1;
+                    problem.constraint.inequalities.rotatedsecondordercone.linear = 1;
                 case 20
                     problem.constraint.inequalities.powercone = 1;
                 case 7
@@ -315,6 +318,8 @@ for i = 1:Counter
                     problem.constraint.binary = 1;
                 case 16
                     problem.random = 1;
+                case 21
+                    problem.exponentialcone = 1;
                 case 50
                     problem.constraint.sos2 = 1;
                 case 51

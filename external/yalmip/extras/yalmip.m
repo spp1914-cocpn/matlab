@@ -45,6 +45,8 @@ if isempty(internal_sdpvarstate)
     internal_sdpvarstate.ExtendedMap = [];
     internal_sdpvarstate.ExtendedMapHashes = [];
     internal_sdpvarstate.DependencyMap = sparse(0);
+    internal_sdpvarstate.DependencyMap_i = [];
+    internal_sdpvarstate.DependencyMap_j = [];
     internal_sdpvarstate.DependencyMapUser = sparse(0);
     internal_sdpvarstate.sosid = 0;
     internal_sdpvarstate.sos_index = [];
@@ -230,7 +232,7 @@ switch varargin{1}
             if ~simpleAllDifferentNew
                 if vec_isdoubles(i)
                     found = 1;
-                    y(i) = X(i);
+                    y(i) = feval(varargin{2},X(i));
                 else
                     if ~isempty(correct_operator)
                         this_hash = vec_hashes(i);
@@ -291,11 +293,14 @@ switch varargin{1}
         yB = getbase(y);yB = yB(:,2:end);
         xV = getvariables(X);
         xB = getbase(X);xB = xB(:,2:end);
-        internal_sdpvarstate.DependencyMap(max(yV),max(xV))=sparse(0);
+        %internal_sdpvarstate.DependencyMap(max(yV),max(xV))=sparse(0);
         for i = 1:length(yV)
-            internal_sdpvarstate.DependencyMap(yV(find(yB(i,:))),xV(find(xB(i,:))))=1;
-        end
-        %yalmip('setdependence',getvariables(y),getvariables(X));
+            ii = yV(find(yB(i,:)));
+            jj = xV(find(xB(i,:)));
+            internal_sdpvarstate.DependencyMap_i = [internal_sdpvarstate.DependencyMap_i repmat(ii,1,length(jj))];
+            internal_sdpvarstate.DependencyMap_j = [internal_sdpvarstate.DependencyMap_j jj(:)'];
+          %  internal_sdpvarstate.DependencyMap(yV(find(yB(i,:))),xV(find(xB(i,:))))=1;
+        end        
         return
         
         
@@ -478,7 +483,7 @@ switch varargin{1}
                                 
             otherwise
                 % This is the standard operators. INPUTS -> 1 scalar output
-                if isequal(varargin{2},'or') || isequal(varargin{2},'xor') || isequal(varargin{2},'and')
+                if isequal(varargin{2},'or') || isequal(varargin{2},'xor') || isequal(varargin{2},'and') || isequal(varargin{2},'not')
                     y = binvar(1,1);
                 elseif isequal(varargin{2},'sign')
                     y = intvar(nout(1),nout(2));
@@ -546,8 +551,13 @@ switch varargin{1}
             % if size(internal_sdpvarstate.DependencyMap,1) < nx || size(internal_sdpvarstate.DependencyMap,2) < ny
             %     internal_sdpvarstate.DependencyMap(nx,ny) = 0;
             % end
-            % internal_sdpvarstate.DependencyMap(index) = 1;            
-            internal_sdpvarstate.DependencyMap(varargin{2},varargin{3}) = 1;
+            
+            temp1 = repmat(varargin{2},size(varargin{3},2),1);temp1 = temp1(:)';
+            temp2 = repmat(varargin{3},1,size(varargin{2},2));temp2 = temp2(:)';
+           
+            internal_sdpvarstate.DependencyMap_i = [internal_sdpvarstate.DependencyMap_i temp1];
+            internal_sdpvarstate.DependencyMap_j = [internal_sdpvarstate.DependencyMap_j temp2];
+            
             n = size(internal_sdpvarstate.monomtable,1);
             if size(internal_sdpvarstate.DependencyMap,1) < n
                 internal_sdpvarstate.DependencyMap(n,1)=0;
@@ -576,7 +586,16 @@ switch varargin{1}
         end
         
     case 'getdependence'
-        varargout{1} =   internal_sdpvarstate.DependencyMap;
+        %varargout{1} =   internal_sdpvarstate.DependencyMap;
+        if isempty(internal_sdpvarstate.DependencyMap_i)
+            varargout{1} = sparse(0);
+        else
+            try
+                varargout{1} = sparse(internal_sdpvarstate.DependencyMap_i,internal_sdpvarstate.DependencyMap_j,1);
+            catch
+                1
+            end
+        end
         n =  size(internal_sdpvarstate.monomtable,1);
         if size(varargout{1},1) < n || size(varargout{1},2)<n
             varargout{1}(n,n) = 0;
@@ -710,6 +729,8 @@ switch varargin{1}
         internal_sdpvarstate.ExtendedMap = [];
         internal_sdpvarstate.ExtendedMapHashes = [];
         internal_sdpvarstate.DependencyMap = sparse(0);
+        internal_sdpvarstate.DependencyMap_i = [];
+        internal_sdpvarstate.DependencyMap_j = [];
         internal_sdpvarstate.DependencyMapUser = sparse(0);
         internal_sdpvarstate.optSolution{1}.info = 'Initialized by YALMIP';
         internal_sdpvarstate.optSolution{1}.variables = [];
@@ -842,14 +863,25 @@ switch varargin{1}
         internal_setstate.duals_index = varargin{2};
         internal_setstate.duals_data = varargin{3};
         
+        temp1 = [];
+        temp2 = [];
         if ~isempty(internal_setstate.duals_associated_index)
             if ~isempty(intersect(internal_setstate.duals_index,internal_setstate.duals_associated_index))
                 for i = 1:length(internal_setstate.duals_index)
                     itshere = find(internal_setstate.duals_associated_index==internal_setstate.duals_index(i));
                     if ~isempty(itshere)
-                        assign(internal_setstate.duals_associated_data{itshere},internal_setstate.duals_data{i});
+                        temp1 = [temp1;internal_setstate.duals_associated_data{itshere}(:)];
+                        temp2 = [temp2;internal_setstate.duals_data{i}(:)];
+                    end
+                    if length(temp1)>1000
+                        assign(temp1,temp2);
+                        temp1 = [];
+                        temp2 = [];
                     end
                 end
+            end
+            if ~isempty(temp1)
+                assign(temp1,temp2);
             end
         end
         
@@ -999,7 +1031,7 @@ switch varargin{1}
         
         
     case {'version','ver'}
-        varargout{1} = '20171121';
+        varargout{1} = '20190425';
         
     case 'setintvariables'
         internal_sdpvarstate.intVariables = varargin{2};
