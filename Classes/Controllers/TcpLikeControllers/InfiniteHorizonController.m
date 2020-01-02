@@ -22,7 +22,7 @@ classdef InfiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -61,17 +61,14 @@ classdef InfiniteHorizonController < SequenceBasedController
         % (matrix of dimension <dimU*packetLength*(sequenceLength-1)/2> x
         %  <dimU*sequenceLength>)
         G = [];
-        % Markov chain
-        % transition matrix of the Markov chain;
-        % (matrix of dimension <sequenceLength+1> x <sequenceLength+1>)
-        transitionMatrix = [];
-        % control gain matrix: U = -L*sysState;
-        % (matrix of dimension <dimU*sequenceLength> x <dimState>)
-        L = [];
         % dimension of the augmented system state; 
         % (positive integer <dimX+dimU*sequenceLength*(sequenceLength-1)/2>)
         dimState = -1;
         
+        augA;
+        augB;
+        augQ;
+        augR;
     end
 
     properties (SetAccess = immutable, GetAccess = public)
@@ -87,6 +84,10 @@ classdef InfiniteHorizonController < SequenceBasedController
         %       (system is not stabilizable over the network; no gain
         %       computed)
         status = 0;
+        
+        useMexImplementation@logical=true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is faster, but can produce slightly different results
     end
     
     properties (SetAccess = private, GetAccess = protected)
@@ -94,6 +95,14 @@ classdef InfiniteHorizonController < SequenceBasedController
         % system state of the augmented state space;
         % (column vector of dimension <dimState>)
         sysState = [];
+        
+        % Markov chain
+        % transition matrix of the Markov chain;
+        % (matrix of dimension <sequenceLength+1> x <sequenceLength+1>)
+        transitionMatrix = [];
+        % control gain matrix: U = -L*sysState;
+        % (matrix of dimension <dimU*sequenceLength> x <dimState>)
+        L = [];
     end
     
     properties (Constant, Access = public)
@@ -108,7 +117,7 @@ classdef InfiniteHorizonController < SequenceBasedController
 
     methods (Access = public)
         %% InfiniteHorizonController
-        function this = InfiniteHorizonController(A, B, Q, R, delayProb, sequenceLength)
+        function this = InfiniteHorizonController(A, B, Q, R, delayProb, sequenceLength, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -132,6 +141,13 @@ classdef InfiniteHorizonController < SequenceBasedController
             %      The length of the input sequence (i.e., the number of
             %      control inputs) to be computed by the controller.
             %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      gains which is considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
+            %
             % Returns:
             %   << obj (InfiniteHorizonController)
             %      A new InfiniteHorizonController instance.
@@ -140,7 +156,7 @@ classdef InfiniteHorizonController < SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);        
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength, true);        
                        
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
@@ -158,23 +174,78 @@ classdef InfiniteHorizonController < SequenceBasedController
                 'InfiniteHorizonController:InvalidPlant', ...
                 '** Plant (A, B) has uncontrollable eigenvalues **');
             
-            [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
+            [this.dimState, this.F, this.G, this.augA, this.augB, this.augQ, this.augR] ...
                 = Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R);
             this.sysState = zeros(this.dimState, 1);
             
-            % make controller covariance matrices and check result
-            [P, this.status] = this.computeSteadyStateControlCovarianceMatrices(A, augA, augB, augQ, augR);
-            if this.status == -2
-                error(['** Stabizilizing infinite time horizon controller', ...
-                    'does not exist. **']);
+            if nargin == 7
+                assert(Checks.isFlag(useMexImplementation), ...
+                    'InfiniteHorizonController:InvalidUseMexFlag', ...
+                    '** <useMexImplementation> must be a flag **');
+                this.useMexImplementation = useMexImplementation;
             end
-            this.L = this.computeSteadyStateControlGainMatrices(augA, augB, augR, P);
+            
+            if this.useMexImplementation
+                [this.L, this.status] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
+                assert(this.status ~= -2, ...
+                    'InfiniteHorizonController:ConvergenceImpossible', ...
+                    '** Stabizilizing infinite time horizon controller does not exist **');
+            else
+                
+                [P, this.status] = this.computeSteadyStateControlCovarianceMatrices(A);
+                assert(this.status ~= -2, ...
+                    'InfiniteHorizonController:ConvergenceImpossible', ...
+                    '** Stabizilizing infinite time horizon controller does not exist **');
+                this.L = this.computeSteadyStateControlGainMatrices(P);
+            end
         end
   
         %% reset
         function reset(this)
            this.sysState = zeros(this.dimState,1);
-        end  
+        end 
+        
+        %% setEtaState
+        function setEtaState(this, newEta)
+            assert(Checks.isVec(newEta, this.dimState - this.dimPlantState) && all(isfinite(newEta)), ...
+                'InfiniteHorizonController:SetEtaState:InvalidEta', ...
+                '** <newEta> must be a %d-dimensional vector **', ...
+                this.dimState - this.dimPlantState);
+            
+            this.sysState(this.dimPlantState + 1:end) = newEta(:);
+        end
+        
+         %% changeCaDelayProbs
+        function changeCaDelayProbs(this, newCaDelayProbs)
+            newMat =  Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
+            if ~isequal(newMat, this.transitionMatrix)
+                this.transitionMatrix = newMat;
+                % and we must recompute the controller gain
+                A = this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1); 
+                if this.useMexImplementation
+                    [this.L, ~] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
+                else
+                    [P, ~] = this.computeSteadyStateControlCovarianceMatrices(A);
+                    this.L = this.computeSteadyStateControlGainMatrices(P);           
+                end     
+            end
+        end
+        
+        %% changeTransitionMatrix
+        function changeTransitionMatrix(this, newTransitionMatrix)
+            if ~isequal(newTransitionMatrix, this.transitionMatrix)
+                this.transitionMatrix = newTransitionMatrix;
+                % and we must recompute the controller gain
+                A = this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1);
+                if this.useMexImplementation
+                    [this.L, ~] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
+                else
+                    [P, ~] = this.computeSteadyStateControlCovarianceMatrices(A);
+                    this.L = this.computeSteadyStateControlGainMatrices(P);           
+                end
+            end
+        end
     end 
 
 
@@ -211,7 +282,7 @@ classdef InfiniteHorizonController < SequenceBasedController
         end
         
         %% computeSteadyStateControlCovarianceMatrices
-        function [Pout, status] = computeSteadyStateControlCovarianceMatrices(this, A, augA, augB, augQ, augR)
+        function [Pout, status] = computeSteadyStateControlCovarianceMatrices(this, A)
             %========================================================================
             % computeSteadyStateControlCovarianceMatrices: computes the steady state
             % solution of the controller by setting the horizon length to infinity
@@ -251,6 +322,7 @@ classdef InfiniteHorizonController < SequenceBasedController
             counter = 0; 
 
             % Check if convergence of controller gain is in general possible
+            % Thereom 4d) of CDC paper mentioned above
             if (this.transitionMatrix(end, end) * (max(abs(eig(A))))^2) > 1
                 % no convergence possible
                 status = -2;
@@ -318,8 +390,8 @@ classdef InfiniteHorizonController < SequenceBasedController
                      end
         
                     % save best solution obtained yet. In case we diverge due to
-                    % numerical problems, we can still use this best solution
-                    if( convergeDiff < convergeDiffmin )
+                    % numerical problems, we can still use this best solution                   
+                   if(convergeDiff < convergeDiffmin)                       
                       convergeCounterMin = counter;
                       convergeDiffmin = convergeDiff;
                       Pmin = currP;
@@ -329,13 +401,13 @@ classdef InfiniteHorizonController < SequenceBasedController
                 previousP = currP;
                 currP = zeros(this.dimState, this.dimState, numModes);
                 
-                AP = mtimesx(augA, 'T', previousP);
-                BP = mtimesx(augB, 'T', previousP);
-                APA = mtimesx(AP, augA);
-                QAPA = augQ + (APA + permute(APA, [2 1 3])) / 2; % ensure symmetry
-                BPB = mtimesx(BP, augB);
-                APB = mtimesx(AP, augB);
-                RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2; % ensure symmetry
+                AP = mtimesx(this.augA, 'T', previousP);
+                BP = mtimesx(this.augB, 'T', previousP);
+                APA = mtimesx(AP, this.augA);
+                QAPA = this.augQ + (APA + permute(APA, [2 1 3])) / 2; % ensure symmetry
+                BPB = mtimesx(BP, this.augB);
+                APB = mtimesx(AP, this.augB);
+                RBPB = this.augR + (BPB + permute(BPB, [2 1 3])) / 2; % ensure symmetry
                 
                 for j = 1:numModes
                     P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAPA, 3);
@@ -345,12 +417,12 @@ classdef InfiniteHorizonController < SequenceBasedController
                     P4 = P2 * pinv(P3) * P2';
                     currP(:,:,j) = P1 - (P4 + P4') / 2;   % ensure that symmetry is maintained                
                 end
-            end
+            end            
         end
   
   
         %% computeSteadyStateControlGainMatrices
-        function L = computeSteadyStateControlGainMatrices(this, augA, augB, augR, P)
+        function L = computeSteadyStateControlGainMatrices(this, P)
             %========================================================================
             % computeSteadyStateControlGainMatrices: computes the gain matrices which
             % are used to calculate the control sequence by multiplying with the
@@ -366,14 +438,14 @@ classdef InfiniteHorizonController < SequenceBasedController
             % L(:,:,markovMode), markovMode: 1...sequenceLength+1 (1 = no delay)
             %========================================================================  
             numModes = this.sequenceLength + 1;
-            dim = size(augR, 1);
+            dim = size(this.augR, 1);
             
             L = zeros(dim, this.dimState, numModes);
-            BP = mtimesx(augB, 'T', P);
-            BPB = mtimesx(BP, augB);
+            BP = mtimesx(this.augB, 'T', P);
+            BPB = mtimesx(BP, this.augB);
             % ensure the symmetry 
-            RBPB = augR + (BPB + permute(BPB, [2 1 3])) / 2;
-            BPA = mtimesx(BP, augA);
+            RBPB = this.augR + (BPB + permute(BPB, [2 1 3])) / 2;
+            BPA = mtimesx(BP, this.augA);
                         
             for j = 1:numModes
                 L_1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBPB, 3);

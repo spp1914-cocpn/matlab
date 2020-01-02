@@ -6,7 +6,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -37,8 +37,9 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
     end
     
     methods (Access = protected)
+        %% SequenceBasedTrackingController
         function this = SequenceBasedTrackingController(dimPlantState, dimPlantInput, sequenceLength, ...
-                Z, refTrajectory, expectedTrajectoryLength)
+                needsStateEstimates, Z, refTrajectory, expectedTrajectoryLength)
             % Class constructor.
             %
             % Parameters:
@@ -51,6 +52,10 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
             %      control inputs) to be computed by the controller.
+            %
+            %  >> needsStateEstimates (Logical scalar, i.e, a flag)
+            %     Flag to indicate whether the tracking controller needs an external
+            %     filter to supply it with state estimates.
             %
             %   >> Z (Matrix, n-by-dimPlantState)
             %      The time-invariant plant output (performance) matrix, 
@@ -68,7 +73,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %   << this (SequenceBasedTrackingController)
             %      A new SequenceBasedTrackingController instance.
             
-            this = this@SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength);
+            this = this@SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength, needsStateEstimates);
             if ~isempty(Z)
                 assert(Checks.isFixedColMat(Z, dimPlantState) && all(isfinite(Z(:))), ...
                     'SequenceBasedTrackingController:InvalidZMatrix', ...

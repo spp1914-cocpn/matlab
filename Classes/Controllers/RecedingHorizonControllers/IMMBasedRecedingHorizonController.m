@@ -7,7 +7,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     %
     % Literature: 
     %   Florian Rosenthal and Uwe D. Hanebeck,
-    %   Sequence-Based Stochastic Receding Horizon Control Using IMM Filtering and Value Function Approximation (submitted),
+    %   Sequence-Based Stochastic Receding Horizon Control Using IMM Filtering and Value Function Approximation,
     %   Proceedings of the IEEE 58th Conference on Decision and Control (CDC 2019),
     %   Nice, France, December 2019.
     
@@ -42,16 +42,14 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
         horizonLength;
                 
         numModes;
-        transitionMatrix;
         F;
         G;
         
         augA;
         augB;
         R_tilde; % store only the one for the first mode
-        Q_tilde; % zero for the first and the last mode
-        P; % cost matrices, one for each mode
-        
+        Q_tilde;
+                
         immf;
         dimEta;
         measurementModel;
@@ -59,21 +57,88 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     end
     
     properties (Access = private)
-        etaState; % the input related part of the state, evolves according to %eta_k+1=F*eta_k + G*U_k
-        bufferedInputSequences; % corresponding to the modes
+        % the input related part of the state, evolves according to %eta_k+1=F*eta_k + G*U_k
+        etaState; % holds eta_{k-1}
+        % the last computed input sequence
+        inputSequence;        
         initialized = true; % flag to indicate whether intial state was set (no update required prior to computation of sequence)
+        
+        transitionMatrix;
+        P; % cost matrices, one for each mode        
+    end
+    
+    properties (SetAccess = immutable, GetAccess = public)        
+        useMexImplementation@logical=true; 
+        % by default, we use the C++ (mex) implementation for computation
+        % of the costate/cost matrices
+        % this is usually faster, but can produce slightly different results
     end
     
     methods (Access = public)
         %% IMMBasedRecedingHorizonController
         function this = IMMBasedRecedingHorizonController(A, B, C, Q, R, caDelayProb, ...
-                sequenceLength, maxMeasDelay, W, V, horizonLength, x0, x0Cov)
+                sequenceLength, maxMeasDelay, W, measNoise, horizonLength, x0, x0Cov, useMexImplementation)
+            % Class constructor.
+            %
+            % Parameters:
+            %   >> A (Square Matrix)
+            %      The system matrix of the plant.
+            %
+            %   >> B (Matrix)
+            %      The input matrix of the plant.
+            %
+            %   >> C (Matrix)
+            %      The measurement matrix of the sensor.
+            %
+            %   >> Q (Positive semi-definite matrix)
+            %      The state weighting matrix in the controller's underlying cost function.
+            %
+            %   >> R (Positive definite matrix)
+            %      The input weighting matrix in the controller's underlying cost function.
+            %
+            %   >> caDelayProb (Nonnegative vector)
+            %      The vector describing the delay distribution of the
+            %      CA-network.
+            %
+            %   >> sequenceLength (Positive integer)
+            %      The length of the input sequence (i.e., the number of
+            %      control inputs) to be computed by the controller.
+            %
+            %   >> maxMeasDelay (Nonnegative integer)
+            %      The maximum delay a measurement may experience before it
+            %      is discarded by the IMM filter.
+            %
+            %   >> W (Square matrix)
+            %      The covariance matrix of the plant noise.
+            %
+            %   >> measNoise (Distribution)
+            %      A distribution denoting the time-invariant measurement noise process v_k.
+            %
+            %   >> horizonLength (Positive integer)
+            %      The horizon length considered by the controller for optimization.
+            %
+            %   >> x0 (Vector)
+            %      The initial estimate of the plant state.
+            %
+            %   >> x0Cov (Positive definite matrix)
+            %      The covariance matrix denoting the uncertainty of the IMM filter's initial estimate.
+            %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      costate matrices which is typically considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
+            %
+            % Returns:
+            %   << this (IMMBasedRecedingHorizonController)
+            %      A new IMMBasedRecedingHorizonController instance.
             
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength, false);
             
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
@@ -88,9 +153,11 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                 ['** Input parameter <maxMeasDelay> (maximum measurement',...
                 'delay (M)) must be a nonnegative integer **']);             
             
-            % check the noise covs
-            [W_sqrt] = Validator.validateSysNoiseCovarianceMatrix(W, dimX);
-            Validator.validateMeasNoiseCovarianceMatrix(V, dimMeas);       
+            % check the noise
+            Validator.validateSysNoiseCovarianceMatrix(W, dimX);
+            assert(Checks.isClass(measNoise, 'Distribution') && measNoise.getDim() == dimMeas, ...
+                    'IMMBasedRecedingHorizonController:InvalidMeasNoise', ...
+                    '** Input parameter <measNoise> (measurement noise) must be a %d-dimensional Distribution**', dimMeas);
             
             Validator.validateHorizonLength(horizonLength);
             this.horizonLength = horizonLength;
@@ -100,14 +167,21 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                 '** Input parameter <x0> (initial estimate of plant state) must be a %d-dimensional vector **', dimX);
             assert(Checks.isCov(x0Cov, dimX), ...
                 'IMMBasedRecedingHorizonController:InvalidX0Cov', ...
-                '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by%d-dimensional **', dimX, dimX);
+                '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by-%d-dimensional **', dimX, dimX);
+            
+            if nargin > 13
+                assert(Checks.isFlag(useMexImplementation), ...
+                    'IMMBasedRecedingHorizonController:InvalidUseMexFlag', ...
+                    '** <useMexImplementation> must be a flag **');
+                this.useMexImplementation = useMexImplementation;
+            end
             
             this.numModes = sequenceLength + 1;
             this.transitionMatrix = Utility.calculateDelayTransitionMatrix(...
                 Utility.truncateDiscreteProbabilityDistribution(caDelayProb, this.numModes));
             
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
-            blkdiag(W, zeros(this.dimEta));
+            
             [dimAugState, this.F, this.G, this.augA, this.augB, this.Q_tilde, augR] = ...
                 Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R);
             % augmented state consists of x_k and eta_k
@@ -117,15 +191,51 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
             modeFilters = arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, 'UniformOutput', false);
             this.immf = DelayedModeIMMF(modeFilters, this.transitionMatrix, maxMeasDelay);
             this.measurementModel = LinearMeasurementModel(C);
-            this.measurementModel.setNoise(Gaussian(zeros(dimMeas, 1), V));
+            % moment matching to model measurement noise as Gaussian
+            [v_mean, V] = measNoise.getMeanAndCov();
+            this.measurementModel.setNoise(Gaussian(v_mean, V));
             
             this.mjls = JumpLinearSystemModel(this.numModes, ...
                 arrayfun(@(~) LinearPlant(A, B, W), 1:this.numModes, 'UniformOutput', false));
-
-            this.bufferedInputSequences = zeros(dimU, sequenceLength, sequenceLength);
-
+            
+            this.inputSequence = zeros(dimU * this.sequenceLength, 1);
+            
             this.setControllerPlantStateInternal(x0, x0Cov);
-            this.P = this.computeCostate(dimAugState);
+            this.P = this.computeCostate();
+        end
+        
+        %% changeCaDelayProbs
+        function changeCaDelayProbs(this, newCaDelayProbs)
+            % Change the distribution of the control packet delays to be assumed by the controller.
+            %
+            % Parameters:
+            %  >> newCaDelayProbs (Nonnegative vector)
+            %     Vector specifiying the new delay distribution.
+            %
+            newMat = Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.numModes));
+            if ~isequal(newMat, this.transitionMatrix)
+                this.transitionMatrix = newMat;
+                % also update the matrix of the filter
+                this.immf.setModeTransitionMatrix(this.transitionMatrix); 
+                % and we must recompute the costate
+                this.P = this.computeCostate();
+            end
+        end
+        
+         %% setEtaState
+        function setEtaState(this, newEta, newInputSeq)
+            assert(Checks.isVec(newEta, this.dimEta) && all(isfinite(newEta)), ...
+                'IMMBasedRecedingHorizonController:SetEtaState:InvalidEta', ...
+                '** <newEta> must be a %d-dimensional vector **', ...
+                this.dimEta);
+            assert(Checks.isVec(newInputSeq, this.dimPlantInput * this.sequenceLength) && all(isfinite(newInputSeq)), ...
+                'IMMBasedRecedingHorizonController:SetEtaState:InvalidInputSeq', ...
+                '** <newInputSeq> must be a %d-dimensional vector **', ...
+                this.dimPlantInput * this.sequenceLength);
+            
+            this.etaState = newEta(:);
+            this.inputSequence = newInputSeq(:);             
         end
         
         %% setControllerPlantState
@@ -133,7 +243,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
             % Set the estimate of the plant state.
             %
             % This function is mainly used to set an initial estimate as
-            % the controller's dynamics is used for updating the estimate of
+            % the associated IMM filter is used for updating the estimate of
             % the plant state.
             %
             % Parameters:
@@ -162,29 +272,58 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
         end
         
         %% computeControlSequence
-        function inputSequence = computeControlSequence(this, measurements, measurementDelays, modeMeas, modeDelays)
-            if nargin == 1 || isempty(measurements)
+        function inputSeq = computeControlSequence(this, measurements, measurementDelays, modeMeas, modeDelays)
+            if nargin == 1
                 measurements = [];
                 measurementDelays = [];
+                modeMeas = [];
+                modeDelays = [];
+            elseif nargin == 3
+                modeMeas = [];
+                modeDelays = [];
+            elseif nargin ~= 5
+                error('IMMBasedRecedingHorizonController:ComputeControlSequence:InvalidNumArgs', ...
+                    '** Number of arguments must be 1, 3 or 5 **');             
             end
+            
+            dimMeas = size(this.measurementModel.measMatrix, 1);            
+            assert(isempty(measurements) || Checks.isFixedRowMat(measurements, dimMeas), ...
+                    'IMMBasedRecedingHorizonController:ComputeControlSequence:InvalidMeas', ...
+                    '** Individual measurements must be %d-dimensional **', dimMeas);
+            % validity of given measurement delays is checked by filter
+            % likewise, validity of mode observations and corresponding
+            % delays
+                
             if this.initialized
                 % at the first time step, no update of the filter required
                 this.initialized = false;                
+                newEta = this.etaState;
             else
+                % obtain the possible inputs stored in eta_{k-1} and
+                % U_{k-1}
+                distributedInputs = zeros(this.dimPlantInput, this.numModes);
+                % default input zeros for the last mode, so last column
+                % remains zero
+                % first column is first entry from most recent sequence
+                distributedInputs(:, 1) = this.inputSequence(1:this.dimPlantInput);
+                idx = 1;
+                for i=2:this.numModes - 1 
+                    distributedInputs(:, i) = this.etaState(idx:idx+this.dimPlantInput-1);
+                    idx =  idx + (this.sequenceLength - (i - 1)) * this.dimPlantInput;                     
+                end                
                 % update the filter state first, i.e., obtain the posterior for
                 % the current time step
-                this.mjls.setSystemInput([cell2mat(arrayfun(@(mode) this.bufferedInputSequences(:, mode, mode), ...
-                        1:this.sequenceLength, 'UniformOutput', false)) zeros(this.dimPlantInput, 1)]);
-                this.immf.step(this.mjls, this.measurementModel, ...
-                        measurements, measurementDelays, modeMeas, modeDelays);
+                this.mjls.setSystemInput(distributedInputs);
+                this.immf.step(this.mjls, this.measurementModel, measurements, measurementDelays, modeMeas, modeDelays);
+                    
+                % compute eta_k
+                newEta = this.F * this.etaState + this.G * this.inputSequence;
             end
             % now we can compute the input sequence
-            inputSequence = this.doControlSequenceComputation();
-            % predict eta_{k+1} and buffer the freshly created sequence
-            this.etaState = this.F * this.etaState + this.G * inputSequence;
+            inputSeq = this.doControlSequenceComputation(newEta);            
             
-            this.bufferedInputSequences = circshift(this.bufferedInputSequences, 1, 3);            
-            this.bufferedInputSequences(:,:, 1) = inputSequence;  
+            this.etaState = newEta;
+            this.inputSequence = inputSeq;            
         end
         
          %% getLastComputationMeasurementData
@@ -210,24 +349,29 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     
     methods (Access = protected)
         %% doControlSequenceComputation
-         function inputSequence = doControlSequenceComputation(this)
+         function inputSequence = doControlSequenceComputation(this, newEta)
             % extract the components of the mixture (posterior state)
             [means, ~, probs] = this.immf.getState().getComponents();
-                        
-            weights = this.transitionMatrix .* probs(:);
-            stateMeans = vertcat(reshape(means, this.dimPlantState, 1, this.numModes), ...
-                repmat(this.etaState, 1, 1, this.numModes));
-            statePart = mtimesx(this.augA, stateMeans);
-            % augR is only nonzero for first mode
-            part1 = probs(1) * this.R_tilde;
-            part2 = zeros(this.dimPlantInput * this.sequenceLength, 1);
-            
-            for r=1:this.numModes
-                BP = mtimesx(this.augB, 'T', this.P(:, :, r));
-                part1 = part1 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, this.augB), 3);
-                part2 = part2 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, statePart), 3);
+            if this.useMexImplementation                
+                inputSequence = ...
+                    mex_IMMBasedRecedingHorizonController(this.augA, this.augB, this.transitionMatrix, this.R_tilde, ...
+                        means, probs, newEta, this.P);
+            else
+                weights = this.transitionMatrix .* probs(:);
+                stateMeans = vertcat(reshape(means, this.dimPlantState, 1, this.numModes), ...
+                    repmat(newEta, 1, 1, this.numModes));
+                statePart = mtimesx(this.augA, stateMeans);
+                % augR is only nonzero for first mode
+                part1 = probs(1) * this.R_tilde;
+                part2 = zeros(this.dimPlantInput * this.sequenceLength, 1);
+
+                for r=1:this.numModes
+                    BP = mtimesx(this.augB, 'T', this.P(:, :, r));
+                    part1 = part1 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, this.augB), 3);
+                    part2 = part2 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, statePart), 3);
+                end                
+                inputSequence = -pinv(part1) * part2;            
             end
-            inputSequence = -pinv(part1) * part2;
          end
         
         %% doStageCostsComputation
@@ -248,28 +392,34 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     
     methods (Access = private)        
         %% computeCostate
-        function P_1 = computeCostate(this, dimAugState)
-            dimInputSeq = this.dimPlantInput * this.sequenceLength;
+        function P_1 = computeCostate(this)
             terminalP = repmat(blkdiag(this.Q, zeros(this.dimEta)), 1, 1, this.numModes); % the terminal term, Y_K
-            % backward iteration over the horizon
-            P_k = terminalP;
-            for k=this.horizonLength-1:-1:1
-                % compute Y_k+1 using P_k+1
-                Y = reshape(cell2mat(arrayfun(@(i) sum(reshape(this.transitionMatrix(i,:), 1, 1, this.numModes) .* P_k,3), ...
-                    1:this.numModes, 'UniformOutput', false)), dimAugState, dimAugState, this.numModes);                
-               
-                %inner term
-                BY = mtimesx(this.augB, 'T', Y);
-                M = mtimesx(BY, this.augB);
-                % this is the expression for M in the paper
-                M(:, :, 1) = M(:, :, 1) + this.R_tilde; % augR is only nonzero for the first mode
-                M = reshape(cell2mat(arrayfun(@(i) pinv(M(:, :, i)), 1:this.numModes, 'UniformOutput', false)), ...
-                    dimInputSeq, dimInputSeq, this.numModes); 
-                M = Y - mtimesx(mtimesx(BY, 'T', M), BY);
-                P_k = this.Q_tilde + mtimesx(mtimesx(this.augA, 'T', M), this.augA); %P_k
-                P_k = (P_k + permute(P_k, [2 1 3])) / 2; % ensure symmetry
+            if this.useMexImplementation            
+                P_1 = mex_IMMBasedRecedingHorizonControllerCostate(this.augA, this.augB, this.transitionMatrix, ...
+                    this.Q_tilde, this.R_tilde, terminalP, this.horizonLength);
+            else
+                dimInputSeq = this.dimPlantInput * this.sequenceLength;
+                dimAugState = size(this.augA, 2);                
+                % backward iteration over the horizon            
+                P_k = terminalP;
+                for k=this.horizonLength-1:-1:1
+                    % compute Y_k+1 using P_k+1
+                    Y = reshape(cell2mat(arrayfun(@(i) sum(reshape(this.transitionMatrix(i,:), 1, 1, this.numModes) .* P_k,3), ...
+                        1:this.numModes, 'UniformOutput', false)), dimAugState, dimAugState, this.numModes);                
+
+                    %inner term
+                    BY = mtimesx(this.augB, 'T', Y);
+                    M = mtimesx(BY, this.augB);
+                    % this is the expression for M in the paper
+                    M(:, :, 1) = M(:, :, 1) + this.R_tilde; % augR is only nonzero for the first mode
+                    M = reshape(cell2mat(arrayfun(@(i) pinv(M(:, :, i)), 1:this.numModes, 'UniformOutput', false)), ...
+                        dimInputSeq, dimInputSeq, this.numModes); 
+                    M = Y - mtimesx(mtimesx(BY, 'T', M), BY);
+                    P_k = this.Q_tilde + mtimesx(mtimesx(this.augA, 'T', M), this.augA); %P_k
+                    P_k = (P_k + permute(P_k, [2 1 3])) / 2; % ensure symmetry
+                end            
+                P_1 = P_k; % as desired, P_{k+1} for all modes
             end
-            P_1 = P_k; % as desired, P_{k+1} for all modes
         end
         
         %% setControllerPlantStateInternal

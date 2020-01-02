@@ -7,7 +7,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
     %
     % Literature: 
     %   Florian Rosenthal, Maxim Dolgov, and Uwe D. Hanebeck,
-    %   Sequence-Based Receding Horizon Control over Networks With Delays and Data Losses (to appear),
+    %   Sequence-Based Receding Horizon Control over Networks With Delays and Data Losses,
     %   Proceedings of the 2019 American Control Conference (ACC 2019),
     %   Philadelphia, Pennsylvania, USA, July 2019.
     
@@ -60,8 +60,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
     
     properties (SetAccess = immutable, GetAccess = public)
         horizonLength;
+                        
+        useMexImplementation@logical=true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is usually faster, but can produce slightly different results
     end   
-    
+        
     properties (SetAccess = private, GetAccess = public)
         lastNumIterations = 0;
     end
@@ -112,7 +116,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
     methods (Access = public)
         %% RecedingHorizonUdpLikeController
         function this = RecedingHorizonUdpLikeController(A, B, C, Q, R, caDelayProb, scDelayProb, ...
-                sequenceLength, maxMeasDelay, W, V, horizonLength, x0, x0Cov)
+                sequenceLength, maxMeasDelay, W, V, horizonLength, x0, x0Cov, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -162,6 +166,13 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             %   >> x0Cov (Positive definite matrix)
             %      The covariance matrix denoting the uncertainty of the controller's initial estimate.
             %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      gains which is usually considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
+            %
             % Returns:
             %   << this (RecedingHorizonUdpLikeController)
             %      A new RecedingHorizonUdpLikeController instance.
@@ -170,7 +181,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength, false);
             
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
@@ -200,6 +211,13 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 'RecedingHorizonUdpLikeController:InvalidX0Cov', ...
                 '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by%d-dimensional **', dimX, dimX);
             
+            if nargin > 14
+                assert(Checks.isFlag(useMexImplementation), ...
+                    'RecedingHorizonUdpLikeController:InvalidUseMexFlag', ...
+                    '** <useMexImplementation> must be a flag **');
+                this.useMexImplementation = useMexImplementation;
+            end
+            
             this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
             this.dimAugmentedMeas = this.dimMeas * this.measBufferLength;
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
@@ -217,7 +235,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             modesScBase3 = zeros(numModesSc, this.measBufferLength);
             for i = 0:maxMeasDelay
                 modesScBase3(:, i+1) = mod(floor(modesScDecimal ./ (3 ^ i)), 3);
-            end            
+            end
             
             this.computeAndSetTransitionMatrices(caDelayProb, scDelayProb, modesScBase3, modesScDecimal);
             this.initAugmentedMeasMatrices(modesScBase3, numModesSc, modesScDecimal, C);
@@ -242,12 +260,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             % B*J is zero for all modes but first
             %
             this.augB(1:dimX, :, 1) = B * J; 
-            
+
             this.initAugmentedCostMatrices(numCaModes, H);
             this.initControllerGains();
             this.modeSc = 0;   % no measurements available initially
           
-            this.setControllerPlantStateInternal(x0(:), x0Cov);            
+            this.setControllerPlantStateInternal(x0(:), x0Cov);                
         end             
         
         %% setInitialControllerGains
@@ -384,62 +402,89 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 modeProbsCa(:, k + 1) = this.transitionMatrixCa' * modeProbsCa(:, k);
             end
      
-            oldCostsToGo = inf(1, this.horizonLength);
-            oldCosts = inf;
-            iternum = 1;
-            while (iternum < RecedingHorizonUdpLikeController.maxNumIterations)
-                % forward pass: obtain the second moments for the given sequence of controller gains
-                [Xu, Xl] = this.predictXHorizon(modeProbsCa, Se);
-%                 
-                Pu = repmat(this.terminalAugQ, 1, 1, numCaModes);
-                Pl = zeros(this.dimAugState, this.dimAugState, numCaModes);                
-                omega = zeros(1, numCaModes);
-                         
-                % backward pass to compute the gains
-                for k=this.horizonLength:-1:1                         
-                    % compute the gain for the current k
-                    [tempM, tempK, tempL, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
-                        Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
-                    [tempPu, tempPl, tempOmega] = this.computeCostate(currPu_epsilon, currPl_epsilon, omega, tempL, tempM, tempK, Se(:, :, k));
-                    Xsum = squeeze(Xl(:, :, k, :) + Xu(:, :, k, :));
-                    costsToGo = dot(tempOmega, modeProbsCa(:, k)) + trace(sum(mtimesx(tempPu, Xsum) + mtimesx(tempPl, squeeze(Xu(:, :, k, :))), 3));
-                    
-                    if costsToGo < oldCostsToGo(k)                       
-                        oldCostsToGo(k) = costsToGo;
-                        this.M(:, :, k) = tempM;
-                        this.L(:, :, k) = tempL;
-                        this.K(:, :, k) = tempK;
-                        Pu = tempPu;
-                        Pl = tempPl;
-                        omega = tempOmega;
-                    else            
-                        % recompute the costate with the old gain
-                        [Pu, Pl, omega] = ...
-                            this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L(:, :, k), this.M(:, :, k), this.K(:, :, k), Se(:, :, k));
+            if this.useMexImplementation
+                [this.K, this.L, this.M, this.augStateCov, this.augStateSecondMoment, iternum] ...
+                    = mex_RecedingHorizonUdpLikeController(this.augA, this.augB, this.augQ, this.transitionMatrixCa, ...
+                    this.augW, this.augV, this.augmentedMeasMatrix, Se, this.JRJ, this.K, this.L, this.M, ...
+                    this.augStateCov, this.augStateSecondMoment, this.terminalAugQ, modeProbsCa);                 
+            else                
+                oldCostsToGo = inf(1, this.horizonLength);
+                oldCosts = inf;
+                iternum = 1;                
+                while (iternum < RecedingHorizonUdpLikeController.maxNumIterations)
+                    % forward pass: obtain the second moments for the given sequence of controller gains
+                    [Xu, Xl] = this.predictXHorizon(modeProbsCa, Se);
+
+                    Pu = repmat(this.terminalAugQ, 1, 1, numCaModes);
+                    Pl = zeros(this.dimAugState, this.dimAugState, numCaModes);                
+                    omega = zeros(1, numCaModes);
+
+                    % backward pass to compute the gains
+                    for k=this.horizonLength:-1:1                         
+                        % compute the gain for the current k
+                        [tempM, tempK, tempL, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
+                            Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
+
+                        [tempPu, tempPl, tempOmega] = this.computeCostate(currPu_epsilon, currPl_epsilon, omega, tempL, tempM, tempK, Se(:, :, k));
+                        Xsum = squeeze(Xl(:, :, k, :) + Xu(:, :, k, :));
+                        costsToGo = dot(tempOmega, modeProbsCa(:, k)) + trace(sum(mtimesx(tempPu, Xsum) + mtimesx(tempPl, squeeze(Xu(:, :, k, :))), 3));
+
+                        if costsToGo < oldCostsToGo(k)                       
+                            oldCostsToGo(k) = costsToGo;
+                            this.M(:, :, k) = tempM;
+                            this.L(:, :, k) = tempL;
+                            this.K(:, :, k) = tempK;
+                            Pu = tempPu;
+                            Pl = tempPl;
+                            omega = tempOmega;
+                        else            
+                            % recompute the costate with the old gain
+                            [Pu, Pl, omega] = ...
+                                this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L(:, :, k), this.M(:, :, k), this.K(:, :, k), Se(:, :, k));
+                        end
+    %                     % compute the gain for the current k
+    %                     [this.M{k}, this.K{k}, this.L{k}, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
+    %                         Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
+    % 
+    %                     % update the costate using the computed gains
+    %                     [Pu, Pl, omega] = ...
+    %                         this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L{k}, this.M{k}, this.K{k}, Se(:, :, k));
                     end
-%                     % compute the gain for the current k
-%                     [this.M{k}, this.K{k}, this.L{k}, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
-%                         Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
-% 
-%                     % update the costate using the computed gains
-%                     [Pu, Pl, omega] = ...
-%                         this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L{k}, this.M{k}, this.K{k}, Se(:, :, k));
+                    % the total costs are the costs-to-go/stage costs for the
+                    % first time step
+                    costs = oldCostsToGo(1);
+
+                    if abs(oldCosts - costs) < RecedingHorizonUdpLikeController.convergenceDiff
+                        %fprintf('Converged after %d iterations, current costs (bound): %f\n', iternum, costs);
+                        break;
+                    else
+                        oldCosts = costs;
+                        iternum = iternum + 1;
+                    end                
                 end
-                % the total costs are the costs-to-go/stage costs for the
-                % first time step
-                costs = oldCostsToGo(1);
-               
-                if abs(oldCosts - costs) < RecedingHorizonUdpLikeController.convergenceDiff
-                    %fprintf('Converged after %d iterations, current costs (bound): %f\n', iternum, costs);
-                    break;
-                else
-                    oldCosts = costs;
-                    iternum = iternum + 1;
-                end                
             end
-            inputSequence = this.doControlSequenceComputation();
-            this.updateControllerState(Se(:, :, 1), augmentedMeas);
             
+            inputSequence = this.doControlSequenceComputation();
+            % update the controller state (k+1)
+            this.augState = this.M(:, :, 1) * this.augState + this.K(:, :, 1) * augmentedMeas;
+            % also update the required moments
+            this.updateControllerMoments(Se(:, :, 1));                
+            % also predict the ca mode
+            this.modeCa = this.transitionMatrixCa' * this.modeCa;
+            this.lastModeObservationDelay = this.lastModeObservationDelay + 1;
+              
+%             % shift the current gains
+% %             celldisp(this.M)
+%             this.M = circshift(this.M, -1, 2);
+% %             celldisp(this.M)
+%             this.L = circshift(this.L, -1, 2);
+%             this.K = circshift(this.K, -1, 2);
+%             
+%             % and fill with a random matrix
+%             this.M{this.horizonLength} = rand(this.dimAugState)-.5;
+%             this.K{this.horizonLength} = rand(this.dimAugState,this.dimAugmentedMeas)-.5;
+%             this.L{this.horizonLength} = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState)-.5;
+                        
             if nargin == 1
                 this.lastNumUsedMeas = 0;
                 this.lastNumDiscardedMeas = 0;
@@ -649,7 +694,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             rho = sum(mtimesx(mtimesx(Pl_epsilonA, Xsums), SC, 'T'), 3);
             phi = sum(mtimesx(Pl_epsilonA, currXl), 3);
             gamma = sum(mtimesx(mtimesx(mtimesx(this.augB, 'T', Pl_epsilon + Pu_epsilon), this.augA), currXl), 3);
-                       
+            
             % now solve the system of equations
             gains = -pinv([Psi -Ypsilon Pi; -Ypsilon' Phi -Sigma; Pi' -Sigma' Lambda]) * [-rho(:); gamma(:); -phi(:)];
             % replace pinv by lsqminnorm in more recent Matlab versions
@@ -677,7 +722,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             
             % J matrix is only nonzero for the first mode
             LJRJL = currL' * this.JRJ * currL;
-            
+                        
             % compute this.Pl_epsilon(:, :, i) * KSVSK in one shot for all i
             tmp = mtimesx(currPl_epsilon, KSVSK) + mtimesx(currPl_epsilon + currPu_epsilon, this.augW);
             % evaluate the epsilon operator for all omegas
@@ -690,7 +735,6 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             ABL = BL + this.augA;
             MBL = currM-BL;
             ABLMKSC = ABL - currM - KSC; % D_tilde in the paper
-            
             Pu = this.augQ + mtimesx(mtimesx(ABL, 'T', currPu_epsilon), ABL) ...
                 + mtimesx(mtimesx(ABLMKSC, 'T', currPl_epsilon), ABLMKSC);
             Pu(:, :, 1) =  Pu(:, :, 1) + LJRJL; % additional part for first mode
@@ -701,16 +745,21 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
 
             % ensure symmetry of costate
             Pu = (Pu + permute(Pu, [2 1 3])) / 2;
-            Pl = (Pl + permute(Pl, [2 1 3])) / 2;
+            Pl = (Pl + permute(Pl, [2 1 3])) / 2;            
         end      
         
         %% updateControllerState
-        function updateControllerState(this, Se, augmentedMeas)
-            numCaModes = this.sequenceLength + 1;
+        function updateControllerState(this, augmentedMeas)
+            
             % update controller state (k+1)
             this.augState = this.M(:, :, 1) * this.augState + this.K(:, :, 1) * augmentedMeas;
-
-            % and the required moments
+        end
+        
+        %% updateControllerMoments
+        function updateControllerMoments(this, Se)
+            numCaModes = this.sequenceLength + 1;
+            
+            % update the required moments
             newAugStateCov = zeros(this.dimAugState, this.dimAugState, numCaModes);
             newAugStateSecondMoment = zeros(this.dimAugState, this.dimAugState, numCaModes);
             KS = this.K(:, :, 1) * Se;
@@ -743,22 +792,6 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             % ensure symmetry
             this.augStateCov = (newAugStateCov + permute(newAugStateCov, [2 1 3])) / 2;
             this.augStateSecondMoment = (newAugStateSecondMoment + permute(newAugStateSecondMoment, [2 1 3])) / 2;
-    
-            % also predict the ca mode
-            this.modeCa = this.transitionMatrixCa' * this.modeCa;
-            this.lastModeObservationDelay = this.lastModeObservationDelay + 1;
-%             
-%             % shift the current gains
-% %             celldisp(this.M)
-%             this.M = circshift(this.M, -1, 2);
-% %             celldisp(this.M)
-%             this.L = circshift(this.L, -1, 2);
-%             this.K = circshift(this.K, -1, 2);
-%             
-%             % and fill with a random matrix
-%             this.M{this.horizonLength} = rand(this.dimAugState)-.5;
-%             this.K{this.horizonLength} = rand(this.dimAugState,this.dimAugmentedMeas)-.5;
-%             this.L{this.horizonLength} = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState)-.5;
         end
         
         %% predictXHorizon
@@ -770,7 +803,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             
             Xu(:, :, 1, :) = this.augStateCov; 
             Xl(:, :, 1, :) = this.augStateSecondMoment; 
-            
+                        
             KS = mtimesx(this.K, Se);
             KSC = mtimesx(KS, this.augmentedMeasMatrix);
             KSVSK = mtimesx(mtimesx(KS, this.augV), KS, 'T'); % E_tilde in the paper
@@ -868,7 +901,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             this.augStateCov = cat(3, zeros(this.dimAugState, this.dimAugState, this.sequenceLength), covAug);
             this.augStateSecondMoment = cat(3, zeros(this.dimAugState, this.dimAugState, this.sequenceLength), ...
                 (this.augState * this.augState') + covAug);   
-            
+
             this.modeCa = [zeros(this.sequenceLength, 1); 1]; 
         end
     end

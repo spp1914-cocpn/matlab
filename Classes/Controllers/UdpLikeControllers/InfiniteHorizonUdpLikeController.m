@@ -15,7 +15,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -137,7 +137,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength, false);
             
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
@@ -342,12 +342,15 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             OverbarLambda = zeros(this.dimState);
             UnderbarLambda = zeros(this.dimState);
             
+            OverbarPsi_old = inf(this.dimState);
+            UnderbarPsi_old = inf(this.dimState);
+            
             maxIterNum = 10000;
             convergenceDiff = 1e-10;
             
             k = 1;
-            while k <= maxIterNum && (k == 2 || norm (K_old - K) > convergenceDiff ...
-                    && norm (L_old - L) > convergenceDiff)
+            while (k <= maxIterNum) && (sum(sum(abs(OverbarPsi_old - OverbarPsi))) > convergenceDiff ...
+                    || sum(sum(abs(UnderbarPsi_old - UnderbarPsi))) > convergenceDiff)
                 % compute the next iterates
                 K_old = K;
                 L_old = L;

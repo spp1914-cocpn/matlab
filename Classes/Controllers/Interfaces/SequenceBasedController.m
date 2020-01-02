@@ -6,7 +6,7 @@ classdef (Abstract) SequenceBasedController < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -29,7 +29,11 @@ classdef (Abstract) SequenceBasedController < handle
     
     properties (SetAccess = immutable, GetAccess = protected)
         dimPlantState;
-        dimPlantInput;
+        dimPlantInput;      
+    end
+    
+    properties(SetAccess = immutable, GetAccess = public)          
+        requiresExternalStateEstimate@logical;
     end
     
     properties (Access = protected)
@@ -51,7 +55,7 @@ classdef (Abstract) SequenceBasedController < handle
     
     methods (Access = protected)
         %% SequenceBasedController
-        function this = SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength)
+        function this = SequenceBasedController(dimPlantState, dimPlantInput, sequenceLength, needsStateEstimates)
             % Class constructor.
             %
             % Parameters:
@@ -65,6 +69,10 @@ classdef (Abstract) SequenceBasedController < handle
             %     The length of the input sequence (i.e., the number of
             %     control inputs) to be computed by the controller.
             %
+            %  >> needsStateEstimates (Logical scalar, i.e, a flag)
+            %     Flag to indicate whether the controller needs an external
+            %     filter to supply it with state estimates.
+            %
             % Returns:
             %   << obj (SequenceBasedController)
             %      A new SequenceBasedController instance.
@@ -72,6 +80,8 @@ classdef (Abstract) SequenceBasedController < handle
             this.dimPlantState = dimPlantState;
             this.dimPlantInput = dimPlantInput;
             this.sequenceLength = sequenceLength;
+            
+            this.requiresExternalStateEstimate = needsStateEstimates;
         end
         
         %% validateSequenceLengthOnSet

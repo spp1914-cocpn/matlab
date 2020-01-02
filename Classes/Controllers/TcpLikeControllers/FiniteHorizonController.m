@@ -8,7 +8,7 @@ classdef FiniteHorizonController < SequenceBasedController
     % i.e., soft expectation-type integral constraints, where a_i, b_i are state
     % and input weighting, c is a constant and K is the horizon length.
     %
-    % While this implementation is to some extent more general than the original one one by Maxim Dolgov, 
+    % While this implementation is to some extent more general than the original one by Maxim Dolgov, 
     % which can be found <a href="matlab:web('http://www.cloudrunner.eu/algorithm/160/constrained-slqg-controller/version/1/')" >here</a>, 
     % some parts are directly based thereof.
     %
@@ -27,7 +27,7 @@ classdef FiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -84,7 +84,11 @@ classdef FiniteHorizonController < SequenceBasedController
     
     properties (SetAccess = immutable, GetAccess = public)
         horizonLength;
-        constraintsPresent@logical = false;
+        constraintsPresent@logical = false;        
+        
+        useMexImplementation@logical=true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is faster, but can produce slightly different results
     end
     
     properties (SetAccess = private, GetAccess = protected)
@@ -96,7 +100,7 @@ classdef FiniteHorizonController < SequenceBasedController
     
     methods (Access = public)
         %% FiniteHorizonController
-        function this = FiniteHorizonController(A, B, Q, R, delayProb, sequenceLength, horizonLength, ...
+        function this = FiniteHorizonController(A, B, Q, R, delayProb, sequenceLength, horizonLength, useMexImplementation, ...
                 stateConstraintWeightings, inputConstraintWeightings, constraintBounds)
             % Class constructor.
             %
@@ -124,6 +128,13 @@ classdef FiniteHorizonController < SequenceBasedController
             %   >> horizonLength (Positive integer)
             %      The length of the considered control horizon.
             %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      gains which is considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
+            %
             %   >> stateConstraintWeightings (3D matrix, optional)
             %      The state weightings of the individual
             %      constraints, slice-wise arranged.
@@ -140,20 +151,27 @@ classdef FiniteHorizonController < SequenceBasedController
             %   << obj (FiniteHorizonController)
             %      A new FiniteHorizonController instance.
             
-            assert(nargin == 7 || nargin == 10, ...
+            assert(nargin == 7 || nargin == 8 || nargin == 11, ...
                 'FiniteHorizonController:InvalidNumberOfArguments', ...
-                '** Constructor must be called with either 7 or 10 arguments **');
+                '** Constructor must be called with 7, 8 or 11 arguments **');
                         
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, sequenceLength);
+            this = this@SequenceBasedController(dimX, dimU, sequenceLength, true);
             
             Validator.validateHorizonLength(horizonLength);
             this.horizonLength = horizonLength;
             
-             if nargin == 10
+            if nargin > 7
+                assert(Checks.isFlag(useMexImplementation), ...
+                    'FiniteHorizonController:InvalidUseMexFlag', ...
+                    '** <useMexImplementation> must be a flag **');
+                this.useMexImplementation = useMexImplementation;
+            end
+                        
+            if nargin == 11
                 this.validateLinearIntegralConstraints(stateConstraintWeightings, ...
                     inputConstraintWeightings, constraintBounds);
                 this.constraintsPresent = true;
@@ -184,18 +202,38 @@ classdef FiniteHorizonController < SequenceBasedController
                 terminalP = zeros(this.dimState, numConstraints); % P_N for all modes (P_tilde in the paper)
                 terminalP(1:dimX, :) = terminalStateConstraintWeightings;
 
-                [this.L, this.feedforward, this.P_0, this.S_0] ...
-                    = this.computeGainMatricesWithConstraints(augA, augB, augQ, augR, ...
-                    inputConstraintWeightings, stateConstraintWeightings(:, 1:end-1, :), terminalK, terminalP);
-            else
-                this.L = this.computeGainMatrices(augA, augB, augQ, augR, terminalK);
-            end
+                if this.useMexImplementation
+                    [this.L, this.feedforward, this.P_0, this.S_0] = ...
+                        mex_FiniteHorizonControllerWithConstraints(augA, augB, augQ, augR, this.transitionMatrix, ...
+                            terminalK, terminalP, inputConstraintWeightings, stateConstraintWeightings(:, 1:end-1, :), ...
+                            this.horizonLength);
+                else                    
+                    [this.L, this.feedforward, this.P_0, this.S_0] = ...
+                        this.computeGainMatricesWithConstraints(augA, augB, augQ, augR, ...
+                            inputConstraintWeightings, stateConstraintWeightings(:, 1:end-1, :), terminalK, terminalP);                 
+                end               
+            elseif this.useMexImplementation                
+                this.L = mex_FiniteHorizonController(augA, augB, augQ, augR, this.transitionMatrix, terminalK, this.horizonLength);                
+            else                
+                this.L = this.computeGainMatrices(augA, augB, augQ, augR, terminalK);                
+            end           
         end
         
         %% reset
         function reset(this)
            this.sysState = zeros(this.dimState,1);
         end % function reset
+        
+        %% setEtaState
+        function setEtaState(this, newEta)
+            assert(Checks.isVec(newEta, this.dimState - this.dimPlantState) && all(isfinite(newEta)), ...
+                'FiniteHorizonController:SetEtaState:InvalidEta', ...
+                '** <newEta> must be a %d-dimensional vector **', ...
+                this.dimState - this.dimPlantState);
+            
+            this.sysState(this.dimPlantState + 1:end) = newEta(:);
+        end
+        
     end
     
     methods (Access = protected)
@@ -383,10 +421,10 @@ classdef FiniteHorizonController < SequenceBasedController
                     S_k(:, :, j) = S1 - (P9 + P9') / 2; % shall be symmetric
                     L(:,:, j, k) = -P6  * P2';
                     feedforward(:, :, j, k) = -P7;
-                end
-                S_0 = S_k;
-                P_0 = P_k; % P_tilde in the paper
+                end                
             end
+            S_0 = S_k;
+            P_0 = P_k; % P_tilde in the paper
         end
              
         %% computeMultiplier

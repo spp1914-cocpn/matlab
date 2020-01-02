@@ -20,7 +20,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,13 +76,17 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     end
     
     properties (SetAccess = immutable, GetAccess = public)
-        horizonLength;
+        horizonLength;        
+        
+        useMexImplementation@logical=true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is faster, but can produce slightly different results
     end
     
     methods (Access = public)
         %% FiniteHorizonTrackingController
         function this = FiniteHorizonTrackingController(A, B, Q, R, Z, delayProb, ...
-                sequenceLength, horizonLength, referenceTrajectory)
+                sequenceLength, horizonLength, referenceTrajectory, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -116,6 +120,13 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             %   >> referenceTrajectory (Matrix, n-by-horizonLength+1)
             %      The reference trajectory to track, given as a matrix
             %      with the reference plant outputs column-wise arranged.
+            %            
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      gains which is considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
             %
             % Returns:
             %   << this (FiniteHorizonTrackingController)
@@ -126,7 +137,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
             Validator.validateHorizonLength(horizonLength);
-            this = this@SequenceBasedTrackingController(dimX, dimU, sequenceLength, Z, referenceTrajectory, horizonLength + 1);
+            this = this@SequenceBasedTrackingController(dimX, dimU, sequenceLength, true, Z, referenceTrajectory, horizonLength + 1);
                         
             this.horizonLength = horizonLength;
                        
@@ -139,7 +150,14 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             Validator.validateDiscreteProbabilityDistribution(delayProb);
             this.transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
                 Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1)); 
-             
+            
+            if nargin > 9
+                assert(Checks.isFlag(useMexImplementation), ...
+                    'FiniteHorizonTrackingController:InvalidUseMexFlag', ...
+                    '** <useMexImplementation> must be a flag **');
+                this.useMexImplementation = useMexImplementation;
+            end
+            
             % augment the model
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...
                 = Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R, Z);
@@ -152,6 +170,16 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
         function reset(this)
            this.sysState = zeros(this.dimState,1);
         end % function reset
+        
+        %% setEtaState
+        function setEtaState(this, newEta)
+            assert(Checks.isVec(newEta, this.dimState - this.dimPlantState) && all(isfinite(newEta)), ...
+                'FiniteHorizonTrackingController:SetEtaState:InvalidEta', ...
+                '** <newEta> must be a %d-dimensional vector **', ...
+                this.dimState - this.dimPlantState);
+            
+            this.sysState(this.dimPlantState + 1:end) = newEta(:);
+        end
         
     end
      
@@ -218,47 +246,53 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             dimZero = this.dimState - this.dimPlantState;
             dimR = size(augR, 1);
             stateWeighting = augQ(1:this.dimPlantState, 1:this.dimPlantState, end); % this Z' * Q * Z
-            
-            % we only need K_{k+1} to compute K_k and L_k and the
-            % feedforward
-            K = repmat(blkdiag(stateWeighting, zeros(dimZero)), 1, 1, numModes); % symmetric matrix
-            
+            terminalK = blkdiag(stateWeighting, zeros(dimZero));
             % directly compute the transpose
             Qref = [(this.Q * this.Z)'; 
                     zeros(dimZero, this.dimRef)];
             refWeightings = Qref * this.refTrajectory;
-            % the same for sigma: only sigma_{k+1} required
-            sigma = repmat(refWeightings(:, end), 1, 1, numModes);
-          
-            feedforward = zeros(dimR, numModes, this.horizonLength);
-            L = zeros(dimR, this.dimState, numModes, this.horizonLength);
-            for k = this.horizonLength:-1:1
-                K_prev = K;
-                sigma_prev = sigma;
-                AK = mtimesx(augA, 'T', K_prev);
-                AKA = mtimesx(AK, augA); % this one should be symmetric
-                QAKA = augQ + (AKA + permute(AKA, [2 1 3])) / 2; % ensure symmetry
-                AKB = mtimesx(AK, augB);
-                BKB = mtimesx(augB, 'T', mtimesx(K_prev, augB)); % this one should be symmetric
-                RBKB = augR + (BKB + permute(BKB, [2 1 3])) / 2; % ensure symmetry
-                
-                for j=1:numModes                      
-                    P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAKA, 3);
-                    P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* AKB, 3);
-                    P3 = pinv(sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBKB, 3));
-                    S1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augA, 'T', sigma_prev), 3);
-                    S2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augB, 'T', sigma_prev), 3);
+            
+            if this.useMexImplementation
+                [L, feedforward] = mex_FiniteHorizonTrackingController(augA, augB, augQ, augR, ...
+                    this.transitionMatrix, terminalK, this.horizonLength, Qref, refWeightings);
+            else
+                % we only need K_{k+1} to compute K_k and L_k and the
+                % feedforward
+                K = repmat(terminalK, 1, 1, numModes); % symmetric matrix
 
-                    P4 = P2 * P3 * P2'; % should be symmetric
-                    
-                    K(:, :, j) = P1 - (P4 + P4') / 2; % ensure symmetry
-                    sigma(:, 1, j) = refWeightings(:, k) + S1 - P2 * P3 * S2;
-                    
-                    L(:,:, j, k) = -P3 * P2';
-                    feedforward(:, j, k) = P3 * S2;
+                % the same for sigma: only sigma_{k+1} required
+                sigma = repmat(refWeightings(:, end), 1, 1, numModes);
+
+                feedforward = zeros(dimR, numModes, this.horizonLength);
+                L = zeros(dimR, this.dimState, numModes, this.horizonLength);
+                for k = this.horizonLength:-1:1
+                    K_prev = K;
+                    sigma_prev = sigma;
+                    AK = mtimesx(augA, 'T', K_prev);
+                    AKA = mtimesx(AK, augA); % this one should be symmetric
+                    QAKA = augQ + (AKA + permute(AKA, [2 1 3])) / 2; % ensure symmetry
+                    AKB = mtimesx(AK, augB);
+                    BKB = mtimesx(augB, 'T', mtimesx(K_prev, augB)); % this one should be symmetric
+                    RBKB = augR + (BKB + permute(BKB, [2 1 3])) / 2; % ensure symmetry
+
+                    for j=1:numModes                      
+                        P1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* QAKA, 3);
+                        P2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* AKB, 3);
+                        P3 = pinv(sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* RBKB, 3));
+                        S1 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augA, 'T', sigma_prev), 3);
+                        S2 = sum(reshape(this.transitionMatrix(j, :), 1, 1, numModes) .* mtimesx(augB, 'T', sigma_prev), 3);
+
+                        P4 = P2 * P3 * P2'; % should be symmetric
+
+                        K(:, :, j) = P1 - (P4 + P4') / 2; % ensure symmetry
+                        sigma(:, 1, j) = refWeightings(:, k) + S1 - P2 * P3 * S2;
+
+                        L(:,:, j, k) = -P3 * P2';
+                        feedforward(:, j, k) = P3 * S2;
+                    end
                 end
-            end            
-        end 
+            end
+        end
      end
 end
 

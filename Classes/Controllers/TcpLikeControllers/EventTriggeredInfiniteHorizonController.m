@@ -139,7 +139,7 @@ classdef EventTriggeredInfiniteHorizonController < SequenceBasedController
             dimX = size(A,1);
             Validator.validateInputMatrix(B, dimX);
             dimU = size(B, 2);
-            this = this@SequenceBasedController(dimX, dimU, packetLength);
+            this = this@SequenceBasedController(dimX, dimU, packetLength, true);
             
             % Check for stabilizablity of A by B
             assert(dimX -rank(ctrb(A, B)) == 0, ...
