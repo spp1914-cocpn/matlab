@@ -19,7 +19,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -44,7 +44,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
        % the underlying IMM filter instance (IMMF instance)
         immf;
     end
-    
+        
     properties (Access = private)
         % cell array (row vector like) to store the last filter states
         % (cell array of Gaussian mixtures)
@@ -92,7 +92,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             %      IMM filter which cannot cope with out-of-sequence and
             %      delayed measurements.
             %
-            %   >> name (Char)
+            %   >> name (Char, Optional)
             %      An appropriate filter name / description of the implemented
             %      filter.
             %      Default name: 'IMM (with Delayed Measurements)'.
@@ -113,7 +113,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             this.inputHistory = cell(1, maxMeasDelay + 1);
             this.trueModeHistory = cell(1, maxMeasDelay + 1);
             
-            this.modeTransitionMatrixHistory = repmat(modeTransitionMatrix, 1, 1, maxMeasDelay + 1);
+            this.modeTransitionMatrixHistory = repmat(modeTransitionMatrix, 1, 1, maxMeasDelay + 1);            
         end
         
         %% reset
@@ -313,7 +313,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             % save the update data
             numUsedMeas = size(applicableMeasurements, 2);
             this.setLastUpdateMeasurementData(numUsedMeas, size(measurements, 2) - numUsedMeas);
-        end
+        end     
     end
     
     methods (Access = protected)
@@ -329,7 +329,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         %% performSetStateMeanAndCov
         function performSetStateMeanAndCov(this, stateMean, stateCov, stateCovSqrt)
             this.immf.setStateMeanAndCov(stateMean, stateCov, stateCovSqrt);
-            [means, covs, weights] = this.immf.getState().getComponents();
+            
             % set history to new state
             for j=1:this.maxMeasurementDelay + 1
                 this.stateHistory{j} = this.immf.getState().copy();
@@ -349,7 +349,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         end
         
         %% performStep
-        function performStep(this, sysModel, measModel, applicableMeasurements, applicableDelays, applicableModes, applicableModeDelays)
+        function performStep(this, sysModel, measModel, applicableMeasurements, applicableDelays, ...
+                applicableModes, applicableModeDelays)
             if ~Checks.isClass(sysModel, 'JumpLinearSystemModel')
                 this.errorSysModel('JumpLinearSystemModel');
             end
@@ -361,11 +362,11 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 % empty
                 maxDelay = 0;
             end
-            currentModeTransitionMatrix = this.immf.modeTransitionProbs; % we have to memorize the current matrix            
+            currentModeTransitionMatrix = this.immf.modeTransitionProbs; % we have to memorize the current matrix
             currentMeasurements = this.incorporateDelayedMeasurements(applicableMeasurements, applicableDelays);
             currentMode = this.incorporateDelayedModeMeasurements(applicableModes, applicableModeDelays);
-    
-            this.inputHistory{1} = this.getSystemInputs(sysModel);
+            
+            this.inputHistory{1} = this.getSystemInputs(sysModel);            
             % handle border case that maxDelay is this.maxMeasurementDelay + 1 
             % (maximum allowed delay for a mode observation)
             delays = min(maxDelay, this.maxMeasurementDelay):-1:0;
@@ -386,6 +387,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 end
                 this.immf.setState(this.stateHistory{i + 1});
                 this.immf.setModeTransitionMatrix(this.modeTransitionMatrixHistory(:, :, i + 1));
+                               
                 DelayedModeIMMF.applyInputs(sysModel, this.inputHistory{i + 1}); % inputs for prediction
                 this.immf.performPrediction(sysModel);
                 if ~isempty(measurements)
@@ -394,10 +396,11 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 if i ~= 0
                     % save posterior
                     this.stateHistory{i} = this.immf.getState();                    
-                end
-            end                   
+                end                
+            end  
+
             % update history for the next step (i.e., proceed to k+1)
-            this.updateHistory(currentMeasurements, currentMode, currentModeTransitionMatrix);
+            this.updateHistory(currentMeasurements, currentMode, currentModeTransitionMatrix);            
         end
     end
     
@@ -409,12 +412,12 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                     '** measurements must be given as a (possibly empty) matrix **');
             end
             numMeas = size(measurements, 2);
-            delays = [];
+            delays = [];            
             if numMeas > 0
                 if Checks.isNonNegativeScalar(measDelays) && mod(measDelays, 1) == 0
                     delays = repmat(measDelays, 1, numMeas);
                 elseif Checks.isNonNegativeVec(measDelays, numMeas) ...
-                    && any(arrayfun(@(measDelay) mod(measDelay, 1) == 0, measDelays))
+                    && all(arrayfun(@(measDelay) mod(measDelay, 1) == 0, measDelays))
                     delays = measDelays;
                 else
                     this.error('InvalidMeasDelay', ...
@@ -528,7 +531,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
       
             this.modeTransitionMatrixHistory = cat(3, currentModeTransitionMatrix, ...
                 this.modeTransitionMatrixHistory(:, :, 1:this.maxMeasurementDelay));
-
+            
             % if called at time k, the history is prepared for k+1
         end
         
@@ -541,7 +544,6 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                  usedInputs = modeSpecificInputs;
             end
         end
-              
     end
     
     methods (Access = private, Static)
@@ -554,4 +556,3 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         end
     end
 end
-

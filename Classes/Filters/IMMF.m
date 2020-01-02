@@ -18,7 +18,7 @@ classdef IMMF < Filter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,7 +76,7 @@ classdef IMMF < Filter
             %      A stochastic matrix whose (i,j)-th entry defines the probability of switching from mode i to j.
             %      In particular, the matrix must be square with all
             %      elements in [0,1] and rows summing up to 1.
-            %   >> name (Char)
+            %   >> name (Char, optional)
             %      An appropriate filter name / description of the implemented
             %      filter.
             %      Default name: 'Interacting Multiple Model Filter'.
@@ -154,7 +154,7 @@ classdef IMMF < Filter
             % Get a point estimate of the current system mode.
             % This is simply the maximum value of the current mode
             % probability distribution, and its associated probability.
-            % in case of multiple maxima, the first one is returned.
+            % In case of multiple maxima, the first one is returned.
             %
             % Returns:
             %   << mode (Positive Integer)
@@ -178,6 +178,7 @@ classdef IMMF < Filter
                 end
                 [modeStateMeans, modeStateCovs, modeProbs] = state.getComponents();
                 this.modeProbabilities = this.normalizeModeProbabilities(modeProbs);
+                                
                 for i=1:this.numModes
                     this.modeFilters{i}.setStateMeanAndCov(modeStateMeans(:, i), modeStateCovs(:, :, i));
                 end
@@ -250,8 +251,8 @@ classdef IMMF < Filter
         %% predictModeProbabilities
         function predictModeProbabilities(this)
             %yields a column vector, so transpose the result
-            this.modeProbabilities = reshape(this.modeTransitionProbs' * this.modeProbabilities', 1, this.numModes);
-            this.modeProbabilities = this.normalizeModeProbabilities(this.modeProbabilities);
+            this.modeProbabilities = this.normalizeModeProbabilities(...
+                reshape(this.modeTransitionProbs' * this.modeProbabilities', 1, this.numModes));
         end
         
         %% mixStateEstimates
@@ -294,10 +295,8 @@ classdef IMMF < Filter
             maxLogValue = max(logLikelihoods);
             logLikelihoods = logLikelihoods - maxLogValue;
             
-            likelihoods = exp(logLikelihoods);
-            updatedModeProbs = this.modeProbabilities .* likelihoods;
-            normalizationConstant = sum(updatedModeProbs);
-            this.modeProbabilities = this.normalizeModeProbabilities(updatedModeProbs / normalizationConstant);
+            updatedModeProbs = this.modeProbabilities .* exp(logLikelihoods);
+            this.modeProbabilities = this.normalizeModeProbabilities(updatedModeProbs / sum(updatedModeProbs));
         end
             
         %% normalizeModeProbabilities
@@ -320,7 +319,7 @@ classdef IMMF < Filter
                 normalizedTransitionMatrix(idx) = IMMF.probabilityBound;
                 normalizedTransitionMatrix = normalizedTransitionMatrix ./ sum(normalizedTransitionMatrix, 2);
             end
-        end
+        end        
     end
 end
 
