@@ -19,4 +19,4 @@ The following external libraries/functions are used and included in the folder '
 For additional information regarding YALMIP, Armadillo, and SDPT3, please refer to the corresponding papers:
 * Johan Löfberg, [YALMIP: a toolbox for modeling and optimization in MATLAB](https://doi.org/10.1109/CACSD.2004.1393890), Proceedings of the 2004 IEEE International Symposium on Computer Aided Control Systems Design, Taipei, Taiwan, 2004.
 * Conrad Sanderson and Ryan Curtin, [Armadillo: a template-based C++ library for linear algebra](http://arma.sourceforge.net/armadillo_joss_2016.pdf), Journal of Open Source Software, Vol. 1, pp. 26, 2016.
-* Kim-Chuan Toh, Michael J. Todd, and Reha H. Tutuncu, [SDPT3 — A Matlab software package for semidefinite programming](https://doi.org/10.1080/10556789908805762), Optimization Methods and Software, 11 (1999), pp. 545–581
+* Kim-Chuan Toh, Michael J. Todd, and Reha H. Tutuncu, [SDPT3 — A Matlab software package for semidefinite programming](https://doi.org/10.1080/10556789908805762), Optimization Methods and Software, 11 (1999), pp. 545–581.
