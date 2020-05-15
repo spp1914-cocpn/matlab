@@ -36,9 +36,9 @@ end
 
 if model.K.e>0
     for i = 1:model.K.e
-        prob.cones.type = [prob.cones.type 3];
-        prob.cones.subptr = [prob.cones.subptr length(prob.cones.sub)+1];
-        prob.cones.sub = [prob.cones.sub top+3 top+2 top+1];        
+        prob.cones.type = [prob.cones.type(:)' 3];
+        prob.cones.subptr = [prob.cones.subptr(:)' length(prob.cones.sub)+1];
+        prob.cones.sub = [prob.cones.sub(:)' top+3 top+2 top+1];        
         top = top + 3;
     end
 end
@@ -52,12 +52,16 @@ if model.options.savedebug
     save mosekdebug prob param
 end
 
+if model.options.mosektaskfile
+    mosekopt(sprintf('min write(%s) echo(0)', model.options.mosektaskfile), prob, param);
+end
+
 [r,res,solvertime] = doCall(prob,param,model.options);
 
 try
     x = res.sol.itr.y;
 catch   
-    if isequal(model.options.mosek.MSK_IPAR_OPTIMIZER,'MSK_OPTIMIZER_FREE_SIMPLEX')
+    if ~isempty(model.options.mosek) & isequal(model.options.mosek.MSK_IPAR_OPTIMIZER,'MSK_OPTIMIZER_FREE_SIMPLEX')
         x = res.sol.bas.y;
     else
         x = nan(length(model.c),1);    

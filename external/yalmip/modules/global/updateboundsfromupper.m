@@ -1,4 +1,7 @@
-function  p = updateboundsfromupper(p,upper,ppoly);
+function  p = updateboundsfromupper(p,upper)
+if nargin == 1
+    upper = p.upper;
+end
 if ~isinf(upper)
     LU = [p.lb p.ub];
     if nnz(p.c.*(p.ub-p.lb)) == 1 & nnz(p.Q)==0
@@ -83,5 +86,7 @@ if ~isinf(upper)
             end
         end
     end
-    
+    if any(p.lb > p.ub + 1e-7)
+        p.feasible = 0;
+    end
 end

@@ -300,12 +300,12 @@ while i <= nargin
 
         lowArg = strtrim(lower(arg));
 
-        j = strmatch(lowArg,names);
+        j = strmatch_octavesafe(lowArg,names);
         if isempty(j)                       % if no matches
             error(sprintf('Unrecognized property name ''%s''.', arg));
         elseif length(j) > 1                % if more than one match
             % Check for any exact matches (in case any names are subsets of others)
-            k = strmatch(lowArg,names,'exact');
+            k = strmatch_octavesafe(lowArg,names,'exact');
             if (length(k) == 1)
                 j = k;
             else
@@ -423,6 +423,7 @@ options.allownonconvex = 1;
 options.shift = 0;
 options.dimacs = 0;
 options.beeponproblem = [-5 -4 -3 -2 -1];
+options.mosektaskfile = '';
 
 function bisection = setup_bisection_options
 bisection.absgaptol = 1e-5;
@@ -1058,6 +1059,9 @@ try
     ipopt.max_iter = 1500;
     ipopt.max_cpu_time = 1000;
     ipopt.tol = 1e-7;
+    ipopt = rmfield(ipopt,'pardiso_order'); 
+    ipopt = rmfield(ipopt,'pardiso_redo_symbolic_fact_only_if_inertia_wrong');
+    
 catch
     ipopt.mu_strategy = 'adaptive';
     ipopt.tol = 1e-7;
@@ -1186,6 +1190,7 @@ scs.normalize = 1;
 scs.scale = 5;
 scs.cg_rate = 2;
 scs.eliminateequalities = 0;
+scs.gpu = false;
 
 function dsdp = setup_dsdp_options
 try
