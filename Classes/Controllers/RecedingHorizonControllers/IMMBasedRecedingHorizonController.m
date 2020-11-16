@@ -1,6 +1,6 @@
 classdef IMMBasedRecedingHorizonController < SequenceBasedController
     % Implementation of a receding horizon linear sequence-based controller for
-    % NCS with networks connecting the controller and actuator, 
+    % linear NCS with networks connecting the controller and actuator, 
     % and sensor and controller, respectively, where application layer ACKs
     % are sent out by the actuator upon reception of applicable control
     % inputs.
@@ -15,7 +15,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -37,18 +37,12 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = private)
-        Q;
-        R;
-        horizonLength;
+        horizonLength double {Validator.validateHorizonLength(horizonLength)} = 1;
                 
         numModes;
+        % for fixed sequence length, F and G are independent of (A,B)
         F;
         G;
-        
-        augA;
-        augB;
-        R_tilde; % store only the one for the first mode
-        Q_tilde;
                 
         immf;
         dimEta;
@@ -57,6 +51,14 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     end
     
     properties (Access = private)
+        Q;
+        terminalQ; % use unique stabilizing solution of DARE 
+        R;
+        augA;
+        augB;
+        R_tilde; % store only the one for the first mode
+        Q_tilde;
+        
         % the input related part of the state, evolves according to %eta_k+1=F*eta_k + G*U_k
         etaState; % holds eta_{k-1}
         % the last computed input sequence
@@ -64,11 +66,12 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
         initialized = true; % flag to indicate whether intial state was set (no update required prior to computation of sequence)
         
         transitionMatrix;
-        P; % cost matrices, one for each mode        
+        P; % cost matrices, one for each mode
+        recomputeCostate = false;
     end
     
     properties (SetAccess = immutable, GetAccess = public)        
-        useMexImplementation@logical=true; 
+        useMexImplementation(1,1) logical = true; 
         % by default, we use the C++ (mex) implementation for computation
         % of the costate/cost matrices
         % this is usually faster, but can produce slightly different results
@@ -76,7 +79,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     
     methods (Access = public)
         %% IMMBasedRecedingHorizonController
-        function this = IMMBasedRecedingHorizonController(A, B, C, Q, R, caDelayProb, ...
+        function this = IMMBasedRecedingHorizonController(A, B, C, Q, R, modeTransitionMatrix, ...
                 sequenceLength, maxMeasDelay, W, measNoise, horizonLength, x0, x0Cov, useMexImplementation)
             % Class constructor.
             %
@@ -91,14 +94,17 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
             %      The measurement matrix of the sensor.
             %
             %   >> Q (Positive semi-definite matrix)
-            %      The state weighting matrix in the controller's underlying cost function.
+            %      The state weighting matrix Q_k in the controller's underlying cost function.
+            %      For the terminal state x_K, where K is the horizon
+            %      length, the corresponding weighting matrix Q_K is chosen as the
+            %      stabilizing solution of the DARE associated with A, B,
+            %      Q, R. If this solution does not exist, Q is used instead.
             %
             %   >> R (Positive definite matrix)
             %      The input weighting matrix in the controller's underlying cost function.
             %
-            %   >> caDelayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
@@ -145,7 +151,10 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
             this.Q = Q;
             this.R = R;
             
-            Validator.validateDiscreteProbabilityDistribution(caDelayProb);            
+            this.numModes = sequenceLength + 1;
+            Validator.validateTransitionMatrix(modeTransitionMatrix, this.numModes);
+            this.transitionMatrix = modeTransitionMatrix;
+            
             Validator.validateMeasurementMatrix(C, dimX);
             dimMeas = size(C, 1);
             assert(Checks.isNonNegativeScalar(maxMeasDelay) && mod(maxMeasDelay, 1) == 0, ...
@@ -159,7 +168,6 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                     'IMMBasedRecedingHorizonController:InvalidMeasNoise', ...
                     '** Input parameter <measNoise> (measurement noise) must be a %d-dimensional Distribution**', dimMeas);
             
-            Validator.validateHorizonLength(horizonLength);
             this.horizonLength = horizonLength;
             % check the states
             assert(Checks.isVec(x0, dimX) && all(isfinite(x0)), ...
@@ -169,16 +177,9 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                 'IMMBasedRecedingHorizonController:InvalidX0Cov', ...
                 '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by-%d-dimensional **', dimX, dimX);
             
-            if nargin > 13
-                assert(Checks.isFlag(useMexImplementation), ...
-                    'IMMBasedRecedingHorizonController:InvalidUseMexFlag', ...
-                    '** <useMexImplementation> must be a flag **');
+            if nargin > 13                
                 this.useMexImplementation = useMexImplementation;
-            end
-            
-            this.numModes = sequenceLength + 1;
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(...
-                Utility.truncateDiscreteProbabilityDistribution(caDelayProb, this.numModes));
+            end     
             
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
             
@@ -201,6 +202,22 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
             this.inputSequence = zeros(dimU * this.sequenceLength, 1);
             
             this.setControllerPlantStateInternal(x0, x0Cov);
+            
+            % for stability: use stabilizing solution of DARE as terminal
+            % weighting -> only exists in case (A,B) stabilizable + the
+            % associated symplectic matrix has no eigenvalues on the unit
+            % circle     
+            [this.terminalQ,~,~,info] = idare(A, B, Q, R);
+            if info.Report > 1
+                % either report == 2: The solution is not finite
+                % or report == 3: No solution found since the symplectic
+                % matrix has eigenvalues on the unit circle
+                this.terminalQ = this.Q;
+                warning('IMMBasedRecedingHorizonController:InvalidPlant', ...
+                    '** (A,B) seems not stabilizable, cannot use stabilizing solution of associated DARE as terminal weighting Q_N **');
+            end            
+            % computation of costate has to be done only once if model
+            % parameters or cost function do not change
             this.P = this.computeCostate();
         end
         
@@ -218,9 +235,85 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                 this.transitionMatrix = newMat;
                 % also update the matrix of the filter
                 this.immf.setModeTransitionMatrix(this.transitionMatrix); 
-                % and we must recompute the costate
-                this.P = this.computeCostate();
+                % and we must remember recompute the costate, depends on
+                % transition properties
+                this.recomputeCostate = true;
             end
+        end
+        
+        %% changeCostMatrices
+        function changeCostMatrices(this, newQ, newR)
+            % Change the state and input weighting matrices in the controller's underlying cost function.
+            %
+            % Parameters:
+            %  >> newQ (Positive semi-definite matrix)
+            %     The new state weighting matrix in the controller's underlying cost function.
+            %
+            %  >> newR (Positive definite matrix)
+            %     The new input weighting matrix in the controller's underlying cost function.
+            %
+            Validator.validateCostMatrices(newQ, newR, this.dimPlantState, this.dimPlantInput);
+            this.Q = newQ;
+            this.R = newR;            
+
+            % for stability: use stabilizing solution of DARE as terminal
+            % weighting -> only exists in case (A,B) stabilizable + the
+            % associated symplectic matrix has no eigenvalues on the unit
+            % circle     
+            [this.terminalQ,~,~,info] = idare(this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1), ...
+                this.augB(1:this.dimPlantState, 1:this.dimPlantInput, 1), newQ, newR);
+            if info.Report > 1
+                % either report == 2: The solution is not finite
+                % or report == 3: No solution found since the symplectic
+                % matrix has eigenvalues on the unit circle
+                this.terminalQ = newQ;                
+            end  
+            
+            % requires that cost function augmentation is carried out again
+            [this.Q_tilde, augR] = Utility.createAugmentedCostModel(this.sequenceLength, this.Q, this.R);
+            % augR (R_tilde in the paper) is zero for all modes but the first
+            this.R_tilde = augR(:, :, 1);
+            % remember to recompute the costate, depends on cost matrices
+            this.recomputeCostate = true;
+        end
+        
+        %% changeModelParameters
+        function changeModelParameters(this, newA, newB, newW, newC)
+            Validator.validateSystemMatrix(newA, this.dimPlantState);
+            Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);
+            Validator.validateSysNoiseCovarianceMatrix(newW, this.dimPlantState);
+
+            % recompute the augmented model, F, G, H, J do not change
+            [~, ~, ~, ~, this.augA, this.augB] = Utility.createAugmentedPlantModel(this.sequenceLength, newA, newB);
+            % for stability: use stabilizing solution of DARE as terminal
+            % weighting -> only exists in case (A,B) stabilizable + the
+            % associated symplectic matrix has no eigenvalues on the unit
+            % circle
+            [this.terminalQ,~,~,info] = idare(newA, newB, this.Q, this.R);  
+            if info.Report > 1
+                % either report == 2: The solution is not finite
+                % or report == 3: No solution found since the symplectic
+                % matrix has eigenvalues on the unit circle
+                this.terminalQ = this.Q;
+                warning('IMMBasedRecedingHorizonController:InvalidPlant', ...
+                    '** (A,B) seems not stabilizable, cannot use stabilizing solution of associated DARE as terminal weighting Q_N **');
+            end            
+
+            for j=1:this.sequenceLength + 1
+                % change the affected parameters of the model
+                this.mjls.modeSystemModels{j}.setSystemMatrix(newA);
+                this.mjls.modeSystemModels{j}.setSystemInputMatrix(newB);
+                this.mjls.modeSystemModels{j}.setNoise(newW);
+            end
+
+            if nargin > 4 && ~isempty(newC)
+                dimMeas = size(this.measurementModel.measMatrix, 1);
+                Validator.validateMeasurementMatrix(newC, this.dimPlantState, dimMeas);
+                this.measurementModel.setMeasurementMatrix(newC);
+            end
+            % remember to recompute the costate, depends on plant
+            % model/augmented model
+            this.recomputeCostate = true;
         end
         
          %% setEtaState
@@ -350,6 +443,12 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     methods (Access = protected)
         %% doControlSequenceComputation
          function inputSequence = doControlSequenceComputation(this, newEta)
+            if this.recomputeCostate
+                % we need to recompute the costate, at least one parameter
+                % (A, B, Q, R, W, transition matrix) has changed
+                this.P = this.computeCostate();
+                this.recomputeCostate = false;
+            end
             % extract the components of the mixture (posterior state)
             [means, ~, probs] = this.immf.getState().getComponents();
             if this.useMexImplementation                
@@ -392,8 +491,8 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     
     methods (Access = private)        
         %% computeCostate
-        function P_1 = computeCostate(this)
-            terminalP = repmat(blkdiag(this.Q, zeros(this.dimEta)), 1, 1, this.numModes); % the terminal term, Y_K
+        function P_1 = computeCostate(this)            
+            terminalP = repmat(blkdiag(this.terminalQ, zeros(this.dimEta)), 1, 1, this.numModes); % the terminal term, Y_K
             if this.useMexImplementation            
                 P_1 = mex_IMMBasedRecedingHorizonControllerCostate(this.augA, this.augB, this.transitionMatrix, ...
                     this.Q_tilde, this.R_tilde, terminalP, this.horizonLength);

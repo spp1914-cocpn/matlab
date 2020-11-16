@@ -5,7 +5,7 @@ classdef ValidatorTest< matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -87,10 +87,19 @@ classdef ValidatorTest< matlab.unittest.TestCase
             this.verifyError(@() Validator.validateInputMatrix(B, this.dimX), expectedErrId);
             B = [1 NaN; 0 0]; % nan
             this.verifyError(@() Validator.validateInputMatrix(B, this.dimX), expectedErrId);
+            
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims'; 
+            
+            B = eye(1, 2); % wrong number of cols
+            this.verifyError(@() Validator.validateInputMatrix(B, 1, 3), expectedErrId);
+            B = [1 NaN; 0 0]; % nan
+            this.verifyError(@() Validator.validateInputMatrix(B, 2, 2), expectedErrId);
            
-            % finally, a successful run
+            % finally, two successful run, B matrix is supposed to be
+            % square
             B = this.dimXEye;
             Validator.validateInputMatrix(B, this.dimX);
+            Validator.validateInputMatrix(B, this.dimX, this.dimX);
         end
         
         %% testValidateMeasurementMatrix
@@ -282,6 +291,29 @@ classdef ValidatorTest< matlab.unittest.TestCase
             % finally, a successful run
             validSequenceLength = 3;
             Validator.validateSequenceLength(validSequenceLength);
+        end
+        
+        %% testValidateMaxPacketDelay
+        function testMaxPacketDelay(this)
+            expectedErrId = 'Validator:ValidateMaxPacketDelay:InvalidMaxPacketDelay';
+            
+            invalidMaxPacketDelay = eye(3); % not a scalar
+            this.verifyError(@() Validator.validateMaxPacketDelay(invalidMaxPacketDelay), expectedErrId);
+            
+            invalidMaxPacketDelay = -1; % not a nonnegative scalar
+            this.verifyError(@() Validator.validateMaxPacketDelay(invalidMaxPacketDelay), expectedErrId);
+            
+            invalidMaxPacketDelay = 1.5; % not an integer
+            this.verifyError(@() Validator.validateMaxPacketDelay(invalidMaxPacketDelay), expectedErrId);
+            
+            invalidMaxPacketDelay = nan; % not finite nor inf
+            this.verifyError(@() Validator.validateMaxPacketDelay(invalidMaxPacketDelay), expectedErrId);
+            
+            % finally, a successful run
+            validMaxPacketDelay = 3;
+            Validator.validateMaxPacketDelay(validMaxPacketDelay);
+            validMaxPacketDelay = inf;
+            Validator.validateMaxPacketDelay(validMaxPacketDelay);
         end
     end
    

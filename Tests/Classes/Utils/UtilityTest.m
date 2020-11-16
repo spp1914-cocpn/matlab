@@ -5,7 +5,7 @@ classdef UtilityTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -583,7 +583,7 @@ classdef UtilityTest < matlab.unittest.TestCase
             % compute transition matrix straightforwardly (we compute P_{k-1} with entries p_{k-1,ij}) as described in
             %
             % Florian Rosenthal and Uwe D. Hanebeck,
-            % Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks (submitted),
+            % Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks,
             % Proceedings of the 21th IFAC World Congress (IFAC 2020),
             % Berlin, Germany, July 2020
             %            

@@ -8,7 +8,7 @@ classdef CommunicationNetwork < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -39,22 +39,17 @@ classdef CommunicationNetwork < handle
     end
     
     properties (GetAccess = private, SetAccess = immutable)
-        % used protocol (has no relevance to behaviour of the network. Only
-        % needed for other components as actuator and controller to know if age
-        % of buffer (mode) is available
-        % (scalar of 1 (TCP) or 0 (UDP)
-        usesTcp = 1;
         % length of simulation time in time steps; (positive integer)
-        simTime = -1;
+        simTime(1,1) double {mustBePositive, mustBeInteger} = 1;
         % maximal time delay;
         % The network does not output a data packet that has a longer time 
-        % delay; (positive integer)
-        maxDelay = -1;
+        % delay; (nonnegative integer)
+        maxDelay(1,1) double {Validator.validateMaxPacketDelay(maxDelay, 0)} = 1;
     end
   
     methods (Access = public)
         %% CommunicationNetwork
-        function this = CommunicationNetwork(simTime, maxDelay, protocol)
+        function this = CommunicationNetwork(simTime, maxDelay)
             % Class constructor.
             %
             % Parameters:
@@ -65,38 +60,11 @@ classdef CommunicationNetwork < handle
             %      The maximum delay (in time step) a single DataPacket may experience in the network
             %      before it gets lost.
             %
-            %   >> protocol (Char array, either TCP or UDP, optional)
-            %      Char array to indicate whther this network is TCP-like or UDP-like.
-            %      If value is not provided here, TCP-like is used by
-            %      default.
-            %
             % Returns:
             %   << this (CommunicationNetwork)
             %      A new CommunicationNetwork instance.
-           
-            if nargin == 2
-              this.usesTcp = 1;
-            elseif ~ischar(protocol)
-              error('CommunicationNetwork:InvalidProtocol', ...
-                  '** Input parameter <protocol> must be string with value "TCP" or "UDP" **');
-            elseif strcmpi(protocol, 'UDP')
-              this.usesTcp = 0;
-            elseif strcmpi(protocol, 'TCP')
-              this.usesTcp = 1;
-            else
-              error('CommunicationNetwork:InvalidProtocolChar', ...
-                  '** Input parameter <protocol> must be string with value "TCP" or "UDP" **');
-            end
-            
-            assert(Checks.isPosScalar(simTime) && mod(simTime, 1) == 0, ...
-                'CommunicationNetwork:InvalidSimTime', ...
-                '** Input parameter <simTime> (simulation time) must be a positive integer **');
-            this.simTime = simTime;
 
-            % maxDelay
-            assert(Checks.isNonNegativeScalar(maxDelay) && mod(maxDelay, 1) == 0, ...
-                'CommunicationNetwork:InvalidMaxDelay', ...
-                '** Input parameter <maxDelay> (maximum possible packet delay) must be a nonnegative integer **');
+            this.simTime = simTime;
             this.maxDelay = maxDelay;
 
             % init network data

@@ -5,7 +5,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -82,43 +82,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
         
         %% verifyZeroMeasDelayUpdateGaussianMixture
         function verifyZeroMeasDelayUpdateGaussianMixture(this)
-            % compute the expected parameters of the posterior mixture
-            expectedWeights = this.updatedMixtureWeights;
-            expectedMean = this.updatedMixtureWeights(1) * this.updatedMixtureMeans(:, 1) ...
-                + this.updatedMixtureWeights(2) * this.updatedMixtureMeans(:, 2);
-            expectedCov = this.updatedMixtureWeights(1) * this.updatedMixtureCovs(:, :, 1) ...
-                + this.updatedMixtureWeights(2) * this.updatedMixtureCovs(:, :, 2);
-            expectedCov = expectedCov + this.updatedMixtureWeights(1) ...
-                * (expectedMean - this.updatedMixtureMeans(:, 1)) * transpose(expectedMean - this.updatedMixtureMeans(:, 1));
-            expectedCov = expectedCov ...
-                + (this.updatedMixtureWeights(2) * ...
-                + (expectedMean - this.updatedMixtureMeans(:, 2)) * transpose(expectedMean - this.updatedMixtureMeans(:, 2)));
-                          
-            % first check the individual filter states
-            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
-            for j=1:this.numModes
-                this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
-                % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
-                this.verifyEqualWithAbsTol(actualMean, this.updatedMixtureMeans(:, j));
-                this.verifyEqualWithAbsTol(actualCov, this.updatedMixtureCovs(:, :, j));
-                
-                % sanity checks for the individual covs:
-                % posterior cov should be smaller than prior cov
-                this.verifyGreaterThan(eig(this.predictedMixtureCovs(:, :, j) - actualCov), -sqrt(eps));
-            end
-            
-            % now the resulting Gaussian mixture
-            updatedState = this.filterUnderTest.getState();
-            this.verifyClass(updatedState, ?GaussianMixture);
-            
-            [~, ~, actualWeights] = updatedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
-                      
-            this.verifyEqualWithAbsTol(actualWeights, expectedWeights);
-            this.verifyEqualWithAbsTol(actualMean, expectedMean);
-            this.verifyEqual(actualCov, actualCov'); % shall be symmetric
-            this.verifyEqualWithAbsTol(actualCov, expectedCov);
+            this.verifyGaussianMixture(this.updatedMixtureMeans, this.updatedMixtureCovs, this.updatedMixtureWeights);
         end
     end
     
@@ -160,7 +124,12 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
         
         %% testDelayedModeIMMFInvalidModeFilters
         function testDelayedModeIMMFInvalidModeFilters(this)
-            expectedErrId = 'MATLAB:class:RequireClass';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:UnableToConvert';
+            else
+                expectedErrId = 'MATLAB:validation:UnableToConvert';
+            end
             
             % no cell passed
             invalidModeFilters = eye(this.dimX);
@@ -171,6 +140,25 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             
            % cell with invalid filter passed
             invalidModeFilters = {EKF('KF'); this.filterUnderTest};
+            this.verifyError(@() DelayedModeIMMF(invalidModeFilters, this.modeTransitionMatrix, this.maxMeasDelay, this.filterName), ...
+                expectedErrId);
+            
+            % cell with invalid objects passed
+            invalidModeFilters = {1; this};
+            this.verifyError(@() DelayedModeIMMF(invalidModeFilters, this.modeTransitionMatrix, this.maxMeasDelay, this.filterName), ...
+                expectedErrId);
+            
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
+            
+            % cell with invalid dimensions passed
+            invalidModeFilters = cell(2,2);
+            invalidModeFilters{1} = {EKF('KF'); EKF('KF2')};
+            invalidModeFilters{end} = {EKF('KF'); EKF('KF2')};
             this.verifyError(@() DelayedModeIMMF(invalidModeFilters, this.modeTransitionMatrix, this.maxMeasDelay, this.filterName), ...
                 expectedErrId);
         end
@@ -387,7 +375,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             % we just observe a mode, don't have a measurmeent at hand
             % mode observation ispected to be discarded with warning, but
             % result should be a successful prediction
-             this.filterUnderTest.setState(this.stateGaussianMixture);
+            this.filterUnderTest.setState(this.stateGaussianMixture);
             expectedWarningId = 'Filter:IgnoringModeObservations';
             
             modeDelay = this.maxMeasDelay + 2;
@@ -528,7 +516,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             % prediction from the IMMF as the current mode does not affect
             % the prediction from the last to the current step
             this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
-                [], [], modeObservation, modeDelay)
+                [], [], modeObservation, modeDelay);
 
             this.verifyPredictionGaussianMixture();
             
@@ -537,7 +525,65 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             this.verifyEqual(actualNumUsedMeas, 0);
             this.verifyEqual(actualNumDiscardedMeas, 0);
         end
-    end
-    
+        
+        %% testStepDelayedModeObservationsMeasurementsGaussianMixture
+        function testStepDelayedModeObservationsMeasurementsGaussianMixture(this)
+            % a setup similar to TCP-like: we have the previous modes
+            % available, but not all measurements
+                        
+            modeDelays = [1 3 2]; % we know the modes from the previous three time steps
+            modeObservations = [1 1 2];
+            measDelay = 2; 
+            measurements = this.measurement;            
+            
+            this.filterUnderTest.setState(this.stateGaussianMixture.copy());
+            this.jumpLinearPlantModel.setSystemInput(this.input);
+            % now perform the steps to incorporate delayed mode observations
+            % and measurement
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                measurements, measDelay, modeObservations, modeDelays);
+            % another measurement appears, and we now the previous mode
+            % also the input changes
+            newMeasDelay = 2;
+            newMeasurement = 2 * this.measurement;
+            newMode = 2;
+            newModeDelay = 1;
+            newInput = 2 * this.input;
+            this.jumpLinearPlantModel.setSystemInput(newInput);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                newMeasurement, newMeasDelay, newMode, newModeDelay);
+            
+            % use an IMMF as reference
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            
+            immf.setState(this.stateGaussianMixture.copy());
+            plant = JumpLinearSystemModel(this.numModes, this.modePlantModels);
+            plant.setSystemInput([]);
+            
+            immf.predict(plant);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
+                        
+            immf.step(plant, this.measModel, measurements); 
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            
+            immf.step(plant, this.measModel, newMeasurement);            
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
+            
+            plant.setSystemInput(this.input);
+            immf.predict(plant);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            plant.setSystemInput(newInput);
+            immf.predict(plant);
+            
+            [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
+            
+            this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);
+        end
+    end    
 end
 

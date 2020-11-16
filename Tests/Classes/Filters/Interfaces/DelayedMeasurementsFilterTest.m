@@ -5,7 +5,7 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -70,10 +70,17 @@ classdef DelayedMeasurementsFilterTest < matlab.unittest.TestCase
     methods (Test)
         %% testDelayedMeasurementsFilterInvalidMaxMeasDelay
         function testDelayedMeasurementsFilterInvalidMaxMeasDelay(this)
-            expectedErrId = 'Filter:InvalidMaxMeasDelay';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             
             invalidMaxMeasDelay = [1 2]; % not a scalar
             this.verifyError(@() DelayedMeasurementsFilterStub(invalidMaxMeasDelay, this.filterName), expectedErrId);
+            
+            expectedErrId = 'Validator:ValidateMaxPacketDelay:InvalidMaxPacketDelay';
             
             invalidMaxMeasDelay = -1; % negative scalar
             this.verifyError(@() DelayedMeasurementsFilterStub(invalidMaxMeasDelay, this.filterName), expectedErrId);

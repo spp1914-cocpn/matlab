@@ -18,7 +18,7 @@ classdef IMMF < Filter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -41,7 +41,7 @@ classdef IMMF < Filter
     
     properties (SetAccess = immutable, GetAccess = private)
         % filter set with mode-conditioned Kalman filters
-        modeFilters@cell;
+        modeFilters(1,:) cell;
     end
     
     properties (SetAccess = immutable, GetAccess = public)

@@ -6,7 +6,7 @@
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -29,11 +29,11 @@
     
     properties (SetAccess = immutable, GetAccess = protected)
         % the maximum allowed measurement delay (i.e., measurements with longer delay are ignored)
-        maxMeasurementDelay; %{mustBeInteger, mustBeNonnegative}; since R2017a
+        maxMeasurementDelay(1,1) double {Validator.validateMaxPacketDelay(maxMeasurementDelay, 0)} = 1;
     end
     
     properties (SetAccess = public, GetAccess = private)
-        issueWarningIgnoreDelayedMeas@logical = false; % default false
+        issueWarningIgnoreDelayedMeas(1,1) logical = false; % default false
     end
     
     properties (Access = private)
@@ -61,10 +61,7 @@
             %   << this (DelayedMeasurementsFilter)
             %      A new DelayedMeasurementsFilter instance.
             this@Filter(name);
-            if ~Checks.isNonNegativeScalar(maxMeasDelay) || mod(maxMeasDelay, 1) ~= 0
-                this.error('InvalidMaxMeasDelay', ...
-                    '** Maximum measurement delay <maxMeasDelay> must be a nonnegative integer **');
-            end
+            
             this.maxMeasurementDelay = maxMeasDelay;
             this.lastNumUsedMeas = 0;
             this.lastNumDiscardedMeas = 0;

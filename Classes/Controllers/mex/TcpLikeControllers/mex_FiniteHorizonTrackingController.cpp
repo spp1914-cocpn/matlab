@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -26,6 +26,9 @@
  
 #include "armadillo"
 #include <armaMex.hpp>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace std;
 using namespace arma;
@@ -60,27 +63,25 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     // we only need K_{k+1} to compute K_k and L_k
     dcube K_k(size(augA)); 
     K_k.each_slice() = terminalK; // K_N is the same for all modes
-    
     // the same for sigma: only sigma_{k+1} required
     dmat sigma_k(refWeightings.n_rows, numModes);
     sigma_k.each_col() = refWeightings.tail_cols(1);
     
     double* dstL = mxGetPr(outputArrays[0]);
-    dstL += ((horizonLength-1) * augR.n_rows * augA.n_rows * numModes); // points to first element of last cube  of L
+    dstL += (dimsL[3] - 1) * dimsL[0] * dimsL[1] * dimsL[2]; // points to first element of last cube  of L
     
     double* dstFeedforward = mxGetPr(outputArrays[1]);
-    dstFeedforward += (horizonLength-1) * augR.n_rows * numModes; // points to first element of last slice of feedforward
+    dstFeedforward += (dims[2] - 1) * dims[0] * dims[1]; // points to first element of last slice of feedforward
             
     for (auto k = horizonLength - 1; k >= 0; --k, 
-            dstL -= augR.n_rows * augA.n_rows * numModes, 
-            dstFeedforward -= augR.n_rows * numModes) {
-        
+            dstL -= dimsL[0] * dimsL[1] * dimsL[2], 
+            dstFeedforward -= dims[0] * dims[1]) {
         dcube K_prev = K_k; // K_{k+1}
         dmat sigma_prev = sigma_k; 
         
         dcube QAKA = augQ;
         dcube RBKB = augR;
-        dcube BKA(augB.n_cols, augA.n_rows, numModes);
+        dcube BKA(augB.n_cols, augA.n_cols, numModes);
         dmat Asigma(augA.n_cols, numModes);
         dmat Bsigma(augB.n_cols, numModes);
                 
@@ -88,28 +89,31 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
             QAKA.slice(i) += symmatu(augA.slice(i).t() * K_prev.slice(i) * augA.slice(i)); // ensure symmetry
             RBKB.slice(i) += symmatu(augB.slice(i).t() * K_prev.slice(i) * augB.slice(i)); // ensure symmetry
             BKA.slice(i) = augB.slice(i).t() * K_prev.slice(i) * augA.slice(i);
-            Asigma.col(i) = augA.slice(i).t() * sigma_prev.col(i);
-            Bsigma.col(i) = augB.slice(i).t() * sigma_prev.col(i);
+            Asigma.col(i) = augA.slice(i).t() * sigma_prev.unsafe_col(i);
+            Bsigma.col(i) = augB.slice(i).t() * sigma_prev.unsafe_col(i);
         }
+
+        dcube L(dstL, dimsL[0], dimsL[1], dimsL[2], false, true); //gains L_k for stage k
+        dmat feedforward(dstFeedforward, dims[0], dims[1], false, true); // feedforward terms for stage k
         
-        dcube L(dstL, augR.n_rows, augA.n_rows, numModes, false, true); //gains L_k for stage k
-        dmat feedforward(dstFeedforward, augR.n_rows, numModes, false, true); // feedforward terms for stage k
-        
+        #ifdef _OPENMP
+        #pragma omp parallel for
+        #endif
         for (uword j=0; j < numModes; ++j) {
             mat::const_row_iterator row = transitionMatrix.begin_row(j);
             
-            dmat P1 = zeros<dmat>(augA.n_rows, augA.n_cols);
-            dmat P2 = zeros<dmat>(augB.n_cols, augA.n_rows);
-            dmat P3 = zeros<dmat>(augR.n_rows, augR.n_cols);
-            dcolvec s1 = zeros<dcolvec>(Asigma.n_cols);
-            dcolvec s2 = zeros<dcolvec>(Bsigma.n_cols);
+            dmat P1 = zeros<dmat>(QAKA.n_rows, QAKA.n_cols);
+            dmat P2 = zeros<dmat>(BKA.n_rows, BKA.n_cols);
+            dmat P3 = zeros<dmat>(RBKB.n_rows, RBKB.n_cols);
+            dcolvec s1 = zeros<dcolvec>(Asigma.n_rows);
+            dcolvec s2 = zeros<dcolvec>(Bsigma.n_rows);
             
             for (uword m = 0; m < numModes; ++m, ++row) {
                 P1 += (*row) * QAKA.slice(m);
                 P2 += (*row) * BKA.slice(m);
                 P3 += (*row) * RBKB.slice(m);
-                s1 += (*row) * Asigma.col(m);
-                s2 += (*row) * Bsigma.col(m);
+                s1 += (*row) * Asigma.unsafe_col(m);
+                s2 += (*row) * Bsigma.unsafe_col(m);
             }
             K_k.slice(j) = P1 - symmatu(P2.t() * pinv(P3) * P2); // ensure symmetry
             sigma_k.col(j) = refWeightings.col(k) + s1 - P2.t() * pinv(P3) * s2;

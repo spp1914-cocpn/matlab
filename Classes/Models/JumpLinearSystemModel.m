@@ -8,7 +8,7 @@ classdef JumpLinearSystemModel < SystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -30,7 +30,7 @@ classdef JumpLinearSystemModel < SystemModel
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = private)
-        numModes;
+        numModes(1,1) double {mustBePositive, mustBeInteger} = 1;
     end
     
     properties (GetAccess = public, SetAccess = private)
@@ -57,11 +57,7 @@ classdef JumpLinearSystemModel < SystemModel
             % Returns:
             %   << this (JumpLinearSystemModel)
             %      A new JumpLinearSystemModel instance.
-            
-            assert(Checks.isPosScalar(numModes) && mod(numModes, 1) == 0, ...
-                'JumpLinearSystemModel:InvalidNumModes', ...
-                '** Number of modes must be a positive integer **');
-            
+                        
             this.numModes = numModes;
             this.setModeSystemModels(systemModels);
             % initially, the system is in mode 1 and no input is applied

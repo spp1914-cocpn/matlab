@@ -9,7 +9,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -31,8 +31,8 @@ classdef (Abstract) NonlinearPlant < SystemModel
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (GetAccess = public, SetAccess = immutable)
-        dimInput;
-        dimState;
+        dimInput(1,1) double {mustBePositive, mustBeInteger} = 1;
+        dimState(1,1) double {mustBePositive, mustBeInteger} = 1;
     end
     
     properties (Access = private)
@@ -40,6 +40,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
     end
     
     methods (Access = public)
+        %% NonlinearPlant
         function this = NonlinearPlant(dimState, dimInput)
             % Class constructor.
             %
@@ -54,20 +55,14 @@ classdef (Abstract) NonlinearPlant < SystemModel
             % Returns:
             %   << this (NonlinearPlant)
             %      A new NonlinearPlant instance.
-            
-            assert(Checks.isNonNegativeScalar(dimState) && mod(dimState, 1) == 0, ...
-                'NonlinearPlant:InvalidStateDim', ...
-                '** <dimState> must be a nonnegative integer **');
-            assert(Checks.isNonNegativeScalar(dimInput) && mod(dimInput, 1) == 0, ...
-                'NonlinearPlant:InvalidInputDim', ...
-                '** <dimInput> must be a nonnegative integer **');
-            
+           
             this.dimState = dimState;
             this.dimInput = dimInput;
             this.sysInput = [];
             % by default, no noise is set
         end
        
+        %% setSystemInput
         function setSystemInput(this, sysInput)
             % Set the system input vector.
             %
@@ -85,6 +80,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
             this.sysInput = sysInput;
         end
         
+        %% getSystemInput
         function input = getSystemInput(this)
             % Get the system input vector.
             %
@@ -96,6 +92,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
             input = this.sysInput;
         end
         
+        %% derivative
         function [stateJacobian, inputJacobian, noiseJacobian, ...
                   stateHessians, inputHessians, noiseHessians] = derivative(this, nominalState, nominalNoise)
             % Compute the first-order and second-order derivatives of the
@@ -148,6 +145,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
             end
         end
         
+        %% simulate
         function predictedState = simulate(this, state)
             % Simulate the temporal evolution for a given system state.
             %
@@ -172,6 +170,7 @@ classdef (Abstract) NonlinearPlant < SystemModel
             predictedState = this.nonlinearDynamics(state, this.sysInput, noiseSample);
         end
         
+        %% systemEquation
         function predictedStates = systemEquation(this, stateSamples, inputSamples, noiseSamples)
             % The system equation.
             %

@@ -5,7 +5,7 @@ function result = executeFiltersTests()
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -27,6 +27,7 @@ function result = executeFiltersTests()
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
     import matlab.unittest.TestSuite;
+    import matlab.unittest.TestRunner;
     
     tests = [
         TestSuite.fromClass(?DelayedMeasurementsFilterTest) ...
@@ -35,6 +36,6 @@ function result = executeFiltersTests()
         TestSuite.fromClass(?DelayedKFTest) ...
     ];
 
-    result = tests.run();
+    result = TestRunner.withTextOutput.runInParallel(tests);
 end
 

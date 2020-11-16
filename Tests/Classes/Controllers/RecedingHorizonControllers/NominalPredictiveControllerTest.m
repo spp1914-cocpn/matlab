@@ -5,7 +5,7 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -30,7 +30,7 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
         absTol = 1e-5;
     end
     
-    properties
+    properties (Access = protected)
         A;
         B;
         Q;
@@ -54,7 +54,8 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
         controllerUnderTest;
     end
     
-    methods (TestMethodSetup)
+    methods (Sealed, TestMethodSetup)
+        %% initProperties
         function initProperties(this)
             % use (noise-free) stirred tank example (Example 6.15, p. 500-501) from
             %
@@ -76,12 +77,14 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             this.expectedL = -[ 0.07125 -0.07029;
                                 0.01357 0.04548]; % F in the book
     
-            closedLoopSystem = feedback(ss(this.A, this.B, eye(this.dimX), [], []), ss(this.expectedL), +1); % discrete-time model
-                            
-            this.sequenceLength = 10;
-            
-            this.horizonLength = this.sequenceLength;
             this.initialPlantState = [0.1; 0];
+            
+            this.sequenceLength = 10;            
+            this.horizonLength = this.sequenceLength;
+            
+            this.initAdditionalProperties();            
+            closedLoopSystem = this.initClosedLoopSystem();          
+            
             [this.stateTrajectory, this.inputTrajectory] = this.computeTrajectories(closedLoopSystem);
             
             this.setpoint = [42; 42];
@@ -93,18 +96,40 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
             % Wiley-Interscience, New York, 1972.
             %
             
-            % obtain transfer matrix of closed loop system
-            % could also be computed directly: H(z) = I * inv(z*I - A -B*L) * B
-            closedLoopTransferMatrix = tf(closedLoopSystem);
-            this.feedforward = inv(dcgain(closedLoopTransferMatrix)) * this.setpoint; %#ok  
+            % obtain the feedforward using dc gain  of closed loop system
+            % could also be computed directly using transfer matrix of closed loop system: 
+            % evaluate H(z) = I * inv(z*I - A -B*L) * B for z=1 (this is the dc gain), then the
+            % feedforward is H(z=1)^-1 * setpoint
+            this.feedforward = inv(dcgain(closedLoopSystem)) * this.setpoint; %#ok  
             [this.stateTrajectoryNonzeroSetpoint, this.inputTrajectoryNonzeroSetpoint] ...
                 = this.computeTrajectoriesNonzeroSetpoint(closedLoopSystem);
 
-            this.controllerUnderTest = NominalPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength);
+            this.controllerUnderTest = this.initControllerUnderTest();
         end
     end
-    
-    methods (Access = private)
+            
+    methods (Access = protected)        
+        %% callBaseCtor
+        function controller = callBaseCtor(this, varargin)
+            controller = NominalPredictiveController(varargin{:});
+        end
+
+        
+        %% initClosedLoopSystem
+        function closedLoopSystem = initClosedLoopSystem(this)
+            closedLoopSystem = feedback(ss(this.A, this.B, eye(this.dimX), [], []), ss(this.expectedL), +1); % discrete-time model
+        end
+        
+        %% initControllerUnderTest
+        function controller = initControllerUnderTest(this)
+            controller= NominalPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength); 
+        end
+        
+        %% initAdditionalProperties
+        function initAdditionalProperties(this)
+            % by default, nothing to do
+        end
+        
         %% computeTrajectories
         function [stateTrajectory, inputTrajectory] = computeTrajectories(this, closedLoopSystem)
             [~, ~, stateTrajectory] = initial(closedLoopSystem, this.initialPlantState, this.horizonLength);
@@ -145,84 +170,117 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
                     + this.inputTrajectoryNonzeroSetpoint(:, j)' * this.R * this.inputTrajectoryNonzeroSetpoint(:, j);
             end
             costs = costs / this.horizonLength;
-        end
+        end        
+
     end
     
-    methods (Test)
-        
-        %% testNominalPredictiveControllerInvalidSysMatrix
-        function testNominalPredictiveControllerInvalidSysMatrix(this)
+    methods (Test)        
+        %% testCtorInvalidSysMatrix
+        function testCtorInvalidSysMatrix(this)
             expectedErrId = 'Validator:ValidateSystemMatrix:InvalidMatrix';
             
             invalidA = eye(this.dimX + 1, this.dimX); % not square
-            this.verifyError(@() NominalPredictiveController(invalidA, this.B, this.Q, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(invalidA, this.B, this.Q, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             invalidA = inf(this.dimX, this.dimX); % square but inf
-            this.verifyError(@() NominalPredictiveController(invalidA, this.B, this.Q, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(invalidA, this.B, this.Q, this.R, this.sequenceLength), ...
                 expectedErrId);
         end
         
-        %% testNominalPredictiveControllerInvalidInputMatrix
-        function testNominalPredictiveControllerInvalidInputMatrix(this)
+        %% testCtorInvalidInputMatrix
+        function testCtorInvalidInputMatrix(this)
             expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrix';
             
             invalidB = eye(this.dimX + 1, this.dimU); % invalid dims
-            this.verifyError(@() NominalPredictiveController(this.A, invalidB, this.Q, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, invalidB, this.Q, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             invalidB = eye(this.dimX, this.dimU); % correct dims, but nan
             invalidB(1, 1) = nan;
-            this.verifyError(@() NominalPredictiveController(this.A, invalidB, this.Q, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, invalidB, this.Q, this.R, this.sequenceLength), ...
                 expectedErrId);
         end
         
-        %% testNominalPredictiveControllerInvalidCostMatrices
-        function testNominalPredictiveControllerInvalidCostMatrices(this)
+        %% testCtorInvalidCostMatrices
+        function testCtorInvalidCostMatrices(this)
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrix';
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = -eye(this.dimX); % Q is not psd
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, invalidQ, this.R, this.sequenceLength), ...
                 expectedErrId);
             
             % now test for the R matrix
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidRMatrix';
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
                 expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
                 expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
-            this.verifyError(@() NominalPredictiveController(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
-                expectedErrId);
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, invalidR, this.sequenceLength), ...
+                expectedErrId);           
+            
         end
         
-        %% testNominalPredictiveController
-        function testNominalPredictiveController(this)
-            controller = NominalPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength);
+        %% testCtorInvalidSetpoint
+        function testCtorInvalidSetpoint(this)
+            expectedErrId = [class(this.controllerUnderTest) ':InvalidSetpoint'];
+            
+            % not a vector
+            invalidSetpoint = this;
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength, invalidSetpoint), expectedErrId);
+            
+            % wrong dimension
+            invalidSetpoint = [this.setpoint; 42];
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength, invalidSetpoint), expectedErrId);
+            
+            % correct dimension, but inf
+            invalidSetpoint = this.setpoint;
+            invalidSetpoint(2) = inf;
+            this.verifyError(@() this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength, invalidSetpoint), expectedErrId);
+        end
+        
+        %% testCtor
+        function testCtor(this)
+            controller = this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength);
             
             this.verifyEqual(controller.L, this.expectedL, 'AbsTol', NominalPredictiveControllerTest.absTol);
             this.verifyEmpty(controller.setpoint);
             this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback
+            
+            % now pass an empty setpoint
+            controller = this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength, []);
+            
+            this.verifyEqual(controller.L, this.expectedL, 'AbsTol', NominalPredictiveControllerTest.absTol);
+            this.verifyEmpty(controller.setpoint);
+            this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback
+            
+            % now a set point
+            controller = this.callBaseCtor(this.A, this.B, this.Q, this.R, this.sequenceLength, this.setpoint);
+            
+            this.verifyEqual(controller.L, this.expectedL, 'AbsTol', NominalPredictiveControllerTest.absTol);
+            this.verifyEqual(controller.setpoint, this.setpoint);
+            this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback            
         end
         
         %% testChangeSequenceLength
@@ -276,15 +334,72 @@ classdef NominalPredictiveControllerTest < matlab.unittest.TestCase
         
         %% testChangeCostMatrices
         function testChangeCostMatrices(this)
+            zeroState = Gaussian(zeros(this.dimX, 1), eye(this.dimX));
+            
             % change Q and R by
             newQ = this.Q + eye(this.dimX);
             newR = this.R + eye(this.dimU);
+                        
+            this.controllerUnderTest.changeCostMatrices(newQ, newR);
+            % this call triggers the recomputation of the gain
+            this.controllerUnderTest.computeControlSequence(zeroState);
             
             % compute the new expected gain by solving the DARE
-            [~, ~, G] = dare(this.A, this.B, newQ, newR);
-            expectedNewL = -G;
+            [~, K, ~] = idare(this.A, this.B, newQ, newR);
+            expectedNewL = -K;            
             
-            this.controllerUnderTest.changeCostMatrices(newQ, newR);            
+            this.verifyEqual(this.controllerUnderTest.L, expectedNewL, 'AbsTol', NominalPredictiveControllerTest.absTol);
+        end
+        
+        %% testChangeModelParametersInvalidSystemMatrix
+        function testChangeModelParametersInvalidSystemMatrix(this)
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
+            
+            invalidA = this.A(1,1); % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+                        
+            invalidA = this; % not a matrix
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+            
+            invalidA = this.A(:, 1); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+            
+            invalidA = this.A; % not finite
+            invalidA(end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidInputMatrix
+        function testChangeModelParametersInvalidInputMatrix(this)
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            
+            invalidB = this.B(1,1); % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+                        
+            invalidB = this; % not a matrix
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+                        
+            invalidB = this.B; % not finite
+            invalidB(end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+        end
+        
+        %% testChangeModelParameters
+        function testChangeModelParameters(this)
+            zeroState = Gaussian(zeros(this.dimX, 1), eye(this.dimX));
+            
+            % change Q and R by
+            newA = this.A - 0.1 * eye(this.dimX);
+            newB = this.B + 2 * eye(this.dimU);
+                        
+            this.controllerUnderTest.changeModelParameters(newA, newB);
+            % this call triggers the recomputation of the gain
+            this.controllerUnderTest.computeControlSequence(zeroState);
+            
+            % compute the new expected gain by solving the DARE
+            [~, K, ~] = idare(newA, newB, this.Q, this.R);
+            expectedNewL = -K;            
+            
             this.verifyEqual(this.controllerUnderTest.L, expectedNewL, 'AbsTol', NominalPredictiveControllerTest.absTol);
         end
         

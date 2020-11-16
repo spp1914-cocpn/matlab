@@ -5,7 +5,7 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -29,7 +29,6 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
     properties
         dimU;
         sequenceLength;
-        maxSequenceDelay;
         defaultU;
         dimSequence;
         
@@ -50,10 +49,10 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
     end
     
     methods (TestMethodSetup)
+        %% initProperties
         function initProperties(this)
             this.dimU = 4;
             this.sequenceLength = 5;
-            this.maxSequenceDelay = 7;
             this.timestamp = 10;
             
             this.dimSequence = this.dimU * this.sequenceLength;
@@ -67,14 +66,14 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             tmp = gallery('binomial', maxValue);
             this.controlSequence3 = tmp(1:this.dimU, 1:this.sequenceLength);
                         
-            this.actuatorUnderTest = BufferingActuator(this.sequenceLength, this.maxSequenceDelay, this.defaultU);
+            this.actuatorUnderTest = BufferingActuator(this.sequenceLength, this.defaultU);
             
             this.initControllerPackets();
-        end
-        
+        end        
     end
     
     methods (Access = private)
+        %% initControllerPackets
         function initControllerPackets(this)
             this.srcAddress = 1;
             this.dstAddress = 5;
@@ -107,192 +106,229 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             expectedErrId = 'Validator:ValidateSequenceLength:InvalidSequenceLength';
             
             invalidSequenceLength = 0; % must be positive
-            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.maxSequenceDelay, this.defaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.defaultU), expectedErrId);
             
             invalidSequenceLength = 4.5; % must not be fractional
-            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.maxSequenceDelay, this.defaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.defaultU), expectedErrId);
             
             invalidSequenceLength = inf; % must not be inf
-            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.maxSequenceDelay, this.defaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(invalidSequenceLength, this.defaultU), expectedErrId);
         end
-        
-        %% testBufferingActuatorInvalidMaxPacketDelay
-        function testBufferingActuatorInvalidMaxPacketDelay(this)
-            expectedErrId = 'BufferingActuator:InvalidMaxPacketDelay';
-            
-            invalidMaxPacketDelay = -1; % must not be negative
-            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidMaxPacketDelay, this.defaultU), ...
-                expectedErrId);
-            
-            invalidMaxPacketDelay = 4.5; % must not be fractional
-            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidMaxPacketDelay, this.defaultU), ...
-                expectedErrId);
-        end
-        
+
         %% testBufferingActuatorInvalidDefaultU
         function testBufferingActuatorInvalidDefaultU(this)
-            expectedErrId = 'BufferingActuator:InvalidDefaultU';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             
             invalidDefaultU = ones(this.dimU, this.dimU); % must be a vector
-            this.verifyError(@() BufferingActuator(this.sequenceLength, this.maxSequenceDelay, invalidDefaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
+            
+            expectedErrId = 'MATLAB:validators:mustBeFinite';
             
             invalidDefaultU = [4 nan]; % must not contain nan
-            this.verifyError(@() BufferingActuator(this.sequenceLength, this.maxSequenceDelay, invalidDefaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
             
             invalidDefaultU = [inf 4]; % must not contain inf
-            this.verifyError(@() BufferingActuator(this.sequenceLength, this.maxSequenceDelay, invalidDefaultU), ...
-                expectedErrId);
+            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
         end
         
         %% testBufferingActuator
         function testBufferingActuator(this)
             % inf is allowed for maxPacketDelay
-            actuator = BufferingActuator(this.sequenceLength, inf, this.defaultU);
+            actuator = BufferingActuator(this.sequenceLength, this.defaultU);
+            this.verifyEqual(actuator.controlSequenceLength, this.sequenceLength);
+            this.verifyEqual(actuator.maxPacketDelay, this.sequenceLength - 1);
             this.verifyEqual(actuator.dimU, this.dimU);
             this.verifyEqual(actuator.defaultInput, this.defaultU);
             this.verifyEmpty(actuator.bufferedPacket);
             
             % 0 is allowed for maxPacketDelay
-            actuator = BufferingActuator(this.sequenceLength, 0, this.defaultU);
+            actuator = BufferingActuator(this.sequenceLength, this.defaultU);
+            this.verifyEqual(actuator.controlSequenceLength, this.sequenceLength);
+            this.verifyEqual(actuator.maxPacketDelay, this.sequenceLength - 1);
             this.verifyEqual(actuator.dimU, this.dimU);
             this.verifyEqual(actuator.defaultInput, this.defaultU);
             this.verifyEmpty(actuator.bufferedPacket);
             
             % row vector is allowed for defaultU
-            actuator = BufferingActuator(this.sequenceLength, this.maxSequenceDelay, this.defaultU');
+            actuator = BufferingActuator(this.sequenceLength, this.defaultU');
+            this.verifyEqual(actuator.controlSequenceLength, this.sequenceLength);
+            this.verifyEqual(actuator.maxPacketDelay, this.sequenceLength - 1);
             this.verifyEqual(actuator.dimU, this.dimU);
             % check if internally stored as column vector
             this.verifyEqual(actuator.defaultInput, this.defaultU);
             this.verifyEmpty(actuator.bufferedPacket);
         end
         
-        %% testGetCurrentInputInvalidTimestep
-        function testGetCurrentInputInvalidTimestep(this)
-            expectedErrId = 'BufferingActuator:GetCurrentInput:InvalidTimeStep';
+        %% testStepInvalidTimestep
+        function testStepInvalidTimestep(this)
+            expectedErrId = 'BufferingActuator:Step:InvalidTimeStep';
             
             invalidTimestep = -1; % must not be negative
-            this.verifyError(@() this.actuatorUnderTest.getCurrentInput(invalidTimestep), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(invalidTimestep, []), expectedErrId);
             
             invalidTimestep = 2.5; % must be an integer
-            this.verifyError(@() this.actuatorUnderTest.getCurrentInput(invalidTimestep), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(invalidTimestep, []), expectedErrId);
             
             invalidTimestep = inf; % must be finite
-            this.verifyError(@() this.actuatorUnderTest.getCurrentInput(invalidTimestep), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(invalidTimestep, []), expectedErrId);
         end
         
-        %% testGetCurrentInput
-        function testGetCurrentInput(this)
-            timestep = this.timestamp;
-            % first, try to get an input if no sequence is buffered
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep);
-            
-            expectedMode = this.sequenceLength + 1; % default input is applied
-            this.verifyEqual(actualMode, expectedMode);
-            this.verifyEqual(actualInput, this.defaultU);
-            
-            this.actuatorUnderTest.processControllerPackets([this.dataPacket; this.dataPacket2; this.dataPacket3]);
-            % dataPacket2 is buffered as it has smallest delay
-             
-            % now get the input for the the current timestep
-            for j = 0:this.sequenceLength - 1
-                [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + j);
-                expectedMode = j + 1;
-                expectedInput = this.controlSequence2(:, expectedMode);
-                this.verifyEqual(actualMode, expectedMode);
-                this.verifyEqual(actualInput, expectedInput);
-            end
-            % now try to get the input for a future time steps, which is not
-            % part of the sequence any more
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + this.sequenceLength);
-            expectedMode = this.sequenceLength + 1; % default input is applied
-            this.verifyEqual(actualMode, expectedMode);
-            this.verifyEqual(actualInput, this.defaultU);
-            
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + this.sequenceLength + 1);
-            expectedMode = this.sequenceLength + 1; % default input is applied
-            this.verifyEqual(actualMode, expectedMode);
-            this.verifyEqual(actualInput, this.defaultU);
-        end
-        
-        %% testProcessControllerPacketsInvalidControllerPackets
-        function testProcessControllerPacketsInvalidControllerPackets(this)
-            expectedErrId = 'BufferingActuator:ProcessControllerPackets:InvalidControllerPackets';
+        %% testStepInvalidControllerPackets
+        function testStepInvalidControllerPackets(this)
+            expectedErrId = 'BufferingActuator:Step:InvalidControllerPackets';
+            timestep = this.timestamp;  
             
             % no cell arrays of DataPackets allowed
             invalidPackets = {this.dataPacket; this.dataPacket2; this.dataPacket3};
-            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(invalidPackets), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(timestep, invalidPackets), expectedErrId);
             
             % no arrays/matrices of other type allowed
             invalidPackets = eye(4);
-            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(invalidPackets), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(timestep, invalidPackets), expectedErrId);
         end
         
-        %% testProcessControllerPacketsInvalidControlSequences
-        function testProcessControllerPacketsInvalidControlSequences(this)
-            expectedErrId = 'BufferingActuator:ProcessControllerPackets:InvalidControlSequences';
+        %% testStepInvalidControlSequences
+        function testStepInvalidControlSequences(this)
+            expectedErrId = 'BufferingActuator:Step:InvalidControlSequences';
+            timestep = this.timestamp;  
             
             % send a packet with an invalid payload: not the correct input
             % dimension
             invalidSequence = ones(this.dimU + 1, this.sequenceLength);
             invalidPacket = DataPacket(invalidSequence, this.timestamp, this.id + 3);
             packets = [this.dataPacket; this.dataPacket2; invalidPacket];
-            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(packets), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(timestep, packets), expectedErrId);
             
             % send a packet with an invalid payload: not the correct sequence length
             invalidSequence = ones(this.dimU, this.sequenceLength + 1);
             invalidPacket = DataPacket(invalidSequence, this.timestamp, this.id + 4);
             packets = [this.dataPacket; invalidPacket; this.dataPacket3];
-            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(packets), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(timestep, packets), expectedErrId);
         end
         
-        %% testProcessControllerPackets
-        function testProcessControllerPackets(this)
-            % first, process two packets; those with delay 0 and 2
-            packets = [this.dataPacket2; this.dataPacket3];
-            ackPacket = this.actuatorUnderTest.processControllerPackets(packets);
-            actualBufferedPacket = this.actuatorUnderTest.bufferedPacket;
-            actualAckTimestamp = ackPacket.timeStamp;
+        %% testStepNoPackets
+        function testStepNoPackets(this)
+            expectedMode = this.sequenceLength + 1; % default input is applied
             
-            this.verifyNotEmpty(actualBufferedPacket);
-            this.verifyEqual(actualBufferedPacket, this.dataPacket2);
-            this.verifySameHandle(actualBufferedPacket, this.dataPacket2);
-            this.verifyEqual(actualAckTimestamp, this.timestamp);
-                       
-            % now process another packet: that with delay 1
-            ackPacket = this.actuatorUnderTest.processControllerPackets(this.dataPacket);
-            actualBufferedPacket = this.actuatorUnderTest.bufferedPacket;
-            
-            % still the same packet and no ack expected
-            this.verifyEmpty(ackPacket);
-            this.verifyEqual(actualBufferedPacket, this.dataPacket2);
-            this.verifySameHandle(actualBufferedPacket, this.dataPacket2);
-             
+            timestep = this.timestamp;            
+            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep, []);
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU);
+            this.verifyEmpty(acks);
         end
         
-        %% testProcessControllerPacketsDelayTooLarge
-        function testProcessControllerPacketsDelayTooLarge(this)
+        %% testStepMultipleTimesteps
+        function testStepMultipleTimesteps(this)
+            timestep = this.timestamp;
+            % dataPacket2 has the smallest delay
+            packets = [this.dataPacket; this.dataPacket2; this.dataPacket3];            
+            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep, packets);
+            
+            this.verifyEqual(actualMode, 1);
+            this.verifyEqual(actualInput, this.controlSequence2(:, 1));
+            this.verifySize(acks, [3 1]);
+            
+            % check the payload of the 3 acks
+            ackPayload = acks(1).payload;
+            this.verifyNotEmpty(ackPayload);
+            this.verifyTrue(iscell(ackPayload));
+            this.verifySize(ackPayload, [1 2]);
+            this.verifyEqual(ackPayload{1}, this.dataPacket.timeStamp); % the timestamp of the ACK'ed packet
+            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
+            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
+            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
+            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
+            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket.timeStamp);
+            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
+            this.verifyEqual(ackPayload{2}.tau, this.dataPacket.packetDelay); 
+                        
+            ackPayload = acks(2).payload;
+            this.verifyNotEmpty(ackPayload);
+            this.verifyTrue(iscell(ackPayload));
+            this.verifySize(ackPayload, [1 2]);
+            this.verifyEqual(ackPayload{1}, this.dataPacket2.timeStamp); % the timestamp of the ACK'ed packet
+            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
+            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
+            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
+            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
+            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket2.timeStamp);
+            this.verifyEqual(ackPayload{2}.theta, 1); % first mode 
+            this.verifyEqual(ackPayload{2}.tau, 0); % delay is zero
+            
+            ackPayload = acks(3).payload;
+            this.verifyNotEmpty(ackPayload);
+            this.verifyTrue(iscell(ackPayload));
+            this.verifySize(ackPayload, [1 2]);
+            this.verifyEqual(ackPayload{1}, this.dataPacket3.timeStamp); % the timestamp of the ACK'ed packet
+            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
+            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
+            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
+            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
+            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket3.timeStamp);
+            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
+            this.verifyEqual(ackPayload{2}.tau, this.dataPacket3.packetDelay); 
+            
+            % now get the input for the next timesteps
+            for j = 1:this.sequenceLength - 1
+                [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep + j, []);
+                expectedMode = j + 1;
+                expectedInput = this.controlSequence2(:, expectedMode);
+                this.verifyEqual(actualMode, expectedMode);
+                this.verifyEqual(actualInput, expectedInput);
+                this.verifyEmpty(acks);
+            end
+            
+            % now try to get the input for a future time steps, which is not
+            % part of the sequence any more
+            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep + this.sequenceLength, []);
+            expectedMode = this.sequenceLength + 1; % default input is applied
+            this.verifyEqual(actualMode, expectedMode);
+            this.verifyEqual(actualInput, this.defaultU);
+            this.verifyEmpty(acks);
+        end       
+        
+        %% testStepDelayTooLarge
+        function testStepDelayTooLarge(this)
+            timestep = this.timestamp;
             % receive a packet whose delay is way too large to be accepted,
             % although the buffer is empty
-            delayedPacket = DataPacket(this.controlSequence, this.timestamp - this.maxSequenceDelay -1, this.id);
+            delayedPacket = DataPacket(this.controlSequence, this.timestamp - this.sequenceLength, this.id);
             delayedPacket.packetDelay = this.timestamp - delayedPacket.timeStamp;
-            ackPacket = this.actuatorUnderTest.processControllerPackets(delayedPacket);
+            [actualInput, actualMode, ackPacket] = this.actuatorUnderTest.step(timestep, delayedPacket);
             
-            % still the same packet and no ack expected
-            this.verifyEmpty(ackPacket);
+            % still the same packet           
             this.verifyEmpty(this.actuatorUnderTest.bufferedPacket);
+            this.verifyEqual(actualInput, this.defaultU);
+            this.verifyEqual(actualMode, this.sequenceLength + 1); % max mode
+            
+            this.verifyNotEmpty(ackPacket);
+            ackPayload = ackPacket.payload;
+            % check the payload of the ack
+            this.verifyNotEmpty(ackPayload);
+            this.verifyTrue(iscell(ackPayload));
+            this.verifySize(ackPayload, [1 2]);
+            this.verifyEqual(ackPayload{1}, delayedPacket.timeStamp); % the timestamp of the ACK'ed packet
+            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
+            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
+            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
+            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
+            this.verifyEqual(ackPayload{2}.timeStep, delayedPacket.timeStamp);
+            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
+            this.verifyEqual(ackPayload{2}.tau, delayedPacket.packetDelay); 
         end
         
         %% testReset
         function testReset(this)
             % first, process two packets; those with delay 0 and 2
             % thus, a packet is buffered
+            timestep = this.timestamp;
             packets = [this.dataPacket2; this.dataPacket3];
-            this.actuatorUnderTest.processControllerPackets(packets);
+            this.actuatorUnderTest.step(timestep, packets);
             
             this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket);
             
@@ -321,16 +357,17 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
         
         %% testChangeControlSequenceLengthInvalidControlSequence
         function testChangeControlSequenceLengthInvalidControlSequence(this)
-            expectedErrId = 'BufferingActuator:ProcessControllerPackets:InvalidControlSequences';
+            expectedErrId = 'BufferingActuator:Step:InvalidControlSequences';
             
             % change the sequence length
             this.actuatorUnderTest.changeControlSequenceLength(this.sequenceLength + 1);
             
             % send a packet with an invalid payload: not the correct sequence length
+            timestep = this.timestamp;
             invalidSequence = ones(this.dimU, this.sequenceLength);
-            invalidPacket = DataPacket(invalidSequence, this.timestamp, this.id + 4);
+            invalidPacket = DataPacket(invalidSequence, this.timestamp, this.id + 4);            
             packets = [this.dataPacket; invalidPacket; this.dataPacket3];
-            this.verifyError(@() this.actuatorUnderTest.processControllerPackets(packets), expectedErrId);
+            this.verifyError(@() this.actuatorUnderTest.step(timestep, packets), expectedErrId);
         end
         
         %% testChangeControlSequenceShorterSequence
@@ -341,21 +378,20 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             % first, process two packets; those with delay 0 and 2
             % thus, a packet is buffered
             packets = [this.dataPacket2; this.dataPacket3];
-            this.actuatorUnderTest.processControllerPackets(packets);            
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep, packets);            
         
             this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
             this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
             
             % the first element of the buffered sequence should still be
-            % available
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep);
+            % available            
             expectedMode = newSeqLength;
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.controlSequence2(:, newSeqLength));
             
             % now try to get the input for a future time step, which is not
             % part of the buffered, truncated sequence any more
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + 1);
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + 1, []);             
             expectedMode = newSeqLength + 1; % default input is applied
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU);
@@ -366,15 +402,17 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             newSeqLength = this.sequenceLength + 1;
             timestep = this.timestamp;
             
-            this.actuatorUnderTest.processControllerPackets([this.dataPacket; this.dataPacket2; this.dataPacket3]);
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep, [this.dataPacket; this.dataPacket2; this.dataPacket3]);
             % dataPacket2 is buffered as it has smallest delay
             
             this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
             this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
+            this.verifyEqual(actualInput, this.controlSequence2(:, 1));
+            this.verifyEqual(actualMode, 1);
             
             % now get the input for the the current timestep
-            for j = 0:this.sequenceLength-1
-                [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + j);
+            for j = 1:this.sequenceLength-1
+                [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + j, []);
                 expectedMode = j + 1;
                 expectedInput = this.controlSequence2(:, expectedMode);
                 this.verifyEqual(actualMode, expectedMode);
@@ -382,7 +420,7 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             end
             
             % try to get the input for a future time step, which is now part of the buffered, extended sequence
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength - 1);
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + newSeqLength - 1, []);
             expectedMode = newSeqLength; 
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU); % default input is applied as this is appended to the sequence
@@ -396,14 +434,16 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             % first, process two packets; those with delay 0 and 2
             % thus, a packet is buffered
             packets = [this.dataPacket2; this.dataPacket3];
-            this.actuatorUnderTest.processControllerPackets(packets);            
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep, packets);            
         
             this.actuatorUnderTest.changeControlSequenceLength(newSeqLength);
             this.assertNotEmpty(this.actuatorUnderTest.bufferedPacket); % a packet should still be buffered
+            this.verifyEqual(actualInput, this.controlSequence2(:, 1));
+            this.verifyEqual(actualMode, 1);
             
             % now get the inputs
-            for j = 0:newSeqLength - 1
-                [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + j);
+            for j = 1:newSeqLength - 1
+                [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + j, []);
                 expectedMode = j + 1;
                 expectedInput = this.controlSequence2(:, expectedMode);
                 this.verifyEqual(actualMode, expectedMode);
@@ -411,12 +451,12 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             end
             % now try to get the input for a future time steps, which is not
             % part of the sequence any more
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength);
-            expectedMode = this.sequenceLength + 1; % default input is applied
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + newSeqLength, []);
+            expectedMode = newSeqLength + 1; % default input is applied
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU);
             
-            [actualInput, actualMode] = this.actuatorUnderTest.getCurrentInput(timestep + newSeqLength + 1);
+            [actualInput, actualMode] = this.actuatorUnderTest.step(timestep + newSeqLength + 1, []);
             expectedMode = newSeqLength + 1; % default input is applied
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU);

@@ -6,7 +6,7 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -124,44 +124,43 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             this.verifyEqual(actual, expected, 'AbsTol', BaseIMMFTest.absTol);
         end
         
-        %% verifyPredictionGaussianMixture
-        function verifyPredictionGaussianMixture(this)
-            expectedWeights = this.predictedMixtureWeights;
-            expectedMean = this.predictedMixtureWeights(1) * this.predictedMixtureMeans(:, 1) ...
-                + this.predictedMixtureWeights(2) * this.predictedMixtureMeans(:, 2);
-            expectedCov = this.predictedMixtureWeights(1) * this.predictedMixtureCovs(:, :, 1) ...
-                + this.predictedMixtureWeights(2) * this.predictedMixtureCovs(:, :, 2);
-            expectedCov = expectedCov + this.predictedMixtureWeights(1) ...
-                * (expectedMean - this.predictedMixtureMeans(:, 1)) * transpose(expectedMean - this.predictedMixtureMeans(:, 1));
-            expectedCov = expectedCov ...
-                + (this.predictedMixtureWeights(2) * ...
-                + (expectedMean - this.predictedMixtureMeans(:, 2)) * transpose(expectedMean - this.predictedMixtureMeans(:, 2)));
-            
+        %% verifyGaussianMixture
+        function verifyGaussianMixture(this, expectedMeans, expectedCovs, expectedWeights)
             % first check the individual filter states
             actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
             for j=1:this.numModes
                 this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
                 % if suffices to compare mean and cov
                 [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
-                this.verifyEqualWithAbsTol(actualMean, this.predictedMixtureMeans(:, j));
-                this.verifyEqualWithAbsTol(actualCov, this.predictedMixtureCovs(:, :, j));
+                this.verifyEqualWithAbsTol(actualMean, expectedMeans(:, j));
+                this.verifyEqualWithAbsTol(actualCov, expectedCovs(:, :, j));
             end
             
-             % now the resulting Gaussian mixture
-            predictedState = this.filterUnderTest.getState();
-            this.verifyClass(predictedState, ?GaussianMixture);
+            % compute mean and covariance of expected mixture
+            [expectedMean, expectedCov] ...
+                = Utils.getGMMeanAndCov(expectedMeans, expectedCovs, expectedWeights);
             
-            [~, ~, actualWeights] = predictedState.getComponents();
+            % now the resulting Gaussian mixture
+            actualState = this.filterUnderTest.getState();
+            this.verifyClass(actualState, ?GaussianMixture);
+            
+            [~, ~, actualWeights] = actualState.getComponents();
             [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
-                   
-            % first, a sanity check: resuting cov must be larger
-            % than initial cov -> check the eigenvalues of the difference matrix
-            this.verifyGreaterThan(eig(actualCov - this.stateGaussianMixtureCov), 0);
             
-            this.verifyEqual(actualWeights, expectedWeights);
+            this.verifyEqualWithAbsTol(actualWeights, expectedWeights);
             this.verifyEqualWithAbsTol(actualMean, expectedMean);
             this.verifyEqual(actualCov, actualCov'); % shall be symmetric
             this.verifyEqualWithAbsTol(actualCov, expectedCov);
+        end
+        
+        %% verifyPredictionGaussianMixture
+        function verifyPredictionGaussianMixture(this)
+            % a sanity check: resuting cov must be larger
+            % than initial cov -> check the eigenvalues of the difference matrix
+            [~, actualCov] = this.filterUnderTest.getStateMeanAndCov();
+            this.verifyGreaterThan(eig(actualCov - this.stateGaussianMixtureCov), 0);
+
+            this.verifyGaussianMixture(this.predictedMixtureMeans, this.predictedMixtureCovs, this.predictedMixtureWeights);
         end
         
         %% verifyPredictionGaussian
@@ -173,34 +172,15 @@ classdef (Abstract) BaseIMMFTest < matlab.unittest.TestCase
             expectedMean = this.A1 * this.stateGaussianMean + this.B * this.input;
             expectedCov = this.A1 * this.stateGaussianCov * this.A1' + this.W;
             
-            % first check the individual filter states; should be all the
-            % same
-            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
-            for j=1:this.numModes
-                this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
-                % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
-                this.verifyEqualWithAbsTol(actualMean, expectedMean);
-                this.verifyEqualWithAbsTol(actualCov, expectedCov);
-            end
-            
-            % now the resulting Gaussian mixture
-            predictedState = this.filterUnderTest.getState();
-            this.verifyClass(predictedState, ?GaussianMixture);
-            
-            [~, ~, actualWeights] = predictedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
+            [~, actualCov] = this.filterUnderTest.getStateMeanAndCov();
             
             % sanity check: resuting cov must be larger
             % than initial cov -> check the eigenvalues of the difference matrix
             this.verifyGreaterThan(eig(actualCov - this.stateGaussianCov), 0);
-            
             % resulting Gaussian mixture consists of two equally weighted
             % Gaussians with same mean and cov
-            this.verifyEqual(actualWeights, expectedWeights);
-            this.verifyEqualWithAbsTol(actualMean, expectedMean);
-            this.verifyEqual(actualCov, actualCov'); % shall be symmetric
-            this.verifyEqualWithAbsTol(actualCov, expectedCov);
+            this.verifyGaussianMixture(repmat(expectedMean, 1, this.numModes), repmat(expectedCov, 1, 1, this.numModes), expectedWeights);            
+            
         end
     end
     

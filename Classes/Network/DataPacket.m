@@ -8,7 +8,7 @@ classdef DataPacket < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -32,46 +32,23 @@ classdef DataPacket < handle
     properties (Access = public)
         % time delay of the data packet, measured in time steps
         % (positive integer or NaN)
-        packetDelay = -1;
-        sourceAddress;
-        destinationAddress;
-        isAck@logical = false;
+        packetDelay(1,1) double {mustBeNonnegative, mustBeInteger} = 1;
+        sourceAddress(1,1) double {mustBePositive, mustBeInteger} = 1;
+        destinationAddress(1,1) double {mustBePositive, mustBeInteger} = 1;
+        isAck(1,1) logical = false;
     end % properties
     
     properties (GetAccess = public, SetAccess = immutable)
         %% input parameters
         % time stamp that indicates time (step) when data packet was generated
         % (positive integer)
-        timeStamp = 1;
+        timeStamp(1,1) double {mustBePositive, mustBeInteger} = 1;
         % value of data packet. Can be any data (application dependend data 
         % type) 
         payload = [];
-        id; % packet id, positive integer
+        id(1,1) double {mustBePositive, mustBeInteger} = 1; % packet id, positive integer
     end
-    
-    methods
-        function set.packetDelay(this, delay)
-            assert(Checks.isNonNegativeScalar(delay) && mod(delay, 1) == 0, ...
-                'DataPacket:InvalidPacketDelay', ...
-                '** Packet delay must be a nonnegative integer **');
-            this.packetDelay = delay;
-        end
         
-        function set.sourceAddress(this, address)
-            assert(Checks.isPosScalar(address) && mod(address, 1) == 0, ...
-                'DataPacket:InvalidSourceAddress', ...
-                '** Source address must be a positive integer **');
-            this.sourceAddress = address;
-        end
-        
-        function set.destinationAddress(this, address)
-            assert(Checks.isPosScalar(address) && mod(address, 1) == 0, ...
-                'DataPacket:InvalidDestinationAddress', ...
-                '** Destination address must be a positive integer **');
-            this.destinationAddress = address;
-        end
-    end
-   
     methods (Access = public)
         %% DataPacket
         function this = DataPacket(payload, timeStamp, id)
@@ -97,14 +74,7 @@ classdef DataPacket < handle
             if nargin == 2
                 % generate id by calling getNextId()
                 id = DataPacket.getNextId();
-            elseif nargin == 3
-                assert(Checks.isPosScalar(id) && mod(id, 1) == 0, ...
-                    'DataPacket:InvalidId', ...
-                    '** Id of packet must be a positive integer **');   
             end
-            assert(Checks.isPosScalar(timeStamp) && mod(timeStamp, 1) == 0, ...
-                'DataPacket:InvalidTimeStamp', ...
-                '** Time stamp of packet must be a positive integer **');
             this.payload = payload;
             this.timeStamp = timeStamp;
             this.id = id;
@@ -112,9 +82,11 @@ classdef DataPacket < handle
         
         %% isNewerThan
         function result = isNewerThan(this, otherPacket)
-            assert(Checks.isClass(otherPacket, 'DataPacket'), ...
-                'DataPacket:InvalidType', ...
-                '** <otherPacket> must be of type DataPacket **');
+            arguments
+                this
+                otherPacket(1,1) DataPacket
+            end
+
             result = this.timeStamp > otherPacket.timeStamp;
         end
         

@@ -27,7 +27,7 @@ classdef FiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -83,10 +83,10 @@ classdef FiniteHorizonController < SequenceBasedController
     end
     
     properties (SetAccess = immutable, GetAccess = public)
-        horizonLength;
-        constraintsPresent@logical = false;        
+        horizonLength double {Validator.validateHorizonLength(horizonLength)} = 1;
+        constraintsPresent(1,1) logical = false;        
         
-        useMexImplementation@logical=true; 
+        useMexImplementation(1,1) logical = true; 
         % by default, we use the C++ (mex) implementation for computation of controller gains
         % this is faster, but can produce slightly different results
     end
@@ -100,7 +100,7 @@ classdef FiniteHorizonController < SequenceBasedController
     
     methods (Access = public)
         %% FiniteHorizonController
-        function this = FiniteHorizonController(A, B, Q, R, delayProb, sequenceLength, horizonLength, useMexImplementation, ...
+        function this = FiniteHorizonController(A, B, Q, R, modeTransitionMatrix, sequenceLength, horizonLength, useMexImplementation, ...
                 stateConstraintWeightings, inputConstraintWeightings, constraintBounds)
             % Class constructor.
             %
@@ -117,9 +117,8 @@ classdef FiniteHorizonController < SequenceBasedController
             %   >> R (Positive definite matrix)
             %      The input weighting matrix in the controller's underlying cost function.
             %
-            %   >> delayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
@@ -161,14 +160,10 @@ classdef FiniteHorizonController < SequenceBasedController
             dimU = size(B, 2);
             this = this@SequenceBasedController(dimX, dimU, sequenceLength, true);
             
-            Validator.validateHorizonLength(horizonLength);
             this.horizonLength = horizonLength;
             
             if nargin > 7
-                assert(Checks.isFlag(useMexImplementation), ...
-                    'FiniteHorizonController:InvalidUseMexFlag', ...
-                    '** <useMexImplementation> must be a flag **');
-                this.useMexImplementation = useMexImplementation;
+               this.useMexImplementation = useMexImplementation;
             end
                         
             if nargin == 11
@@ -183,10 +178,9 @@ classdef FiniteHorizonController < SequenceBasedController
             this.Q = Q;
             this.R = R;
             
-            % delayProb
-            Validator.validateDiscreteProbabilityDistribution(delayProb);
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
-                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1)); 
+            % mode transition matrix
+            Validator.validateTransitionMatrix(modeTransitionMatrix, sequenceLength + 1);
+            this.transitionMatrix = modeTransitionMatrix;
                         
             % augmented initial system state
             [this.dimState, this.F, this.G, augA, augB, augQ, augR] ...

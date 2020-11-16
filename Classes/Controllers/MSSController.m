@@ -6,7 +6,7 @@ classdef MSSController < SequenceBasedController
     % Literature: 
     %   Florian Rosenthal and Uwe D. Hanebeck,
     %   Stability Analysis of Polytopic Markov Jump Linear Systems 
-    %   with Applications to Sequence-Based Control over Networks (to appear),
+    %   with Applications to Sequence-Based Control over Networks,
     %   Proceedings of the 21st IFAC World Congress (IFAC 2020),
     %   Berlin, Germany, July 2020.
     
@@ -36,7 +36,7 @@ classdef MSSController < SequenceBasedController
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = private)
-        controllerDelta;
+        controllerDelta(1,1) double {mustBeNonnegative, mustBeLessThan(controllerDelta, 1)};
         % matrices corresponding to the dynamics of the augmented system
         % (polytopic MJLS)
         augA;
@@ -53,11 +53,14 @@ classdef MSSController < SequenceBasedController
         % the input related part of the state, evolves according to 
         % eta_k+1=F*eta_k + G*U_k        
         etaState; % holds eta_{k-1}
+    end
+       
+    properties (SetAccess = private, GetAccess = ?MSSControllerTest)
         vertices; % vertices of the transition matrix polytope (called P in the paper)
     end
     
-    properties (SetAccess = immutable, GetAccess = public)        
-        useLmiLab@logical=false; 
+    properties (SetAccess = immutable, GetAccess = public)
+        useLmiLab(1,1) logical=false; 
         % by default, we do not use Matlab's internal solver LMI Lab from the
         % Robust Control Toolbox, but instead solve the feasibility problem
         % using yalmip and SDPT3
@@ -124,11 +127,7 @@ classdef MSSController < SequenceBasedController
             assert(uncontrollableEigs == 0, ...
                 'MSSController:InvalidPlant', ...
                 '** Plant (A, B) has %d uncontrollable eigenvalue(s) **', uncontrollableEigs);
-            
-            assert(Checks.isNonNegativeScalar(delta) && delta < 1, ...
-                'MSSController:InvalidDelta', ...
-                    '** <delta> must be inside the interval [0,1) **');                
-                
+                            
             this = this@SequenceBasedController(dimX, dimU, sequenceLength, true);
             [this.F, this.G, ~, ~, this.augA, this.augB] = Utility.createAugmentedPlantModel(sequenceLength, A, B);
             this.dimEta = size(this.augA, 2) - dimX;
@@ -137,9 +136,6 @@ classdef MSSController < SequenceBasedController
             this.controllerDelta = delta;
 
             if nargin > 4
-                 assert(Checks.isFlag(useLmiLab), ...
-                    'MSSController:InvalidUseLmiLabFlag', ...
-                    '** <useLmiLab> must be a flag **');
                 this.useLmiLab = useLmiLab;
             elseif exist('sdpt3', 'file') ~= 2
                 % SDPT3 seems not to be on the path, fall back to internal
@@ -183,7 +179,7 @@ classdef MSSController < SequenceBasedController
             %      Literature:
             %       Florian Rosenthal and Uwe D. Hanebeck,
             %       Stability Analysis of Polytopic Markov Jump Linear Systems 
-            %       with Applications to Sequence-Based Control over Networks (to appear),
+            %       with Applications to Sequence-Based Control over Networks,
             %       Proceedings of the 21st IFAC World Congress (IFAC 2020),
             %       Berlin, Germany, July 2020.
             %
@@ -206,7 +202,7 @@ classdef MSSController < SequenceBasedController
             %     If, however, false is returned and <maxRho> < 1, then the
             %     closed loop dynamics MAY OR MAY NOT be mean square
             %     stable, as the LMI condition provided by Theorem 10 in
-            %     the aforementioned paper is only sufficient but
+            %     the aforementioned paper is only sufficient but not
             %     necessary. In such a case, <isMSS>=false should be considered a
             %     mere educated guess.
             %     True is returned if <maxRho> < 1 and the sufficient LMI
@@ -332,44 +328,43 @@ classdef MSSController < SequenceBasedController
                 case {1, 4} %1: deemed infeasible, 4: numerical problems
                     disp('** Numerical problems or infeasibility reported by solver (SDPT3) **');
                     disp('** Checking feasibility of found solution manually **');
-                     res.feasible = true;
-                % matrix E must be nonsingular, i.e., full rank
-                if rank(value(E)) ~= dimState
-                    % matrix E seems to be singular (up to tolerance)
-                    res.feasible = false;
-                else
-                    % check is the symmetric matrices are all positive
-                    % definite (up to tolerance)
-                    for i = 1:numModes                    
-                        for r=1:numVertices
-                            eigVals = eig(value(Mir{r,i}));
-                            isPosDef = all(eigVals > length(eigVals) * eps(max(eigVals)));
-                            if ~isPosDef
-                                res.feasible = false;
-                                % infeasibility detected, so exit loop
-                                break;
+                    res.feasible = true;
+                    % matrix E must be nonsingular, i.e., full rank
+                    if rank(value(E)) ~= dimState
+                        % matrix E seems to be singular (up to tolerance)
+                        res.feasible = false;
+                    else
+                        % check if the symmetric matrices are all positive definite (up to tolerance)
+                        for i = 1:numModes
+                            for r=1:numVertices
+                                eigVals = eig(value(Mir{r,i}));
+                                isPosDef = all(eigVals > length(eigVals) * eps(max(eigVals)));
+                                if ~isPosDef
+                                    res.feasible = false;
+                                    % infeasibility detected, so exit loop
+                                    break;
+                                end
                             end
-                        end
-                        if res.feasible
-                            eigVals = eig(value(Mir{r,i}));
-                            isPosDef = all(eigVals > length(eigVals) * eps(max(eigVals)));
-                            if ~isPosDef
-                                res.feasible = false;
+                            if res.feasible
+                                eigVals = eig(value(Si{i}));
+                                isPosDef = all(eigVals > length(eigVals) * eps(max(eigVals)));
+                                if ~isPosDef
+                                    res.feasible = false;
+                                    break
+                                end
+                            else
+                                % infeasibility detected, so stop checking
                                 break
                             end
-                        else
-                            % infeasibility detected, so stop checking                       
-                            break
                         end
                     end
-                end
-                % solution should be feasible
-                disp('** Done: Checking feasibility of found solution manually **');
-                if res.feasible
-                    disp('** Found solution seems to be feasible, consider calling isMeanSquareStable() **');
-                else
-                    disp('** Found solution seems to be infeasible, consider calling isMeanSquareStable() **');                    
-                end
+                    % solution should be feasible
+                    disp('** Done: Checking feasibility of found solution manually **');
+                    if res.feasible
+                        disp('** Found solution seems to be feasible, consider calling isMeanSquareStable() **');
+                    else
+                        disp('** Found solution seems to be infeasible, consider calling isMeanSquareStable() **');
+                    end
                 case -3
                     error('MSSController:SynthesizeController:SolverNotFound', ...
                         '** Chosen solver (SDPT3) not found **');
@@ -462,15 +457,19 @@ classdef MSSController < SequenceBasedController
                     disp('** Found solution seems to be infeasible, consider calling isMeanSquareStable() **')
                 end
             end
-            if res.feasible
-                disp('** Obtaining stabilizing gain (L) from feasible solution **');
-                res.gain = dec2mat(lmisys, xfeas, K) / dec2mat(lmisys, xfeas, E);
-                disp('** Done: Obtaining stabilizing gain (L) from feasible solution **');
+            
+            msg = {'** Obtaining stabilizing gain (L) from %s solution **';
+                   '** Done: Obtaining stabilizing gain (L) from %s solution **'};     
+            if res.feasible == true
+                msg{1} = sprintf(msg{1}, 'feasible');
+                msg{2} = sprintf(msg{2}, 'feasible');
             else
-                disp('** Obtaining gain (L) from (likely infeasible) found solution **');
-                res.gain = dec2mat(lmisys, xfeas, K) / dec2mat(lmisys, xfeas, E);
-                disp('** Done: Obtaining gain (L) from (likely infeasible) found solution **');
+                msg{1} = sprintf(msg{1}, '(likely infeasible) found');
+                msg{2} = sprintf(msg{2}, '(likely infeasible) found');
             end
+            disp(msg{1});
+            res.gain = dec2mat(lmisys, xfeas, K) / dec2mat(lmisys, xfeas, E);           
+            disp(msg{2});
         end
         
         %% evaluateSufficientStabilityCondition
@@ -506,11 +505,11 @@ classdef MSSController < SequenceBasedController
                     constraints = [constraints, Mir{r,i} >= 0]; % Schur complement implies Sbar > 0, and thus also Si > 0
                 end
             end
-            options = sdpsettings('solver', 'mosek');
+            options = sdpsettings('solver', 'sdpt3');
             options.verbose = 0; % mute the solver
             disp('** Done: Setting up feasibility problem to evaluate sufficient MSS condition **');
             disp('** Calling external solver (SDPT3) to evaluate sufficient MSS condition **');            
-            diagnostics = optimize(constraints, [], options);
+            diagnostics = optimize(unblkdiag(constraints), [], options);
             disp('** Done: Calling external solver (SDPT3) to evaluate sufficient MSS condition **');
             switch diagnostics.problem
                 case 0
@@ -522,7 +521,7 @@ classdef MSSController < SequenceBasedController
                     % numerical problems reported, so check the eigenvalues manually
                     feasible = true;
                     % matrices Ei must be nonsingular, i.e., have full rank
-                    if any(cellfun(@(E) rank(value(E)), Ei)) ~= dimState
+                    if any(cellfun(@(E) rank(value(E)), Ei) ~= dimState)
                         % at least one Ei seems to be singular (up to tolerance)
                         feasible = false;
                         disp('** Done: Checking feasibility of found solution manually **');  

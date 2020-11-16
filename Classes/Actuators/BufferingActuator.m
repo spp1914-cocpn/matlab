@@ -1,4 +1,4 @@
-classdef BufferingActuator < handle
+classdef BufferingActuator < Actuator
     % This class simulates an actuator in a packet-based 
     % NCS configuration. The input of the actuator are data packets that
     % consist of time-stamped sequences of control inputs. Output is a 
@@ -17,18 +17,18 @@ classdef BufferingActuator < handle
     %   Proceedings of the 15th International Conference on Information Fusion (Fusion 2012),
     %   Singapore, July 2012.
     %
-    %   Jörg Fischer, Achim Hekler, Maxim Dolgov and Uwe D. Hanebeck,
-    %   Optimal Sequence-Based LQG Control over TCP-like Networks Subject
-    %   to Random Transmission Delays and Packet Losses,
-    %   Proceedings of the 2013 American Control Conference (ACC 2013), 
-    %   Washington D. C., USA, June 2013.
+    %  	Florian Rosenthal, Benjamin Noack, and Uwe D. Hanebeck,
+    %   State Estimation in Networked Control Systems with Delayed and Lossy Acknowledgments,
+    %   Multisensor Fusion and Integration in the Wake of Big Data, Deep Learning and Cyber Physical System,
+    %   Lecture Notes in Electrical Engineering, Volume 501,
+    %   Springer, Cham, 2018.
     %
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -49,151 +49,139 @@ classdef BufferingActuator < handle
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
-    properties (SetAccess = immutable, GetAccess = public)
-        % maximum allowed packet delay (packets with control input sequences)
-        maxPacketDelay = -1;
-        % dimension of control input; (positive integer)
-        dimU = -1;
-        % output value in case the buffer runs empty; (column vector)
-        defaultInput= 0;
-    end
     
     properties (SetAccess = private, GetAccess = public)
         % length of applicable control input sequences
         % one sequence per received packet; (positive integer)
-        controlSequenceLength = -1;
-        % buffer to store packet with active (i.e., most recent) control input sequence; (DataPacket)
-        bufferedPacket = [];
+        controlSequenceLength(1,1) double = 1;
     end
-
+    
+    properties (Access = private)
+        % the history of previous true modes, used by ACKs
+        modeHistory = [];
+    end
+    
     methods (Access = public)
         %% BufferingActuator
-        function this = BufferingActuator(controlSequenceLength, maxPacketDelay, defaultU)
+        function this = BufferingActuator(controlSequenceLength,  defaultU)
             % Class constructor.
             %
             % Parameters:
             %   >> controlSequenceLength (Positive integer)
             %      The length of a valid control input sequence.
             %
-            %   >> maxPacketDelay (Nonnegative integer of Inf)
-            %      The maximum allowed delay experienced by received control sequences, older ones will be discarded.
-            %      May be Inf (nothing will be discarded) or 0 (any delayed sequence will be discarded).
-            %
             %   >> defaultU (Vector or Scalar)
             %      The default input that is to be applied in case the
             %      internal buffer runs empty.
-            %          
+            %
             % Returns:
             %   << this (BufferingActuator)
             %      A new BufferingActuator instance.
             %
             Validator.validateSequenceLength(controlSequenceLength);
-            this.controlSequenceLength = controlSequenceLength;
-           
-            assert(Checks.isNonNegativeScalar(maxPacketDelay) ...
-                    && mod(maxPacketDelay, 1) == 0 || isinf(maxPacketDelay), ...
-                'BufferingActuator:InvalidMaxPacketDelay', ...
-                '** Input parameter <maxPacketDelay> (maximum allowed packet delay) must be a nonnegative integer or inf **');
-           
-            this.maxPacketDelay = maxPacketDelay;
-         
-            assert(Checks.isVec(defaultU) && all(isfinite(defaultU)), ...
-                'BufferingActuator:InvalidDefaultU', ...
-                '** Input parameters <defaultU> (default input) must be a real-valued vector or a real number  **');
-
-            this.defaultInput = defaultU(:);
-            this.dimU = size(this.defaultInput, 1);
+            this = this@Actuator(defaultU, controlSequenceLength - 1);
+            
+            this.controlSequenceLength = controlSequenceLength;  
+            
+            % initially, the buffer is empty and thus: theta_0 = N+1
+            % where N+1 is the control sequence length
+            % initialize the mode history, but remember that we enumerate
+            % the modes from [1, N+2] instead of [0, N+1] as in the
+            % publications
+            this.modeHistory = zeros(controlSequenceLength, 1) + controlSequenceLength + 1;
         end
 
-        function [controlInput, mode] = getCurrentInput(this, timeStep)
-            % Get the input to be applied at the given time step.
+        %% step
+        function [controlInput, mode, ackPackets] = step(this, timeStep, controllerPackets)
+            % Process a given set of packets received from the controller,
+            % each of which containing a control input sequence and get
+            % the input to be applied at the given time step.
             %
             % Parameters:
             %   >> timeStep (Nonnegative integer)
             %      The time step for which the control input is sought.
             %
+            %   >> controllerPackets (Array of DataPackets, might be empty)
+            %      An array containing DataPackets with a control input sequence.
+            %      From the of received control sequences, the one with the smallest delay
+            %      (i.e., the one which was sent most recently) is buffered if it is more
+            %      recent than the one currently stored,
+            %      and all others are discarded (past packets rejection logic).
+            %
             % Returns:
             %   << controlInput (Column vector or Scalar)
-            %      The buffered control input for the given time step, if
+            %      The control input for the given time step, if
             %      present. If not, then the default input is returned.
-            %   << mode (Positive integer)
-            %      The mode of the underlying MJLS that corresponds the the
-            %      returned input (i.e., the age of the buffered sequence).
             %
+            %   << mode (Positive integer)
+            %      The mode (theta_k) of the underlying MJLS that corresponds to the
+            %      returned input (i.e., the age of the buffered sequence).
+            %      In constrast to the publications, here we always have
+            %      theta_k in [1,2, ...,N+2] instead of [0, 1,...,N+1]
+            %      with N+1 the control sequence length.
+            %
+            %   << ackPackets (Array of DataPackets, might be empty (optional))
+            %      An array of acknowledgment packets, one for each
+            %      received packet from the controller. An empty matrix is
+            %      returned in case n packets were received.
+
             assert(Checks.isNonNegativeScalar(timeStep) && mod(timeStep, 1) == 0, ...
-                'BufferingActuator:GetCurrentInput:InvalidTimeStep', ...
+                'BufferingActuator:Step:InvalidTimeStep', ...
                 '** Time step must be a nonnegative integer **');    
             
-            if ~isempty(this.bufferedPacket)...
-                    && this.bufferedPacket.timeStamp + this.controlSequenceLength > timeStep
-                mode = timeStep - this.bufferedPacket.timeStamp + 1;
-                controlInput = this.bufferedPacket.payload(:, mode);
-            else
-                % buffer is empty or content is obsolete
-                controlInput = this.defaultInput;
-                mode = this.controlSequenceLength + 1;
-            end
-        end
-  
-        function ackPacket = processControllerPackets(this, controllerPackets)
-            % Process a given set of packets received from the controller,
-            % each of which containing a control input sequence.
-            % From this set, that one with the smallest delay (i.e., the
-            % one which was sent most recently) is buffered if it is more
-            % recent than the one currently stored, all others are
-            % discarded (past packets rejection logic).
-            %
-            % Parameters:
-            %   >> controllerPackets (Array of DataPackets)
-            %      An array containing DataPackets with a control input sequence.
-            %
-            % Returns:
-            %   << ackPacket (Empty matrix or DataPacket)
-            %      The ACK for the DataPacket within the given set that has
-            %      become active. An empty matrix is returned in case non
-            %      became active.
-            %
-            if nargout == 1
-                ackPacket = [];
-            end
             numSeq = numel(controllerPackets);
             if numSeq ~= 0
                 assert(Checks.isClass(controllerPackets, 'DataPacket', numSeq), ...
-                    'BufferingActuator:ProcessControllerPackets:InvalidControllerPackets', ...
+                    'BufferingActuator:Step:InvalidControllerPackets', ...
                     '** Input parameter (received control input packets) must consist of %d DataPacket(s) **', numSeq);
                 
                 [inputSequences{1:numSeq}] = controllerPackets(:).payload;
                 assert(sum(cell2mat(cellfun(@(x) Checks.isMat(x, this.dimU, this.controlSequenceLength), ...
                         inputSequences, 'UniformOutput', false))) == numSeq, ...
-                    'BufferingActuator:ProcessControllerPackets:InvalidControlSequences', ...
+                    'BufferingActuator:Step:InvalidControlSequences', ...
                      '** Each control input sequence must be given as real-valued a %d-by-%d matrix **', ...
                      this.dimU, this.controlSequenceLength);
                 
                 [delays{1:numSeq}] = controllerPackets(:).packetDelay;
-                % get the newest sequence, i.e., that one with smallest delay
-                % (should be unique)
-                [minDelay, idx] = min(cell2mat(delays));
-                if minDelay <= this.maxPacketDelay && this.controlSequenceLength - minDelay > 0 ...
+                                
+                % get the newest sequence, i.e., that one with smallest delay (should be unique)
+                % packet rejection logic: most recent packet will be stored, all others are discarded 
+                [minDelay, idx] = min(cell2mat(delays));                
+                if minDelay <= this.maxPacketDelay ...
                     && (isempty(this.bufferedPacket) || controllerPackets(idx).isNewerThan(this.bufferedPacket))
                     this.bufferedPacket = controllerPackets(idx);
-                     % packet rejection logic: only ACK packet if it becomes
-                     % active, all others are discarded
-                     if nargout == 1
-                         % compute the time stamp
-                         k = this.bufferedPacket.timeStamp + minDelay;
-                         ackPacket = this.bufferedPacket.createAckForDataPacket(k);
-                     end
                 end
             end
+            
+            if ~isempty(this.bufferedPacket)...
+                    && this.bufferedPacket.timeStamp + this.controlSequenceLength > timeStep
+                mode = timeStep - this.bufferedPacket.timeStamp + 1; % first mode has index 1!
+                controlInput = this.bufferedPacket.payload(:, mode);
+            else
+                % buffer is empty or content is obsolete
+                controlInput = this.defaultInput;
+                mode = this.controlSequenceLength + 1; % N+2 (last mode)
+            end
+            
+            %ackPackets
+            % prepare ACKs for all the received packets
+             if nargout == 3
+                ackPackets = [];
+                for i=1:numSeq
+                    info.timeStep = controllerPackets(i).timeStamp; % the time step the sequence was sent
+                    info.tau = min(controllerPackets(i).packetDelay, this.maxPacketDelay + 1); % delay of the packet, or considered a loss
+                    if info.timeStep == timeStep % packet delay was zero
+                        info.theta = mode; % the current mode (starting from 1)
+                    else
+                        info.theta = this.modeHistory(info.tau); % extract a mode from the past
+                    end
+                    ackPackets = [ackPackets; controllerPackets(i).createAckForDataPacket(timeStep, info)]; %#ok
+                end
+            end
+            % update the history
+            this.modeHistory = [mode; this.modeHistory(1:end-1)];
         end
         
-        %% reset
-        function reset(this)
-            % Reset the actuator by removing the currently buffered
-            % control sequence.
-            %
-            this.bufferedPacket = [];
-        end 
         
         %% changeControlSequenceLength
         function changeControlSequenceLength(this, newSequenceLength)

@@ -6,7 +6,7 @@ classdef (Abstract) SequenceBasedController < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -28,12 +28,12 @@ classdef (Abstract) SequenceBasedController < handle
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = protected)
-        dimPlantState;
-        dimPlantInput;      
+        dimPlantState(1,1) double {mustBeInteger, mustBePositive} = 1;
+        dimPlantInput(1,1) double {mustBeInteger, mustBePositive} = 1;
     end
     
     properties(SetAccess = immutable, GetAccess = public)          
-        requiresExternalStateEstimate@logical;
+        requiresExternalStateEstimate(1,1) logical;
     end
     
     properties (Access = protected)
@@ -43,13 +43,14 @@ classdef (Abstract) SequenceBasedController < handle
     properties (SetAccess = protected, GetAccess = public)
         % setter is protected, so that subclass can change this property
         % after creation, if supported
-        sequenceLength;
+        sequenceLength(1,1) double = 1;
     end
     
-    methods 
-        function set.sequenceLength(this, seqLength)
-            this.validateSequenceLengthOnSet(seqLength);
-            this.sequenceLength = seqLength;
+    methods
+        function set.sequenceLength(this, sequenceLength)
+            % used to validate property
+            this.validateSequenceLengthOnSet(sequenceLength);
+            this.sequenceLength = sequenceLength;
         end
     end
     

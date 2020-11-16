@@ -1,11 +1,11 @@
-classdef IMMFTest < BaseIMMFTest;
+classdef IMMFTest < BaseIMMFTest
     % Test cases for IMMF.
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,45 +76,15 @@ classdef IMMFTest < BaseIMMFTest;
         end
                      
         %% verifyUpdateGaussianMixture
-        function verifyUpdateGaussianMixture(this)
-            % compute the expected parameters of the posterior mixture
-            expectedWeights = this.updatedMixtureWeights;
-            expectedMean = this.updatedMixtureWeights(1) * this.updatedMixtureMeans(:, 1) ...
-                + this.updatedMixtureWeights(2) * this.updatedMixtureMeans(:, 2);
-            expectedCov = this.updatedMixtureWeights(1) * this.updatedMixtureCovs(:, :, 1) ...
-                + this.updatedMixtureWeights(2) * this.updatedMixtureCovs(:, :, 2);
-            expectedCov = expectedCov + this.updatedMixtureWeights(1) ...
-                * (expectedMean - this.updatedMixtureMeans(:, 1)) * transpose(expectedMean - this.updatedMixtureMeans(:, 1));
-            expectedCov = expectedCov ...
-                + (this.updatedMixtureWeights(2) * ...
-                + (expectedMean - this.updatedMixtureMeans(:, 2)) * transpose(expectedMean - this.updatedMixtureMeans(:, 2)));
-            
-              
-            % first check the individual filter states
-            actualModeFilterStates = cellfun(@getState, this.modeFilters, 'UniformOutput', false);
-            for j=1:this.numModes
-                this.verifyClass(actualModeFilterStates{j}, ?Gaussian);
-                % if suffices to compare mean and cov
-                [actualMean, actualCov] = actualModeFilterStates{j}.getMeanAndCov();
-                this.verifyEqualWithAbsTol(actualMean, this.updatedMixtureMeans(:, j));
-                this.verifyEqualWithAbsTol(actualCov, this.updatedMixtureCovs(:, :, j));
-            end
-            
-            % now the resulting Gaussian mixture
-            updatedState = this.filterUnderTest.getState();
-            this.verifyClass(updatedState, ?GaussianMixture);
-            
-            [~, ~, actualWeights] = updatedState.getComponents();
-            [actualMean, actualCov] = this.filterUnderTest.getStateMeanAndCov();
+        function verifyUpdateGaussianMixture(this)   
+            [~, actualCov] = this.filterUnderTest.getStateMeanAndCov();
             
             % first, a sanity check: posterior cov must be smaller than prior
             % cov -> check the eigenvalues of the difference matrix
             this.verifyGreaterThan(eig(this.stateGaussianMixtureCov - actualCov), 0);
-            
-            this.verifyEqualWithAbsTol(actualWeights, expectedWeights);
-            this.verifyEqualWithAbsTol(actualMean, expectedMean);
-            this.verifyEqual(actualCov, actualCov'); % shall be symmetric
-            this.verifyEqualWithAbsTol(actualCov, expectedCov);
+             % now the resulting Gaussian mixture
+            this.verifyGaussianMixture(this.updatedMixtureMeans, this.updatedMixtureCovs, this.updatedMixtureWeights);
+
         end
         
         %% verifyUpdateGaussian
@@ -180,7 +150,12 @@ classdef IMMFTest < BaseIMMFTest;
         
         %% testIMMFInvalidModeFilters
         function testIMMFInvalidModeFilters(this)
-            expectedErrId = 'MATLAB:class:RequireClass';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:UnableToConvert';
+            else
+                expectedErrId = 'MATLAB:validation:UnableToConvert';
+            end
             
             % no cell passed
             invalidModeFilters = eye(this.dimX);
@@ -190,6 +165,23 @@ classdef IMMFTest < BaseIMMFTest;
             
             % cell with invalid filter passed
             invalidModeFilters = {EKF('KF'); this.filterUnderTest};
+            this.verifyError(@() IMMF(invalidModeFilters, this.modeTransitionMatrix, this.filterName), expectedErrId);
+            
+            % cell with invalid objects passed
+            invalidModeFilters = {1; this};
+            this.verifyError(@() IMMF(invalidModeFilters, this.modeTransitionMatrix, this.filterName), expectedErrId);
+            
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
+            
+            % cell with invalid dimensions passed
+            invalidModeFilters = cell(2,2);
+            invalidModeFilters{1} = {EKF('KF'); EKF('KF2')};
+            invalidModeFilters{end} = {EKF('KF'); EKF('KF2')};
             this.verifyError(@() IMMF(invalidModeFilters, this.modeTransitionMatrix, this.filterName), expectedErrId);
         end
         

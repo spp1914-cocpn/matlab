@@ -5,7 +5,7 @@ function result = executeControllersTests()
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -27,6 +27,7 @@ function result = executeControllersTests()
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     import matlab.unittest.TestSuite;
+    import matlab.unittest.TestRunner;
     
     tests = [
         TestSuite.fromClass(?SequenceBasedControllerTest) ...
@@ -38,8 +39,11 @@ function result = executeControllersTests()
         TestSuite.fromClass(?RecedingHorizonUdpLikeControllerTest) ...
         TestSuite.fromClass(?IMMBasedRecedingHorizonControllerTest) ...
         TestSuite.fromClass(?LinearlyConstrainedPredictiveControllerTest) ...
-        TestSuite.fromClass(?NominalPredictiveControllerTest)];
+        TestSuite.fromClass(?ExpectedInputPredictiveControllerTest) ...
+        TestSuite.fromClass(?NominalPredictiveControllerTest) ...
+        TestSuite.fromClass(?PolePlacementPredictiveControllerTest) ...
+        TestSuite.fromClass(?MSSControllerTest)];
 
-    result = tests.run();
+    result = TestRunner.withTextOutput.runInParallel(tests);
 end
 

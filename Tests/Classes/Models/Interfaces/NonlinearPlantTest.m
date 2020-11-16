@@ -5,7 +5,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -68,30 +68,40 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
                      
         %% testNonlinearPlantInvalidStateDim
         function testNonlinearPlantInvalidStateDim(this)
-            expectedErrId = 'NonlinearPlant:InvalidStateDim';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:UnableToConvert';
+            else
+                expectedErrId = 'MATLAB:validation:UnableToConvert';
+            end
             
             invalidDimX = @pwd; % not a scalar
             this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), expectedErrId);
             
             invalidDimX = -1; % negative
-            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), expectedErrId);
+            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), 'MATLAB:validators:mustBePositive');
             
             invalidDimX = 1.5; % not an integer
-            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), expectedErrId);
+            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testNonlinearPlantInvalidInputDim
         function testNonlinearPlantInvalidInputDim(this)
-            expectedErrId = 'NonlinearPlant:InvalidInputDim';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:UnableToConvert';
+            else
+                expectedErrId = 'MATLAB:validation:UnableToConvert';
+            end
             
             invalidDimU = @pwd; % not a scalar
             this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), expectedErrId);
             
             invalidDimU = -1; % negative
-            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), expectedErrId);
+            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), 'MATLAB:validators:mustBePositive');
             
             invalidDimU = 1.5; % not an integer
-            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), expectedErrId);
+            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testNonlinearPlant

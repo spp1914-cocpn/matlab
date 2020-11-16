@@ -5,7 +5,7 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -78,14 +78,6 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
     end
     
     methods (Test)
-        %% testJumpLinearSystemModel
-        function testJumpLinearSystemModelInvalidNumModes(this)
-            expectedErrId = 'JumpLinearSystemModel:InvalidNumModes';
-            
-            this.verifyError(@() JumpLinearSystemModel(this.negativeNumModes, this.modeModels), expectedErrId);
-            this.verifyError(@() JumpLinearSystemModel(this.fractionaNumModes, this.modeModels), expectedErrId);
-        end
-        
         %% testJumpLinearSystemModel
         function testJumpLinearSystemModel(this)
             model = JumpLinearSystemModel(this.numModes, this.modeModels);

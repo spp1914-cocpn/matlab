@@ -13,7 +13,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -35,14 +35,16 @@ classdef DelayedKFSystemModel < LinearSystemModel
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = private)
-        numModes;
-        noiseMean;
-        noiseCov;
-        plantInputMatrix;
+        numModes;        
     end
     
-    properties (Access = private)
+    properties (Access = private)        
+        plantInputMatrix;
         weights;
+        possibleInputs = [];
+        
+        noiseMean; % stored for convenience
+        noiseCov; % stored for convenience
     end
     
     properties (Dependent, Access = private)
@@ -148,6 +150,18 @@ classdef DelayedKFSystemModel < LinearSystemModel
             setSystemMatrix@LinearSystemModel(this, newSysMatrix);
         end
         
+        %% setPlantInputMatrix
+        function setPlantInputMatrix(this, plantInputMatrix)
+            % Set the plant input matrix.           
+            %
+            % Parameters:
+            %   >> plantInputMatrix (Matrix)
+            %      The new plant input matrix of appropriate dimensions.
+            
+            Validator.validateInputMatrix(plantInputMatrix, size(this.plantInputMatrix, 1), this.dimInput);
+            this.plantInputMatrix = plantInputMatrix;
+        end
+        
         %% setSystemNoiseMatrix 
         function setSystemNoiseMatrix(this, sysNoiseMatrix)
             % Set the system noise matrix.
@@ -177,6 +191,35 @@ classdef DelayedKFSystemModel < LinearSystemModel
             setSystemNoiseMatrix@LinearSystemModel(this, newSysNoiseMatrix);
         end
         
+        %% changeNoise
+        function changeNoise(this, sysNoise)
+            % Change the noise acting on the system dynamics.           
+            %
+            % Parameters:
+            %   >> sysNoise (Distribution)
+            %      The distribution specifiying the process noise.
+            
+            dimX = size(this.plantInputMatrix, 1);
+            assert(Checks.isClass(sysNoise, 'Distribution') && sysNoise.getDim() == dimX, ...
+                'DelayedKFSystemModel:SetNoise:InvalidSystemNoise', ...
+                '** System noise <systemNoise> must be %d-dimensional Distribution **', dimX);
+            % moment matching to get Gaussian
+            [this.noiseMean, this.noiseCov] = sysNoise.getMeanAndCov();            
+            
+            % side effect: in case we have inputs, the system noise also affect the
+            % "uncertainty" due to possible inputs            
+            if ~isempty(this.possibleInputs)        
+                % last element is considered the default input (e.g., zero) applied by actuator in case of packet loss
+                % compute expected, but uncertain input
+                [inputMean, inputCov] = Utils.getMeanAndCov(this.possibleInputs, this.weights);
+                virtualInput = this.plantInputMatrix * inputMean;
+                virtualInputCov = this.plantInputMatrix * inputCov * this.plantInputMatrix';
+                this.noise.set(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov);
+            else
+                this.noise.set(this.noiseMean, this.noiseCov);
+            end
+        end
+        
         %% setSystemInput
         function setSystemInput(this, possibleInputs)
             % Set the system inputs that might be currently applied to the
@@ -200,7 +243,7 @@ classdef DelayedKFSystemModel < LinearSystemModel
                 'DelayedKFSystemModel:InvalidInput', ...
                 '** <possibleInputs> must be given as a real-valued %d-by-%d matrix (i.e., the possibly active inputs must be column-wise arranged) **',  ...
                 this.dimInput, this.numModes);
-            
+                        
             % last element is considered the default input (e.g., zero) applied by actuator in
             % case of packet loss
             % compute expected, but uncertain input
@@ -208,6 +251,8 @@ classdef DelayedKFSystemModel < LinearSystemModel
             virtualInput = this.plantInputMatrix * inputMean;
             virtualInputCov = this.plantInputMatrix * inputCov * this.plantInputMatrix';
             this.noise.set(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov);
+            
+            this.possibleInputs = possibleInputs;
         end
         
         %% setDelayWeights
@@ -223,10 +268,22 @@ classdef DelayedKFSystemModel < LinearSystemModel
             Validator.validateDiscreteProbabilityDistribution(delayWeights, this.numModes);
             % store weights as row vector, i.e., column-wise arranged
             this.weights = reshape(delayWeights, 1, this.numModes);
+            
+            % side effect: in case we have inputs, the new weights also affect the
+            % "uncertainty" due to possible inputs            
+            if ~isempty(this.possibleInputs)        
+                % last element is considered the default input (e.g., zero) applied by actuator in case of packet loss
+                % compute expected, but uncertain input
+                [inputMean, inputCov] = Utils.getMeanAndCov(this.possibleInputs, this.weights);
+                virtualInput = this.plantInputMatrix * inputMean;
+                virtualInputCov = this.plantInputMatrix * inputCov * this.plantInputMatrix';
+                this.noise.set(this.noiseMean + virtualInput, this.noiseCov + virtualInputCov);
+            end
         end
     end
      
-    methods (Access = private)
+    methods (Access = private) 
+        %% resetNoise
         function resetNoise(this)
             if isempty(this.noise)
                 this.setNoise(Gaussian(this.noiseMean, this.noiseCov));

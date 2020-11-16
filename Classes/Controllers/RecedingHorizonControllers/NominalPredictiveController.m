@@ -16,7 +16,7 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -36,17 +36,16 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
     %
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-    
-    properties (SetAccess = immutable)
-        A;
-        B;
-    end
-    
+        
     properties (SetAccess = private, GetAccess = protected)
         % (empty or column vector of dimension <dimU>, default zero)
         feedforward = [];
+        recomputeGain = false;
+        recomputeFeedforward = false;
+        A;
+        B;
     end
-    
+       
     properties (SetAccess = private, GetAccess = public)
         % controller gain matrix (negative of the LQR gain matrix)
         L = [];
@@ -64,7 +63,7 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
     
     methods (Access = public)
         %% NominalPredictiveController
-        function this = NominalPredictiveController(A, B, Q, R, sequenceLength)
+        function this = NominalPredictiveController(A, B, Q, R, sequenceLength, setpoint)
             % Class constructor.
             %
             % Parameters:
@@ -84,6 +83,13 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
             %     The length of the input sequence (i.e., the number of
             %     control inputs) to be computed by the controller.
             %
+            %  >> setpoint (Vector, optional)
+            %     The set point in the state space that shall be tracked asymptotically instead of the origin.
+            %     Note that it is not verified whether the resulting set point tracking problem is solvable. 
+            %     For instance, in case dim(x) > dim(u), the problem will generally have no exact solution.
+            %     If no set point is provided, the controller will attempt
+            %     to drive the plant to the origin instead.
+            %
             % Returns:
             %   << obj (NominalPredictiveController)
             %      A new NominalPredictiveController instance.
@@ -99,10 +105,19 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
             Validator.validateCostMatrices(Q, R, dimX, dimU);
             this.Q = Q;
             this.R = R;
-            
-            this.feedforward = zeros(dimU, 1);
-            
+                        
             this.computeAndSetGainMatrix();
+            
+            if nargin > 5 && ~isempty(setpoint)
+                assert(Checks.isVec(setpoint, this.dimPlantState) && all(isfinite(setpoint)), ...
+                    [class(this) ':InvalidSetpoint'], ...
+                    '** <setpoint> is expected to be a real-valued, %d-dimensional vector', this.dimPlantState);
+                this.setpoint = setpoint(:);
+                this.computeAndSetFeedforward();
+            else
+                % no set point provided, so stead state is origin                
+                this.feedforward = zeros(dimU, 1);
+            end
         end
         
         %% reset
@@ -138,10 +153,28 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
             this.Q = newQ;
             this.R = newR;
             % requires that gain matrix is recomputed
-            this.computeAndSetGainMatrix();
-            % and, likewise, the feedforward
+            this.recomputeGain = true;            
+            % and, likewise, the feedforward, if nonzero set point is
+            % present
             if ~isempty(this.setpoint)
-                this.computeAndSetFeedforward();
+                this.recomputeFeedforward = true;
+            end
+        end
+        
+        %% changeModelParameters
+        function changeModelParameters(this, newA, newB)
+            Validator.validateSystemMatrix(newA, this.dimPlantState);
+            Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);                         
+            
+            this.A = newA;
+            this.B = newB;
+            
+            % requires that gain matrix is recomputed
+            this.recomputeGain = true;            
+            % and, likewise, the feedforward, if nonzero set point is
+            % present
+            if ~isempty(this.setpoint)
+                this.recomputeFeedforward = true;
             end
         end
         
@@ -162,7 +195,7 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
                 '** <newSetpoint> is expected to be a real-valued, %d-dimensional vector', this.dimPlantState);
 
             this.setpoint = newSetpoint(:);
-            this.computeAndSetFeedforward();
+            this.recomputeFeedforward = true;
         end
     end
     
@@ -170,15 +203,14 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
         %% computeAndSetGainMatrix
         function computeAndSetGainMatrix(this)
             % compute the gain matrix 
-            [L, ~, ~] = dlqr(this.A, this.B, this.Q, this.R);
-            this.L = -L;
+            this.L = -dlqr(this.A, this.B, this.Q, this.R);
         end
         
         %% computeAndSetFeedforward
         function computeAndSetFeedforward(this)
             I = speye(this.dimPlantState);
             % we need a stationary gain
-            F = this.B \ ((I - this.A - this.B * this.L) / I);
+            F = this.B \ ((I - this.A - this.B * this.L) / I); % this is the DC gain of the closed loop system, with C = I
             this.feedforward = F * this.setpoint;
         end
     end
@@ -186,6 +218,15 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
     methods (Access = protected)
          %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, plantState, varargin)
+            if this.recomputeGain
+                this.computeAndSetGainMatrix();                
+                this.recomputeGain = false;
+            end
+            if this.recomputeFeedforward
+                this.computeAndSetFeedforward();
+                this.recomputeFeedforward = false;
+            end
+            
             [state, ~] = plantState.getMeanAndCov();
             
             inputSequence = zeros(this.sequenceLength * this.dimPlantInput, 1);
@@ -195,9 +236,18 @@ classdef NominalPredictiveController< SequenceBasedTrackingController
                 inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput) = this.L * state + ff;
                 % predict the system state (i.e., compute estimate since noise is
                 % zero-mean)
-                state = this.A * state + ...
-                    this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
-            end            
+                % use the computed input u_k for prediction
+                state = this.doStatePrediction(state, inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput), j);
+%                 state = this.A * state + ...
+%                     this.B * inputSequence((j - 1) * this.dimPlantInput + 1: j * this.dimPlantInput);
+            end
+        end
+        
+        %% doStatePrediction
+        function newState = doStatePrediction(this, state, computedInput, stage)
+            % predict the system state (i.e., compute estimate since noise is
+            % zero-mean)
+            newState = this.A * state + this.B * computedInput;
         end
         
         %% doStageCostsComputation

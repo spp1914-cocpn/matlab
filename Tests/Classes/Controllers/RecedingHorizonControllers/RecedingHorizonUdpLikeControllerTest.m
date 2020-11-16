@@ -5,7 +5,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -27,7 +27,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (Constant)
-        absTol = 1e-8;
+        absTol = 5 * 1e-7;
     end
     
      properties (Access = private)
@@ -36,6 +36,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         Q;
         R;
         C;
+        J;
         sequenceLength;
         dimX;
         dimU;
@@ -80,39 +81,46 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     methods (TestMethodSetup)
         %% initProperties
         function initProperties(this)
-            this.dimX = 3;
+            % use (noise-free) stirred tank example (Example 6.15, p. 500-501) from
+            %
+            % Huibert Kwakernaak, and Raphael Sivan, 
+            % Linear Optimal Control Systems,
+            % Wiley-Interscience, New York, 1972.
+            %
+            
+            this.dimX = 2;
             this.dimU = 2;
             this.dimY = 2;
             
             this.horizonLength = 3;
             
-            this.sequenceLength = 1; % so we have two modes
+            this.sequenceLength = 2; % so we have three modes
             this.caDelayProbs = ones(1, 5) / 5;
             this.scDelayProbs = ones(1, 6) / 6;
             
-            % from the delay probs and the 2 modes we get the following
+            % from the delay probs and the 3 modes we get the following
             % transition matrix
-            this.modeTransitionMatrix = [1/5 4/5; 1/5 4/5];
+            this.modeTransitionMatrix = [1/5 4/5 0; 1/5 1/5 3/5; 1/5 1/5 3/5];
             
-            this.A = eye(this.dimX);
-            this.B = ones(this.dimX, this.dimU);
+            this.A = diag([0.9512, 0.9048]);           
+            this.B = [4.877 4.877; -1.1895 3.569];
             this.C = 2 * ones(this.dimY, this.dimX);
             
-            this.Q = eye(this.dimX);
-            this.R = eye(this.dimU) * 2;
-              
+            this.Q = diag([0.01, 1]) * diag([50 0.02]) * diag([0.01, 1]); % R_3 in the book
+            this.R = diag([1/3, 3]); % R_2 in the book
+                          
             this.maxMeasDelay = 1;
             
             this.W = eye(this.dimX) * 0.01;
             this.V = eye(this.dimY) * 0.001;
             
-            this.x0 = ones(3,1);
+            this.x0 = ones(this.dimX,1);
             this.x0Cov = eye(this.dimX) * 0.2;
             
             this.initAdditionalProperties();
 
             this.controllerUnderTest = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, ...
                 this.horizonLength, this.x0, this.x0Cov);
         end
     end
@@ -120,9 +128,11 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     methods (Access = private)
         %% initAdditionalProperties
         function initAdditionalProperties(this)
-            numModes = 2;
-            dimAugState = 2 * this.dimX;
+            numModes = this.sequenceLength + 1;
+            dimEta = 2;
+            dimAugState = 2 * this.dimX + dimEta;
             numSMatrices = 9; 
+            dimAugmentedMeas = 2 * this.dimY;
             
             % we have two Z matrices (Lemma 1 in paper)
             a_0 = this.scDelayProbs(2) / (1-this.scDelayProbs(1));
@@ -160,30 +170,37 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.Z(8,8) = this.scDelayProbs(1) * Z_0(2,3);
             this.Z(9,8) = this.scDelayProbs(1) * Z_0(2,3);            
             
-            this.augC = kron(eye(2), this.C);
+            this.augC = [kron(eye(2), this.C),...
+                zeros(dimAugmentedMeas, dimEta)];
 
-            this.S = zeros(2 * this.dimY,2 * this.dimY,numSMatrices);
+            this.S = zeros(dimAugmentedMeas, dimAugmentedMeas, numSMatrices);
             this.S(:, :, 2) = kron([1 0; 0 0], eye(this.dimY));
             this.S(:, :, 4) = kron([0 0; 0 1], eye(this.dimY));
             this.S(:, :, 5) = kron([1 0; 0 1], eye(this.dimY));
             this.S(:, :, 6) = kron([0 0; 0 1], eye(this.dimY));
             this.S(:, :, 8) = kron([1 0; 0 0], eye(this.dimY));           
 
-            % in this setup, the current input must arrive without delay,
-            % or plant evolves open-loop
-            % hence, in this setup, G and F are not existent
-            % likewise, H
-            % due to the structure of the transition matrix
+            [F, G, H, this.J] = Utility.createAugmentedPlantModel(this.sequenceLength, this.A, this.B);           
             D = eye(this.dimX);
             E = zeros(this.dimX);
-            this.augA = [this.A zeros(this.dimX); D E];
-            this.augB = cat(3, [this.B; zeros(this.dimX, this.dimU)], zeros(dimAugState, this.dimU));
-            this.augQ = repmat(blkdiag(this.Q, zeros(this.dimX)), 1, 1, numModes);         
             
-            this.augX0 = [this.x0(:); this.x0(:)];
-            this.augX0Cov = kron(ones(2,2), this.x0Cov);
+            this.augA = repmat(blkdiag([this.A zeros(this.dimX); D E], F), 1,1, numModes);
+            this.augA(1:this.dimX, end - dimEta + 1:end, :) = mtimesx(this.B, H);                  
+            this.augB = repmat([zeros(dimAugState - size(G, 1), size(G, 2)); G], 1, 1, numModes);
+            this.augB(1:this.dimX, :, :) = mtimesx(this.B, this.J);
+               
+            this.augQ = repmat(blkdiag(this.Q, zeros(dimAugState - this.dimX)), 1, 1, numModes);
+            idx = dimAugState - dimEta + 1;
+            % add the mode dependent part
+            for i = 1:numModes                
+                this.augQ(idx:dimAugState, idx:dimAugState, i) ...
+                    = H(:, :, i)' * this.R * H(:, :, i); % H_tilde in the paper
+            end
             
-            this.augW = blkdiag(this.W, zeros(this.dimX));
+            this.augX0 = [this.x0(:); this.x0(:); zeros(dimEta, 1)];
+            this.augX0Cov = blkdiag(kron(ones(2,2), this.x0Cov), zeros(dimEta));
+            
+            this.augW = blkdiag(this.W, zeros(this.dimX), zeros(dimEta));
             this.augV = blkdiag(this.V, this.V);
             
             this.xUpperbar = zeros(dimAugState, dimAugState, numModes);
@@ -194,13 +211,14 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % pick some initial gains
             this.initialM = ones(dimAugState, dimAugState, this.horizonLength);
             this.initialK = ones(dimAugState, 2 * this.dimY, this.horizonLength);
-            this.initialL = ones(this.dimU, dimAugState, this.horizonLength);
+            this.initialL = ones(this.dimU * this.sequenceLength, dimAugState, this.horizonLength);
         end
         
         %% computeGains
         function [M, K, L] = computeGains(this, caModeProbs, S_tilde)
-            dimAugState = 2 * this.dimX;
-            numCaModes = 2;
+            dimEta = 2;
+            dimAugState = 2 * this.dimX + dimEta;
+            numCaModes = this.sequenceLength + 1;
             
             K = this.initialK;
             L = this.initialL;
@@ -218,8 +236,8 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                         X_temp = zeros(dimAugState, dimAugState);
                         X_temp2 = zeros(dimAugState, dimAugState);
                         for i=1:numCaModes
-                            X_temp = X_temp + this.modeTransitionMatrix(i, j) * ((this.augA - K(:, :, k)* S_tilde(:, :, k)*this.augC) * XUpper(:, :, i, k) * (this.augA- K(:, :, k)* S_tilde(:, :, k)*this.augC)' ...
-                                + (this.augA - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, i) * L(:, :, k)) * XUnder(:, :, i, k) * (this.augA - K(:, :, k)* S_tilde(:, :, k)*this.augC- M(:, :, k) + this.augB(:, :, i) * L(:, :, k))' ...
+                            X_temp = X_temp + this.modeTransitionMatrix(i, j) * ((this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC) * XUpper(:, :, i, k) * (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC)' ...
+                                + (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, i) * L(:, :, k)) * XUnder(:, :, i, k) * (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC- M(:, :, k) + this.augB(:, :, i) * L(:, :, k))' ...
                                 + caModeProbs(i, k) * (this.augW + (K(:, :, k)* S_tilde(:, :, k)) * this.augV * (K(:, :, k)* S_tilde(:, :, k))'));
 
                             X_temp2 = X_temp2 + this.modeTransitionMatrix(i, j) * ((K(:, :, k)* S_tilde(:, :, k)*this.augC) * XUpper(:, :, i, k) * (K(:, :, k)* S_tilde(:, :, k)*this.augC)' ...
@@ -232,43 +250,73 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                 end
             
                 % backward pass for the gains and the costate
-                PUpper = this.augQ;
+                terminalQ = idare(this.A, this.B, this.Q, this.R);
+                PUpper = repmat(blkdiag(terminalQ, zeros(dimAugState - this.dimX)), 1, 1, numCaModes); % terminal Q
                 PUnder = zeros(dimAugState, dimAugState, numCaModes);
                 omega = zeros(1, numCaModes);
                 oldCosts = inf;
                 for k=this.horizonLength:-1:1
-                    omega_sum1 = this.modeTransitionMatrix(1, 1) * omega(1) + this.modeTransitionMatrix(1, 2) * omega(2);
-                    omega_sum2 = this.modeTransitionMatrix(2, 1) * omega(1) + this.modeTransitionMatrix(2, 2) * omega(2);
+                    omega_sum1 = this.modeTransitionMatrix(1, 1) * omega(1) + this.modeTransitionMatrix(1, 2) * omega(2) ...
+                        + this.modeTransitionMatrix(1, 3) * omega(3);
+                    omega_sum2 = this.modeTransitionMatrix(2, 1) * omega(1) + this.modeTransitionMatrix(2, 2) * omega(2) ...
+                        + this.modeTransitionMatrix(2, 3) * omega(3);
+                    omega_sum3 = this.modeTransitionMatrix(3, 1) * omega(1) + this.modeTransitionMatrix(3, 2) * omega(2) ...
+                        + this.modeTransitionMatrix(3, 3) * omega(3);
             
-                    P_sum11 = this.modeTransitionMatrix(1, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(1, 2) * PUnder(:, :, 2);
-                    P_sum12 = this.modeTransitionMatrix(1, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(1, 2) * PUpper(:, :, 2);
-                    P_sum21 = this.modeTransitionMatrix(2, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(2, 2) * PUnder(:, :, 2);
-                    P_sum22 = this.modeTransitionMatrix(2, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(2, 2) * PUpper(:, :, 2);
+                    P_sum11 = this.modeTransitionMatrix(1, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(1, 2) * PUnder(:, :, 2) ...
+                    + this.modeTransitionMatrix(1, 3) * PUnder(:, :, 3);
+                    P_sum12 = this.modeTransitionMatrix(1, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(1, 2) * PUpper(:, :, 2) ...
+                        + this.modeTransitionMatrix(1, 3) * PUpper(:, :, 3);
+                    P_sum21 = this.modeTransitionMatrix(2, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(2, 2) * PUnder(:, :, 2) ...
+                    + this.modeTransitionMatrix(2, 3) * PUnder(:, :, 3);
+                    P_sum22 = this.modeTransitionMatrix(2, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(2, 2) * PUpper(:, :, 2)...
+                        + this.modeTransitionMatrix(2, 3) * PUpper(:, :, 3);
+                    P_sum31 = this.modeTransitionMatrix(3, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(3, 2) * PUnder(:, :, 2) ...
+                        + this.modeTransitionMatrix(3, 3) * PUnder(:, :, 3);
+                    P_sum32 = this.modeTransitionMatrix(3, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(3, 2) * PUpper(:, :, 2)...
+                        + this.modeTransitionMatrix(3, 3) * PUpper(:, :, 3);
                     Xsum1 = XUpper(:, :, 1, k) + XUnder(:, :, 1, k);
                     Xsum2 = XUpper(:, :, 2, k) + XUnder(:, :, 2, k);
+                    Xsum3 = XUpper(:, :, 3, k) + XUnder(:, :, 3, k);
                     % psi matrix
                     Psi = kron(S_tilde(:, :, k) * (caModeProbs(1, k) * this.augV + this.augC * Xsum1 * this.augC') * S_tilde(:, :, k)', P_sum11) ...
-                        + kron(S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * Xsum2 * this.augC') * S_tilde(:, :, k)', P_sum21);
+                        + kron(S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * Xsum2 * this.augC') * S_tilde(:, :, k)', P_sum21) ...
+                        + kron(S_tilde(:, :, k) * (caModeProbs(3, k) * this.augV + this.augC * Xsum3 * this.augC') * S_tilde(:, :, k)', P_sum31);
                     % lambda matrix
-                    Lambda = kron(XUnder(:, :, 1, k), P_sum11) + kron(XUnder(:, :, 2, k), P_sum21);
-                    % phi matrix, augB is zero for second mode, J as well,
-                    % so just one term
-                    Phi = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augB(:, :, 1) + this.R);
-                    % ypsilon matrix, augB is zero for second mode, so just one term
-                    Ypsilon = kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 1, k), P_sum11' * this.augB(:, :, 1));
-                    % sigma matrix, augB is zero for second mode, so just one term
-                    Sigma = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * P_sum11);
+                    Lambda = kron(XUnder(:, :, 1, k), P_sum11) + kron(XUnder(:, :, 2, k), P_sum21) + kron(XUnder(:, :, 3, k), P_sum31);
+                    % phi matrix
+                    Phi = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augB(:, :, 1) + this.J(:, :, 1)' * this.R * this.J(:, :, 1)) ...
+                        + kron(XUnder(:, :, 2, k), this.augB(:, :, 2)' * (P_sum21 + P_sum22) * this.augB(:, :, 2) + this.J(:, :, 2)' * this.R * this.J(:, :, 2)) ...
+                        + kron(XUnder(:, :, 3, k), this.augB(:, :, 3)' * (P_sum31 + P_sum32) * this.augB(:, :, 3) + this.J(:, :, 3)' * this.R * this.J(:, :, 3));
+
+                    % ypsilon matrix
+                    Ypsilon = kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 1, k), P_sum11' * this.augB(:, :, 1)) ...
+                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 2, k), P_sum21' * this.augB(:, :, 2)) ...
+                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 3, k), P_sum31' * this.augB(:, :, 3));
+                    % sigma matrix
+                    Sigma = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * P_sum11) ...
+                        + kron(XUnder(:, :, 2, k), this.augB(:, :, 2)' * P_sum21) ...
+                        + kron(XUnder(:, :, 3, k), this.augB(:, :, 3)' * P_sum31);
                     % pi matrix
                     Pi = kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 1, k), P_sum11) ...
-                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 2, k), P_sum21);
+                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 2, k), P_sum21)...
+                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 3, k), P_sum31);
                     
                     % rho vector
-                    rho = reshape(P_sum11' * this.augA * Xsum1 * this.augC' * S_tilde(:, :, k)' ...
-                        + P_sum21' * this.augA * Xsum2 * this.augC' * S_tilde(:, :, k)', [], 1);
+                    rho = reshape(P_sum11' * this.augA(:, :, 1) * Xsum1 * this.augC' * S_tilde(:, :, k)' ...
+                        + P_sum21' * this.augA(:, :, 2) * Xsum2 * this.augC' * S_tilde(:, :, k)' ...
+                        + P_sum31' * this.augA(:, :, 3) * Xsum3 * this.augC' * S_tilde(:, :, k)', ...
+                        [], 1);
                     % gamma vector, augB is zero for second mode, so just one term
-                    gamma = reshape(this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augA * XUnder(:, :, 1, k), [], 1);
+                    gamma = reshape(this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
+                        + this.augB(:, :, 2)' * (P_sum21 + P_sum22) * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
+                        + this.augB(:, :, 3)' * (P_sum31 + P_sum32) * this.augA(:, :, 3) * XUnder(:, :, 3, k), ...
+                        [], 1);
                     % phi vector
-                    phi = reshape(P_sum11' * this.augA * XUnder(:, :, 1, k) + P_sum21' * this.augA * XUnder(:, :, 2, k), [], 1); 
+                    phi = reshape(P_sum11' * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
+                        + P_sum21' * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
+                        + P_sum31' * this.augA(:, :, 3) * XUnder(:, :, 3, k), ...
+                        [], 1); 
                     
                     % construct system of linear equations to solve (Amat *x = b)
                     Amat = [Psi -Ypsilon Pi; -Ypsilon' Phi -Sigma; Pi' -Sigma' Lambda];
@@ -280,31 +328,44 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                     endIdx = dimAugState * 2 * this.dimY;
                     K(:, :, k) = reshape(x(startIdx:endIdx), dimAugState, []);
                     startIdx = endIdx + 1;
-                    endIdx = endIdx + (this.dimU * dimAugState);
-                    L(:, :, k) = reshape(x(startIdx:endIdx), this.dimU, []);
+                    endIdx = endIdx + (2* this.dimU * dimAugState);
+                    L(:, :, k) = reshape(x(startIdx:endIdx), 2* this.dimU, []);
                     startIdx = endIdx + 1;
                     M(:, :, k) = reshape(x(startIdx:end), dimAugState, []);
                     
                     % now we can update the costate with the computed gains
-                    PUpper(:, :, 1) = L(:, :, k)' * this.R * L(:, :, k) + this.augQ(:, :, 1) ...
-                        + (this.augA - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (this.augA - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k)) ...
-                        + (this.augA + this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augA + this.augB(:, :, 1) * L(:, :, k));
+                    PUpper(:, :, 1) = L(:, :, k)' * this.J(:, :, 1)' * this.R * this.J(:, :, 1) * L(:, :, k) + this.augQ(:, :, 1) ...
+                        + (this.augA(:, :, 1) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (this.augA(:, :, 1) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k)) ...
+                        + (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k));
                     PUnder(:, :, 1) = (M(:, :, k) - this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (M(:, :, k) - this.augB(:, :, 1) * L(:, :, k)) ...
-                        + (this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augB(:, :, 1) * L(:, :, k));
+                        + (this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augB(:, :, 1) * L(:, :, k)) ...
+                        + L(:, :, k)' * this.J(:, :, 1)' * this.R * this.J(:, :, 1) * L(:, :, k);
                     omega(1) = omega_sum1 + trace((P_sum11 + P_sum12) * this.augW) ...
                     + trace(P_sum11 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
-                    % mode 2, augB is zero, so corresponding terms are left out
-                    PUpper(:, :, 2) = this.augQ(:, :, 2) ...
-                    + (this.augA - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k))' * P_sum21 * (this.augA - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k)) ...
-                    + this.augA' * P_sum22 * this.augA;
-                    PUnder(:, :, 2) = M(:, :, k)' * P_sum21 * M(:, :, k);
+                    % mode 2
+                    PUpper(:, :, 2) = L(:, :, k)' * this.J(:, :, 2)' * this.R * this.J(:, :, 2) * L(:, :, k) + this.augQ(:, :, 2) ...
+                        + (this.augA(:, :, 2) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 2) * L(:, :, k))' * P_sum21 * (this.augA(:, :, 2) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 2) * L(:, :, k)) ...
+                        + (this.augA(:, :, 2) + this.augB(:, :, 2) * L(:, :, k))' * P_sum22 * (this.augA(:, :, 2) + this.augB(:, :, 2) * L(:, :, k));
+                    PUnder(:, :, 2) = (M(:, :, k) - this.augB(:, :, 2) * L(:, :, k))' * P_sum21 * (M(:, :, k) - this.augB(:, :, 2) * L(:, :, k)) ...
+                        + (this.augB(:, :, 2) * L(:, :, k))' * P_sum22 * (this.augB(:, :, 2) * L(:, :, k)) ...
+                        + L(:, :, k)' * this.J(:, :, 2)' * this.R * this.J(:, :, 2) * L(:, :, k);
                     omega(2) = omega_sum2 + trace((P_sum21 + P_sum22) * this.augW) ...
                     + trace(P_sum21 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
+                    % mode 3
+                    PUpper(:, :, 3) = L(:, :, k)' * this.J(:, :, 3)' * this.R * this.J(:, :, 3) * L(:, :, k) + this.augQ(:, :, 3) ...
+                        + (this.augA(:, :, 3) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 3) * L(:, :, k))' * P_sum31 * (this.augA(:, :, 3) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 3) * L(:, :, k)) ...
+                        + (this.augA(:, :, 3) + this.augB(:, :, 3) * L(:, :, k))' * P_sum32 * (this.augA(:, :, 3) + this.augB(:, :, 3) * L(:, :, k));
+                    PUnder(:, :, 3) = (M(:, :, k) - this.augB(:, :, 3) * L(:, :, k))' * P_sum31 * (M(:, :, k) - this.augB(:, :, 3) * L(:, :, k)) ...
+                        + (this.augB(:, :, 3) * L(:, :, k))' * P_sum32 * (this.augB(:, :, 3) * L(:, :, k)) ...
+                        + L(:, :, k)' * this.J(:, :, 3)' * this.R * this.J(:, :, 3) * L(:, :, k);
+                    omega(3) = omega_sum3 + trace((P_sum31 + P_sum32) * this.augW) ...
+                    + trace(P_sum31 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
                 end
                 % now check for convergence
                 costs = trace(PUpper(:, :, 1) * (XUpper(:, :, 1, 1) + XUnder(:, :, 1, 1)) + PUnder(:, :, 1) * XUpper(:, :, 1, 1)) ...
                     + trace(PUpper(:, :, 2) * (XUpper(:, :, 2, 1) + XUnder(:, :, 2, 1)) + PUnder(:, :, 2) * XUpper(:, :, 2, 1)) ...
-                    + caModeProbs(1, 1) * omega(1) + caModeProbs(2, 1) * omega(2);
+                    + trace(PUpper(:, :, 3) * (XUpper(:, :, 3, 1) + XUnder(:, :, 3, 1)) + PUnder(:, :, 3) * XUpper(:, :, 3, 1)) ...
+                    + caModeProbs(1, 1) * omega(1) + caModeProbs(2, 1) * omega(2) + caModeProbs(3, 1) * omega(3);
                 if abs(oldCosts - costs) < 1e-10
                     break
                 else
@@ -337,9 +398,9 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                 + this.S(:, :, 9) * measModeProbs(9, 3);
             
             % ca Mode: we have observed the previous mode to be the first
-            numCaModes = 2;
+            numCaModes = 3; % sequence length + 1
             caModeProbs = zeros(numCaModes, this.horizonLength + 1);
-            caModeProbs(:, 1) = this.modeTransitionMatrix' * [1; 0];
+            caModeProbs(:, 1) = this.modeTransitionMatrix' * [1; 0; 0];
             caModeProbs(:, 2) = this.modeTransitionMatrix' * caModeProbs(:, 1);
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
@@ -372,9 +433,9 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
 
             % ca Mode: initially we are in last mode, as we have none
             % observed
-            numCaModes = 2;
+            numCaModes = 3;
             caModeProbs = zeros(numCaModes, this.horizonLength + 1);
-            caModeProbs(:, 1) = [0 1]';
+            caModeProbs(:, 1) = [0 0 1]';
             caModeProbs(:, 2) = this.modeTransitionMatrix' * caModeProbs(:, 1);
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
@@ -408,9 +469,9 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             % ca Mode: initially we are in last mode, as we have none
             % observed
-            numCaModes = 2;
+            numCaModes = 3;
             caModeProbs = zeros(numCaModes, this.horizonLength + 1);
-            caModeProbs(:, 1) = [0 1]';
+            caModeProbs(:, 1) = [0 0 1]';
             caModeProbs(:, 2) = this.modeTransitionMatrix' * caModeProbs(:, 1);
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
@@ -426,13 +487,13 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
              
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() RecedingHorizonUdpLikeController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() RecedingHorizonUdpLikeController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -442,13 +503,13 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
              
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -458,30 +519,30 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             % now test for the R matrix
@@ -489,18 +550,18 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -510,33 +571,40 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidMeasMatrix = eye(this.dimY, this.dimX + 1); % invalid dims
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
              
             invalidMeasMatrix = eye(this.dimY, this.dimX); % correct dims, but not finite
             invalidMeasMatrix(1, end) = nan;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
-        %% testRecedingHorizonUdpLikeControllerInvalidCaDelayProbs
-        function testRecedingHorizonUdpLikeControllerInvalidCaDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+        %% testRecedingHorizonUdpLikeControllerInvalidCaModeTransitionMatrix
+        function testRecedingHorizonUdpLikeControllerInvalidCaModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = blkdiag(1, this.modeTransitionMatrix);% invalid dimensions
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0 0.1 0.8 0.2];% not a matrix
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                expectedErrId);
+            
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
+            this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -546,17 +614,17 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
                      
             invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -566,22 +634,22 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidMaxMeasDelay = [1 2]; % not a scalar
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = -1; % negative scalar
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = 1.5; % not an integer
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = inf; % not finite
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -591,12 +659,12 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidW = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
                        
             invalidW = ones(this.dimU); % W is not pd
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId); 
         end
         
@@ -607,12 +675,12 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidV = eye(this.dimY + 1, this.dimY); % not square
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
                        
             invalidV = ones(this.dimY); % V is not pd
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, this.horizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, this.horizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -622,27 +690,27 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidHorizonLength = [1 2]; % not a scalar
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidHorizonLength = -1; % negative scalar
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidHorizonLength = 0; 
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidHorizonLength = 1.5; % not an integer
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
             
             invalidHorizonLength = inf; % not finite
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidHorizonLength, this.x0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -652,18 +720,18 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidX0 = ones(this.dimX +1); % not a vector
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
                 expectedErrId);
             
             invalidX0 = ones(this.dimX +1, 1); % wrong dimensions
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
                 expectedErrId);
             
             invalidX0 = ones(this.dimX, 1); % not finite
             invalidX0(1) = nan;
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, invalidX0, this.x0Cov), ...
                 expectedErrId);
         end
         
@@ -673,27 +741,32 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidX0Cov = ones(this.dimX +1, 1); % not a matrix
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
                 expectedErrId);
             
             invalidX0Cov = ones(this.dimX +1, this.dimX); % wrong dimensions
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
                 expectedErrId);
             
             invalidX0Cov = ones(this.dimX); % not pd
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
                 expectedErrId);
         end
         
         %% testRecedingHorizonUdpLikeControllerInvalidFlag
         function testRecedingHorizonUdpLikeControllerInvalidFlag(this)
-            expectedErrId = 'RecedingHorizonUdpLikeController:InvalidUseMexFlag';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             invalidUseMexFlag = 'invalid'; % not a flag
             
             this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov, invalidUseMexFlag), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov, invalidUseMexFlag), ...
                 expectedErrId);
         end
 %%
@@ -701,7 +774,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         %% RecedingHorizonUdpLikeController
         function testRecedingHorizonUdpLikeController(this)
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov);
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov);
                         
             this.verifyEqual(controller.getControllerPlantState(), this.x0);
             this.verifyEqual(controller.maxMeasurementDelay, this.maxMeasDelay);
@@ -951,7 +1024,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                 expectedErrId);
             
             % two mode observations, but out of scope
-            invalidModes = [1 3];
+            invalidModes = [1 4];
             delays = [0 1];
             this.verifyError(@() this.controllerUnderTest.computeControlSequence([], [], invalidModes, delays), ...
                 expectedErrId);
@@ -1011,7 +1084,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1039,7 +1112,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);            
         end
         
@@ -1051,7 +1124,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % use the matlab implementation to obtain the controller gains
             useMexImplementation = false;
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
                 this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
                         
             zeroState = zeros(this.dimX, 1);
@@ -1074,12 +1147,12 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);            
         end
         
-        %% testComputeControlSequenceNoMeasurementsNodeModes
-        function testComputeControlSequenceNoMeasurementsNodeModes(this)
+        %% testComputeControlSequenceNoMeasurementsNoModes
+        function testComputeControlSequenceNoMeasurementsNoModes(this)
             import matlab.unittest.constraints.IsScalar;
             
             this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
@@ -1094,7 +1167,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0;
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1103,18 +1176,18 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
-        %% testComputeControlSequenceNoMeasurementsNodeModesNoMex
-        function testComputeControlSequenceNoMeasurementsNodeModesNoMex(this)
+        %% testComputeControlSequenceNoMeasurementsNoModesNoMex
+        function testComputeControlSequenceNoMeasurementsNoModesNoMex(this)
             import matlab.unittest.constraints.IsScalar;
             
             % use the matlab implementation to obtain the controller gains
             useMexImplementation = false;
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
                 this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
             
             controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
@@ -1130,7 +1203,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0;
             
             actualInputSequence = controller.computeControlSequence();
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1139,7 +1212,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
         
@@ -1162,7 +1235,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurement; zeros(this.dimY, 1)];
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurement, measurementDelay);
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1171,7 +1244,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1182,7 +1255,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % use the matlab implementation to obtain the controller gains
             useMexImplementation = false;
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
                 this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
             
             receivedMeasurement = ones(this.dimY, 1);
@@ -1200,7 +1273,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurement; zeros(this.dimY, 1)];
             
             actualInputSequence = controller.computeControlSequence(receivedMeasurement, measurementDelay);
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1209,7 +1282,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
         
@@ -1235,7 +1308,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurements(:, 2); receivedMeasurements(:, 1)];
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1244,7 +1317,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1255,7 +1328,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % use the matlab implementation to obtain the controller gains
             useMexImplementation = false;
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
                 this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
                         
             receivedMeasurements = [ones(this.dimY, 1) 1.5 * ones(this.dimY, 1)];
@@ -1277,7 +1350,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurements(:, 2); receivedMeasurements(:, 1)];
             
             actualInputSequence = controller.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
-            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
             this.verifyEqual(controller.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
                 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1286,7 +1359,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.maxNumIterations);
+                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
 %%

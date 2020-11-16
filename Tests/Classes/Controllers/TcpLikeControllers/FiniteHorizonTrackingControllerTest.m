@@ -5,7 +5,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -88,7 +88,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             
             firstPart = -pinv(this.transitionMatrix(1,1) * (R_1 + B_1' * K * B_1) ... 
                 + this.transitionMatrix(1,2) * (R_2 + B_2' * K * B_2));
-            secondPart = this.transitionMatrix(1,1) * B_1' * sigma + this.transitionMatrix(1,2) * B_2' * sigma;
+            secondPart = -(this.transitionMatrix(1,1) * B_1' * sigma + this.transitionMatrix(1,2) * B_2' * sigma);
             
             % the same for both modes
             feedforward = firstPart * secondPart;
@@ -99,7 +99,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
         %% initControllerUnderTest
         function controller = initControllerUnderTest(this)
             controller = FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory);
         end
         
         %% initAdditionalProperties
@@ -131,12 +131,12 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
              
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() FiniteHorizonTrackingController(invalidSysMatrix, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() FiniteHorizonTrackingController(invalidSysMatrix, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
         end
         
         %% testFiniteHorizonTrackingControllerInvalidInputMatrix
@@ -145,12 +145,12 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() FiniteHorizonTrackingController(this.A, invalidInputMatrix, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() FiniteHorizonTrackingController(this.A, invalidInputMatrix, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
         end
         
@@ -160,19 +160,19 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             
             invalidHorizonLength = eye(3); % not a scalar
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
             
             invalidHorizonLength = 0; % not a positive scalar
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
             
             invalidHorizonLength = 1.5; % not an integer
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
             
             invalidHorizonLength = inf; % not finite
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength, this.refTrajectory), expectedErrId);
         end
                                         
         %% testFiniteHorizonTrackingControllerInvalidCostMatrices
@@ -181,74 +181,81 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, invalidQ, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, invalidQ, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, invalidQ, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, invalidQ, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, invalidQ, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             % now test for the R matrix
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidRMatrix';
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, invalidR, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, invalidR, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, invalidR, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
         end
         
-        %% testFiniteHorizonTrackingControllerInvalidDelayProbs
-        function testFiniteHorizonTrackingControllerInvalidDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+        %% testFiniteHorizonTrackingControllerInvalidModeTransitionMatrix
+        function testFiniteHorizonTrackingControllerInvalidModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = blkdiag(1, this.transitionMatrix);% invalid dimensions
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % does not sum up to 1
             this.verifyError(@() FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory), expectedErrId);
         end
         
         %% testFiniteHorizonTrackingControllerInvalidFlag
         function testFiniteHorizonTrackingControllerInvalidFlag(this)
-            expectedErrId = 'FiniteHorizonTrackingController:InvalidUseMexFlag';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             invalidUseMexFlag = 'invalid'; % not a flag
             
             this.verifyError(@()  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, invalidUseMexFlag), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory, invalidUseMexFlag), expectedErrId);
         end     
         
         %% testFiniteHorizonTrackingController
         function testFiniteHorizonTrackingController(this)
             controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory);
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyEqual(controller.refTrajectory, this.refTrajectory);
@@ -256,7 +263,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             this.verifyTrue(controller.requiresExternalStateEstimate);
             
             controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyEqual(controller.refTrajectory, this.refTrajectory);
@@ -333,7 +340,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             % do not use the mex implementation to compute the controller
             % gains
             controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
             this.assertFalse(controller.useMexImplementation);
             
             % first mode
@@ -375,7 +382,7 @@ classdef FiniteHorizonTrackingControllerTest < BaseFiniteHorizonControllerTest
             % do not use the mex implementation to compute the controller
             % gains
             controller =  FiniteHorizonTrackingController(this.A, this.B, this.Q, this.R, this.Z, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, this.refTrajectory, false);
             this.assertFalse(controller.useMexImplementation);
             
             % check both modes

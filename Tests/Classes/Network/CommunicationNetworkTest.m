@@ -5,7 +5,7 @@ classdef CommunicationNetworkTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -75,22 +75,20 @@ classdef CommunicationNetworkTest < matlab.unittest.TestCase
     
     methods (Test)
         %% testCommunicationNetworkInvalidSimTime
-        function testCommunicationNetworkInvalidSimTime(this)
-            expectedErrId = 'CommunicationNetwork:InvalidSimTime';
-            
+        function testCommunicationNetworkInvalidSimTime(this)           
             invalidSimTime = 0; % must be > 0
-            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), expectedErrId);
+            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), 'MATLAB:validators:mustBePositive');
             
             invalidSimTime = 1000.5; % must be integer
-            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), expectedErrId);
+            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), 'MATLAB:validators:mustBeInteger');
             
             invalidSimTime = inf; % must be finite
-            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), expectedErrId);
+            this.verifyError(@() CommunicationNetwork(invalidSimTime, this.maxDelay), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testCommunicationNetworkInvalidMaxDelay
         function testCommunicationNetworkInvalidMaxDelay(this)
-            expectedErrId = 'CommunicationNetwork:InvalidMaxDelay';
+            expectedErrId = 'Validator:ValidateMaxPacketDelay:InvalidMaxPacketDelay';
             
             invalidMaxDelay = -10; % must be >= 0
             this.verifyError(@() CommunicationNetwork(this.simTime, invalidMaxDelay), expectedErrId);
@@ -100,18 +98,6 @@ classdef CommunicationNetworkTest < matlab.unittest.TestCase
             
             invalidMaxDelay = inf; % must be finite
             this.verifyError(@() CommunicationNetwork(this.simTime, invalidMaxDelay), expectedErrId);
-        end
-        
-        %% testCommunicationNetworkInvalidProtocol
-        function testCommunicationNetworkInvalidProtocol(this)
-            expectedErrId = 'CommunicationNetwork:InvalidProtocol';
-            
-            invalidProtocol = -10; % must be a char array
-            this.verifyError(@() CommunicationNetwork(this.simTime, this.maxDelay, invalidProtocol), expectedErrId);
-            
-            expectedErrId = 'CommunicationNetwork:InvalidProtocolChar';
-            invalidProtocol = 'TPC'; % neither 'TCP', nor 'UDP'
-            this.verifyError(@() CommunicationNetwork(this.simTime, this.maxDelay, invalidProtocol), expectedErrId);
         end
         
         %% testCommunicationNetwork

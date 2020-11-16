@@ -20,7 +20,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,16 +76,16 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
     end
     
     properties (SetAccess = immutable, GetAccess = public)
-        horizonLength;        
+        horizonLength;       
         
-        useMexImplementation@logical=true; 
+        useMexImplementation(1,1) logical = true; 
         % by default, we use the C++ (mex) implementation for computation of controller gains
         % this is faster, but can produce slightly different results
     end
     
     methods (Access = public)
         %% FiniteHorizonTrackingController
-        function this = FiniteHorizonTrackingController(A, B, Q, R, Z, delayProb, ...
+        function this = FiniteHorizonTrackingController(A, B, Q, R, Z, modeTransitionMatrix, ...
                 sequenceLength, horizonLength, referenceTrajectory, useMexImplementation)
             % Class constructor.
             %
@@ -106,9 +106,8 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             %      The time-invariant plant output (performance) matrix, 
             %      i.e., z_k = Z*x_k
             %
-            %   >> delayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
@@ -140,21 +139,16 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
             this = this@SequenceBasedTrackingController(dimX, dimU, sequenceLength, true, Z, referenceTrajectory, horizonLength + 1);
                         
             this.horizonLength = horizonLength;
-                       
             % Q, R
             Validator.validateCostMatrices(Q, R, this.dimRef, dimU);
             this.Q = Q;
             this.R = R;
             
-            % delayProb
-            Validator.validateDiscreteProbabilityDistribution(delayProb);
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
-                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1)); 
+            % mode transition matrix
+            Validator.validateTransitionMatrix(modeTransitionMatrix, sequenceLength + 1);
+            this.transitionMatrix = modeTransitionMatrix;
             
-            if nargin > 9
-                assert(Checks.isFlag(useMexImplementation), ...
-                    'FiniteHorizonTrackingController:InvalidUseMexFlag', ...
-                    '** <useMexImplementation> must be a flag **');
+            if nargin > 9                
                 this.useMexImplementation = useMexImplementation;
             end
             
@@ -196,9 +190,9 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
                 this.sequenceLength + 1);
              
             [stateMean, ~] = state.getMeanAndCov();
-  
             this.sysState(1:this.dimPlantState) = stateMean(:);
-            inputSequence = this.L(: , :, mode, timestep) * this.sysState - this.feedforward(:, mode, timestep);
+            % compute input sequence according to formula (8) in the paper (IFAC) mentioned above
+            inputSequence = this.L(: , :, mode, timestep) * this.sysState + this.feedforward(:, mode, timestep);
             this.sysState(this.dimPlantState + 1:end) = ...
                 this.F * this.sysState(this.dimPlantState + 1:end) + this.G * inputSequence;
         end
@@ -224,7 +218,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
 
             % compute performance output and difference to reference
             % trajectory
-            diff = bsxfun(@minus, this.Z * stateTrajectory, this.refTrajectory);
+            diff = this.Z * stateTrajectory - this.refTrajectory(:, this.horizonLength + 1);            
             lQGCosts = Utility.computeLQGCosts(this.horizonLength, diff, appliedInputs, this.Q, this.R);
         end
         
@@ -234,7 +228,7 @@ classdef FiniteHorizonTrackingController < SequenceBasedTrackingController
                 'FiniteHorizonTrackingController:GetDeviationFromRefForState:InvalidTimestep', ...
                 '** Input parameter <timestep> must be in {1, ... %d} **', ...
                 this.horizonLength);
-            
+
             deviation = this.Z * state - this.refTrajectory(:, timestep);
         end
     end

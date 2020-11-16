@@ -5,7 +5,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -42,8 +42,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             % likewise, H
             % due to the structure of the transition matrix,
             % and the one step horizon, the mode-dependent inputs should not
-            % differ
-                        
+            % differ                        
             
             % first mode
             R_1 = this.R;
@@ -125,7 +124,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
         %% initControllerUnderTest
         function controller = initControllerUnderTest(this)
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength);
         end
         
         %% initAdditionalProperties
@@ -163,14 +162,14 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             expectedErrId = 'FiniteHorizonController:InvalidNumberOfArguments';
             
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
                  
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings), expectedErrId);
             
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings), expectedErrId);
         end
     
@@ -180,12 +179,12 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
              
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() FiniteHorizonController(invalidSysMatrix, this.B, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() FiniteHorizonController(invalidSysMatrix, this.B, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId);
         end
         
         %% testFiniteHorizonControllerInvalidInputMatrix
@@ -194,12 +193,12 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() FiniteHorizonController(this.A, invalidInputMatrix, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId);
              
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() FiniteHorizonController(this.A, invalidInputMatrix, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId);
             
         end
         
@@ -209,19 +208,19 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             
             invalidHorizonLength = eye(3); % not a scalar
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength), expectedErrId);
             
             invalidHorizonLength = 0; % not a positive scalar
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength), expectedErrId);
             
             invalidHorizonLength = 1.5; % not an integer
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength), expectedErrId);
             
             invalidHorizonLength = inf; % not finite
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, invalidHorizonLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidHorizonLength), expectedErrId);
         end
         
         %% testFiniteHorizonControllerInvalidCostMatrices
@@ -230,69 +229,80 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() FiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() FiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() FiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() FiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             % now test for the R matrix
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidRMatrix';
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                this.transitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
         end
         
-        %% testFiniteHorizonControllerInvalidDelayProbs
-        function testFiniteHorizonControllerInvalidDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+        %% testFiniteHorizonControllerInvalidModeTransitionMatrix
+        function testFiniteHorizonControllerInvalidModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = blkdiag(1, this.transitionMatrix);% invalid dimensions
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0.8 0.2];% not a matrix
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.horizonLength), expectedErrId)
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
+            
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
+            this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                invalidModeTransitionMatrix, this.sequenceLength, this.horizonLength), expectedErrId)
         end
 %%
 %%
         %% testFiniteHorizonControllerInvalidFlag
         function testFiniteHorizonControllerInvalidFlag(this)
-            expectedErrId = 'FiniteHorizonController:InvalidUseMexFlag';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             invalidUseMexFlag = 'invalid'; % not a flag
             
             this.verifyError(@()  FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, invalidUseMexFlag), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, invalidUseMexFlag), expectedErrId);
         end        
 %%
 %%
@@ -303,19 +313,19 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidStateWeightings = ones(this.dimX, this.horizonLength + 1, this.numConstraints, this.numConstraints);
             % not a 3D matrix
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             invalidStateWeightings = ones(this.dimX, this.horizonLength, this.numConstraints);
             % not 3D matrix, but incorrect dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             invalidStateWeightings = ones(this.dimX + 2, this.horizonLength + 1, this.numConstraints);
             % not 3D matrix, but incorrect dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 invalidStateWeightings, this.inputConstraintWeightings, this.constraintBounds), expectedErrId);
             
             expectedErrId = 'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidInputWeightings';
@@ -323,19 +333,19 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidInputWeightings = ones(this.dimX, this.horizonLength, this.numConstraints);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             invalidInputWeightings = ones(this.dimU, this.horizonLength + 1, this.numConstraints);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             invalidInputWeightings = ones(this.dimU, this.horizonLength, this.numConstraints + 1);
             % wrong number of slices
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, invalidInputWeightings, this.constraintBounds), expectedErrId);
             
             expectedErrId = 'FiniteHorizonController:ValidateLinearIntegralConstraints:InvalidConstraints';
@@ -343,13 +353,13 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             invalidConstraintBounds = ones(this.dimX, this.horizonLength, this.numConstraints);
             % not a vector
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, invalidConstraintBounds), expectedErrId);
             
             invalidConstraintBounds = ones(1, this.numConstraints + 2);
             % wrong dimension
             this.verifyError(@() FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, invalidConstraintBounds), expectedErrId);
         end
 %%
@@ -358,7 +368,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
         function testFiniteHorizonController(this)
             % create a controller without constraints
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength);
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
             this.verifyFalse(controller.constraintsPresent);
@@ -367,7 +377,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             
             % now one with constraints given
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, true, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, true, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
@@ -379,7 +389,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             stateWeightings = squeeze(this.stateConstraintWeightings(:, :, 1));
             inputWeightings = squeeze(this.inputConstraintWeightings(:, :, 1));
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, false, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, false, ...
                 stateWeightings, inputWeightings, this.constraintBounds(1));
             
             this.verifyEqual(controller.horizonLength, this.horizonLength);
@@ -422,7 +432,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = false;
             
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex);
             this.assertFalse(controller.useMexImplementation);
             
             % first mode
@@ -449,7 +459,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = true;
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
             
@@ -462,7 +472,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualSequence, expectedSequence);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
             
@@ -486,7 +496,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = false;
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
             
@@ -499,7 +509,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualSequence, expectedSequence);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 zeros(this.dimX, 2, this.numConstraints), ...
                 zeros(this.dimU, 1, this.numConstraints), this.constraintBounds);
             
@@ -522,12 +532,12 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             % first mode: previous input arrived at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1, ...
                     this.horizonLength);
-            this.verifyEqual(actualInput, expectedInputs);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
             
             % second mode: previous input did not arrive at plant
             actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2, ...
                     this.horizonLength);
-            this.verifyEqual(actualInput, expectedInputs);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-10);
         end
         
         %% testDoControlSequenceComputationWithoutConstraintsNoMex
@@ -537,7 +547,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = false;
             
             controller = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex);
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex);
             this.assertFalse(controller.useMexImplementation);
             
             % check both modes
@@ -559,7 +569,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = true;
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             this.assertTrue(controllerWithConstraints.useMexImplementation);
             
@@ -570,7 +580,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             this.assertTrue(controllerWithConstraints.useMexImplementation);
             
@@ -587,7 +597,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             useMex = false;
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             this.assertFalse(controllerWithConstraints.useMexImplementation);
             
@@ -598,7 +608,7 @@ classdef FiniteHorizonControllerTest < BaseFiniteHorizonControllerTest
             this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-5);
             
             controllerWithConstraints = FiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, this.horizonLength, useMex, ...
+                this.transitionMatrix, this.sequenceLength, this.horizonLength, useMex, ...
                 this.stateConstraintWeightings, this.inputConstraintWeightings, this.constraintBounds);
             this.assertFalse(controllerWithConstraints.useMexImplementation);
             

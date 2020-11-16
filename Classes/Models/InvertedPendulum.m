@@ -14,7 +14,7 @@ classdef InvertedPendulum < NonlinearPlant
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -37,27 +37,22 @@ classdef InvertedPendulum < NonlinearPlant
     
     properties (Constant, Access = private)
         graviationalAcceleration = 9.81; % in N/kg
+        defaultInternalSamplingRate = 0.001; % 1 kHz
     end
     
     properties (SetAccess = immutable, GetAccess = public)
         massCart;
         massPendulum;
-        lengthPendulum;
+        lengthPendulum; % effective length of pendulum
         inertia;
-        friction;  
+        friction;
     end
     
     properties (Access = public)
-        samplingInterval;
-    end
-    
-    methods
-        function set.samplingInterval(this, newSamplingInterval)
-            assert(Checks.isPosScalar(newSamplingInterval), ...
-                'InvertedPendulum:InvalidSamplingInterval', ...
-                '** <samplingInterval> must be a positive scalar. **');
-            this.samplingInterval = newSamplingInterval;
-        end
+        samplingInterval(1,1) double {mustBePositive} = InvertedPendulum.defaultInternalSamplingRate;
+        % the intensity (PSD)/covariance of the noise acting on the continuous-time linearized dynamics
+        % default zero matrix
+        W_cont (4,4) double {InvertedPendulum.validateNoisePSD(W_cont)};
     end
     
     methods (Access = public)
@@ -73,14 +68,19 @@ classdef InvertedPendulum < NonlinearPlant
             %      A positive scalar denoting the mass (in kg) of the pendulum.
             %
             %   >> lengthPendulum (Positive scalar)
-            %      A positive scalar denoting the length of the pendulum rod (in m).
+            %      A positive scalar denoting the length to the center of mass of the pendulum rod (in m).
+            %      The center of mass of the rod is assumed to be in the
+            %      middle, so this value is the effective pendulum length
+            %      and half the overall length.
             %
             %   >> friction (Positive scalar)
             %      A positive scalar denoting the coefficient of friction for the cart (in Ns/m).
             %
-            %   >> samplingInterval (Positive scalar)
+            %   >> samplingInterval (Positive scalar, optional)
             %      The sampling interval (in seconds) that was used for the discretization of the
             %      underlying continuous-time plant model.
+            %      If left out, the default vale 0.001 is used, which
+            %      corresponds to a sampling rate of 1 kHz.
             %
             % Returns:
             %   << this (InvertedPendulum)
@@ -93,11 +93,14 @@ classdef InvertedPendulum < NonlinearPlant
             this.lengthPendulum = lengthPendulum;
             this.inertia = massPendulum * lengthPendulum^2 / 3; % moment of inertia of the pendulum, assuming a uniform rod (center of mass in the middle)
             this.friction = friction;
-            this.samplingInterval = samplingInterval;
+            if nargin > 4
+                this.samplingInterval = samplingInterval;
+            end
+            
         end 
         
         %% linearizeAroundUpwardEquilibriumCont
-        function [A_cont, B_cont, C_cont] = linearizeAroundUpwardEquilibriumCont(this)
+        function [A_cont, B_cont, C_cont, W_cont] = linearizeAroundUpwardEquilibriumCont(this)
             % Obtain a continuous-time linearization of the pendulum dynamics around the unstable upward equilibrium 
             % which corresponds to the state [0 0 pi 0]'.
             %
@@ -112,6 +115,12 @@ classdef InvertedPendulum < NonlinearPlant
             %      The measurement matrix, assuming that x_1 (position of
             %      the cart) and x_3 (deviation of pendulum angle from
             %      upward equilibrium) are measured.
+            %
+            %   << W_cont (4-by-4 matrix, optional)
+            %      If the covariance of the white noise acting on the
+            %      continuous-time linearized dynamics has been specified
+            %      by setting the <W_cont> property, it is returned here,
+            %      otherwise the 4-by-4 zero matrix.
             
             % compute based on linearized continuous-time dynamics
             denom = this.inertia * (this.massCart + this.massPendulum) + this.massPendulum * this.lengthPendulum ^ 2 * this.massCart;
@@ -123,18 +132,24 @@ classdef InvertedPendulum < NonlinearPlant
             B_cont = [0;  (this.inertia+this.massPendulum*this.lengthPendulum^2)/denom; 0; (this.massPendulum*this.lengthPendulum)/denom];
             
             C_cont = [1 0 0 0; 0 0 1 0];
+            if nargout > 3
+                W_cont = this.W_cont;
+            end
         end
         
         %% linearizeAroundUpwardEquilibrium
-        function [A, B, C, W] = linearizeAroundUpwardEquilibrium(this, W_cont)
+        function [A, B, C, W] = linearizeAroundUpwardEquilibrium(this, samplingInterval)
             % Obtain a discrete-time linearization of the pendulum dynamics around the unstable upward equilibrium 
             % which corresponds to the state [0 0 pi 0]'. 
             % To that end, the continuous-time dynamics is first linearized
-            % and then discretized.
+            % and then discretized using the user-provided sampling interval.
             %
             % Parameters:
-            %   >> W_cont (Positive semidefinite 4-by-4 matrix, optional)
-            %      A 4-by-4 positive semidefinite matrix denoting the intensity (PSD)/covariance of the noise acting on continuous-time linearized dynamics.
+            %   >> samplingInterval (Positive scalar, optional)
+            %      The sampling interval (in seconds) to be used for the
+            %      discretization of the linearized continuous-time
+            %      dynamics. If none is provided, the value given by this
+            %      instance's <samplingInterval> property is used.
             %
             % Returns:
             %   << A (4-by-4 matrix)
@@ -149,29 +164,35 @@ classdef InvertedPendulum < NonlinearPlant
             %      upward equilibrium) are measured.
             %
             %   << W (4-by-4 matrix)
-            %      If W_cont was passed, the covariance of the
+            %      If the covariance of the white noise acting on the
+            %      continuous-time linearized dynamics has been specified
+            %      by setting the <W_cont> property, the covariance of the 
             %      corresponding (equivalent) discrete-time noise process is returned,
-            %      otherwise the empty matrix.
+            %      otherwise the 4-by-4 zero matrix.
             
             % compute based on linearized continuous-time dynamics
             [A_cont, B_cont, C_cont] = this.linearizeAroundUpwardEquilibriumCont();
             
+            if nargin < 2
+                samplingInterval = this.samplingInterval;
+            end
+            
             % discretize A and B in one shot, assuming zero order hold for the
             % input (cf. Raymond DeCarlo, Linear Systems: A State Variable
             % Approach with Numerical Implementation, page 215)
-            tmp = expm([A_cont B_cont; zeros(1,5)] * this.samplingInterval);
+            tmp = expm([A_cont B_cont; zeros(1,5)] * samplingInterval);
             A = tmp(1:4, 1:4);
             B = tmp(1:4, 5:end);
             C = C_cont; 
             
             W = [];
-            if nargin == 2 && ~isempty(W_cont)
+            if ~isequal(this.W_cont, zeros(4))
                 % assume that noise is zero mean, white
                 % discretize the noise by integration
                 % W = integral(@(x) expm(A_cont*x) * plantNoiseCov * expm(A_cont'*x), ...
                     %0, samplingInterval, 'ArrayValued', true);
                 % use the following trick due to van Loan instead to discretize the noise
-                F = [-A_cont W_cont; zeros(4) A_cont'] * this.samplingInterval;
+                F = [-A_cont this.W_cont; zeros(4) A_cont'] * samplingInterval;
                 G = expm(F);
                 W = A * G(1:4, 5:8);
             end
@@ -233,6 +254,16 @@ classdef InvertedPendulum < NonlinearPlant
             if ~isempty(noiseSamples)
                 predictedStates = predictedStates + noiseSamples;
             end
+        end
+    end
+    
+    methods (Static, Access=private)
+        %% validateNoisePSD
+        function validateNoisePSD(W_cont) 
+            [~, num] = cholcov(W_cont);
+            assert(num == 0, ...
+                'InvertedPendulum:InvalidLinNoisePSD', ...
+                '** <W_cont> must be 4-by-4 dimensional and at least positive semidefinite **');
         end
     end
 end

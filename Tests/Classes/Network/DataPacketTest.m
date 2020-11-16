@@ -5,7 +5,7 @@ classdef DataPacketTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -54,24 +54,20 @@ classdef DataPacketTest < matlab.unittest.TestCase
     methods (Test)
         %% testDataPacketInvalidId
         function testDataPacketInvalidId(this)
-            expectedErrId = 'DataPacket:InvalidId';
-            
             invalidId = -1; % ids must be positive
-            this.verifyError(@() DataPacket(this.payload, this.timestamp, invalidId), expectedErrId);
+            this.verifyError(@() DataPacket(this.payload, this.timestamp, invalidId), 'MATLAB:validators:mustBePositive');
             
             invalidId = 2.5; % fractional ids are not permitted
-            this.verifyError(@() DataPacket(this.payload, this.timestamp, invalidId), expectedErrId);
+            this.verifyError(@() DataPacket(this.payload, this.timestamp, invalidId), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testDataPacketInvalidTimestamp
         function testDataPacketInvalidTimestamp(this)
-            expectedErrId = 'DataPacket:InvalidTimeStamp';
-            
             invalidTimestamp = 0; % time stamp must be positive
-            this.verifyError(@() DataPacket(this.payload, invalidTimestamp, this.id), expectedErrId);
+            this.verifyError(@() DataPacket(this.payload, invalidTimestamp, this.id), 'MATLAB:validators:mustBePositive');
             
             invalidTimestamp = 2.5; % fractional time stamps are not permitted
-            this.verifyError(@() DataPacket(this.payload, invalidTimestamp, this.id), expectedErrId);
+            this.verifyError(@() DataPacket(this.payload, invalidTimestamp, this.id), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testDataPacket
@@ -86,13 +82,11 @@ classdef DataPacketTest < matlab.unittest.TestCase
         
         %% testSetPacketDelayInvalidDelay
         function testSetPacketDelayInvalidDelay(this)
-            expectedErrId = 'DataPacket:InvalidPacketDelay';
-            
             invalidDelay = -1; % delay must not be negative
-            this.verifyError(@() this.setPacketDelay(invalidDelay), expectedErrId);
+            this.verifyError(@() this.setPacketDelay(invalidDelay), 'MATLAB:validators:mustBeNonnegative');
             
             invalidDelay = 2.5;  % delay in time stamps, thus not fractional
-            this.verifyError(@() this.setPacketDelay(invalidDelay), expectedErrId);
+            this.verifyError(@() this.setPacketDelay(invalidDelay), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testSetPacketDelay
@@ -104,13 +98,11 @@ classdef DataPacketTest < matlab.unittest.TestCase
         
         %% testSetSourceAddressInvalidAddress
         function testSetSourceAddressInvalidAddress(this)
-            expectedErrId = 'DataPacket:InvalidSourceAddress';
-            
             invalidAddress = 0; % addresses must be > 0
-            this.verifyError(@() this.setSourceAddress(invalidAddress), expectedErrId);
+            this.verifyError(@() this.setSourceAddress(invalidAddress), 'MATLAB:validators:mustBePositive');
             
             invalidAddress = 2.5;  % not fractional
-            this.verifyError(@() this.setSourceAddress(invalidAddress), expectedErrId);
+            this.verifyError(@() this.setSourceAddress(invalidAddress), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testSetSourceAddress
@@ -122,13 +114,11 @@ classdef DataPacketTest < matlab.unittest.TestCase
         
         %% testSetDestinationAddressInvalidAddress
         function testSetDestinationAddressInvalidAddress(this)
-            expectedErrId = 'DataPacket:InvalidDestinationAddress';
-            
             invalidAddress = 0; % addresses must be > 0
-            this.verifyError(@() this.setDestinationAddress(invalidAddress), expectedErrId);
+            this.verifyError(@() this.setDestinationAddress(invalidAddress), 'MATLAB:validators:mustBePositive');
             
             invalidAddress = 2.5;  % not fractional
-            this.verifyError(@() this.setDestinationAddress(invalidAddress), expectedErrId);
+            this.verifyError(@() this.setDestinationAddress(invalidAddress), 'MATLAB:validators:mustBeInteger');
         end
         
         %% testSetDestinationAddress
@@ -136,15 +126,7 @@ classdef DataPacketTest < matlab.unittest.TestCase
             this.setDestinationAddress(this.dstAddress);
             
             this.verifyEqual(this.packetUnderTest.destinationAddress, this.dstAddress);
-        end
-        
-        %% testIsNewerThanInvalidPacket
-        function testIsNewerThanInvalidPacket(this)
-            expectedErrId = 'DataPacket:InvalidType';
-            
-            otherPacket = zeros(3, 3, 3);
-            this.verifyError(@() this.packetUnderTest.isNewerThan(otherPacket), expectedErrId);
-        end
+        end       
         
         %% testIsNewerThan
         function testIsNewerThan(this)

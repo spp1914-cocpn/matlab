@@ -5,7 +5,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -72,7 +72,14 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
     methods (TestMethodSetup)
         %% initProperties
         function initProperties(this)
-            this.dimX = 3;
+            % use (noise-free) stirred tank example (Example 6.15, p. 500-501) from
+            %
+            % Huibert Kwakernaak, and Raphael Sivan, 
+            % Linear Optimal Control Systems,
+            % Wiley-Interscience, New York, 1972.
+            %
+            
+            this.dimX = 2;
             this.dimU = 2;
             this.dimY = 2;
             
@@ -85,12 +92,12 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             % transition matrix
             this.modeTransitionMatrix = [1/5 4/5 0; 1/5 1/5 3/5; 1/5 1/5 3/5];
             
-            this.A = eye(this.dimX);
-            this.B = ones(this.dimX, this.dimU);
+            this.A = diag([0.9512, 0.9048]);           
+            this.B = [4.877 4.877; -1.1895 3.569];
             this.C = 2 * ones(this.dimY, this.dimX);
             
-            this.Q = eye(this.dimX);
-            this.R = eye(this.dimU) * 2;
+            this.Q = diag([0.01, 1]) * diag([50 0.02]) * diag([0.01, 1]); % R_3 in the book
+            this.R = diag([1/3, 3]); % R_2 in the book
               
             this.maxMeasDelay = 1;
             
@@ -99,13 +106,13 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             this.measNoise = Gaussian(zeros(this.dimY, 1), this.V);
             
-            this.x0 = ones(3,1);
+            this.x0 = ones(this.dimX,1);
             this.x0Cov = eye(this.dimX) * 0.2;
             
             this.initAdditionalProperties();
-            
+                        
             this.controllerUnderTest = IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov);
         end
     end
@@ -123,12 +130,12 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         end
         
         %% computeCostate
-        function P = computeCostate(this, transitionMatrix)
-            dimAugState = size(this.augA, 1);
+        function P = computeCostate(this, transitionMatrix, augA, augB, augQ, augR, terminalQ)
+            dimAugState = size(augA, 1);
             numModes = this.sequenceLength + 1;
             
             P = zeros(dimAugState, dimAugState, numModes, this.horizonLength);
-            P(1:this.dimX, 1:this.dimX, :, end) = repmat(this.Q, 1, 1, numModes); %P_k+K
+            P(1:this.dimX, 1:this.dimX, :, end) = repmat(terminalQ, 1, 1, numModes); %P_k+K
                         
             for n=this.horizonLength-1:-1:1
                 for r=1:numModes
@@ -136,11 +143,11 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
                     for i=1:numModes
                         Y = Y + transitionMatrix(r,i) * P(:, :, i, n+1);
                     end
-                    M = this.augR(:, :, r) + transpose(this.augB(:, :, r)) * Y * this.augB(:, :, r);
+                    M = augR(:, :, r) + transpose(augB(:, :, r)) * Y * augB(:, :, r);
                     M = (M + M') / 2;
-                    P_tmp = this.augQ(:, :, r) + transpose(this.augA(:, :, r)) * Y * this.augA(:, :, r) ...
-                        - transpose(this.augA(:, :, r)) * Y * this.augB(:, :, r) * pinv(M) * transpose(this.augB(:, :, r)) ...
-                        * Y * this.augA(:, :, r);
+                    P_tmp = augQ(:, :, r) + transpose(augA(:, :, r)) * Y * augA(:, :, r) ...
+                        - transpose(augA(:, :, r)) * Y * augB(:, :, r) * pinv(M) * transpose(augB(:, :, r)) ...
+                        * Y * augA(:, :, r);
                     % ensure symmetry
                     P(:, :, r, n) = (P_tmp + P_tmp') / 2;
                 end
@@ -148,19 +155,21 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         end
         
         %% computeExpectedInputForState
-        function inputSeq = computeExpectedInputForState(this, modeStates, modeProbs, transitionMatrix)
+        function inputSeq = computeExpectedInputForState(this, modeStates, modeProbs, ...
+                transitionMatrix, augA, augB, augQ, augR, Q, R)
             numModes = this.sequenceLength + 1;
-                                    
-            P = this.computeCostate(transitionMatrix);
             
-            L = modeProbs(1) * this.augR(:, :, 1);
+            terminalQ = idare(augA(1:this.dimX, 1:this.dimX, 1), augB(1:this.dimX, 1:this.dimU, 1), Q, R);
+            P = this.computeCostate(transitionMatrix, augA, augB, augQ, augR, terminalQ);
+            
+            L = modeProbs(1) * augR(:, :, 1);
             S = zeros(this.sequenceLength * this.dimU, 1);
             for r =1:numModes
                 for i=1:numModes
-                    BPB = transpose(this.augB(:, :, i)) * P(:, :, r, 1) * this.augB(:, :, i);
+                    BPB = transpose(augB(:, :, i)) * P(:, :, r, 1) * augB(:, :, i);
                     % ensure symmetry
                     L = L + transitionMatrix(i,r) * modeProbs(i) * (BPB + BPB') / 2;
-                    S = S + transitionMatrix(i,r) * modeProbs(i) * transpose(this.augB(:, :, i)) * P(:, :, r, 1) * this.augA(:, :, i) * modeStates(:, i);
+                    S = S + transitionMatrix(i,r) * modeProbs(i) * transpose(augB(:, :, i)) * P(:, :, r, 1) * augA(:, :, i) * modeStates(:, i);
                 end
             end
             inputSeq = -pinv(L) * S;
@@ -173,13 +182,13 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
              expectedErrId = 'Validator:ValidateSystemMatrix:InvalidMatrix';             
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() IMMBasedRecedingHorizonController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() IMMBasedRecedingHorizonController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -189,13 +198,13 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
              
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -205,13 +214,13 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidMeasMatrix = eye(this.dimY, this.dimX + 1); % invalid dims
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
              
             invalidMeasMatrix = eye(this.dimY, this.dimX); % correct dims, but not finite
             invalidMeasMatrix(1, end) = nan;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -221,30 +230,30 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             % now test for the R matrix
@@ -252,38 +261,45 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
-        %% testIMMBasedRecedingHorizonControllerInvalidCaDelayProbs
-        function testIMMBasedRecedingHorizonControllerInvalidCaDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+        %% testIMMBasedRecedingHorizonControllerInvalidModeTransitionMatrix
+        function testIMMBasedRecedingHorizonControllerInvalidModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = this.modeTransitionMatrix(2:end, 2:end);% invalid dimensions
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                invalidModeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0 0.1 0.8 0.2];% not a matrix
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                invalidModeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                invalidModeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.x0, this.x0Cov), expectedErrId);
+            
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
+            this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
+                invalidModeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -293,22 +309,22 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidMaxMeasDelay = [1 2]; % not a scalar
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidMaxMeasDelay = -1; % negative scalar
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidMaxMeasDelay = 1.5; % not an integer
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidMaxMeasDelay = inf; % not finite
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, invalidMaxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -318,12 +334,12 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidW = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, invalidW, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
                        
             invalidW = ones(this.dimU); % W is not pd
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, invalidW, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -334,12 +350,12 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidNoise = eye(this.dimY + 1, this.dimY); % not a Distribution
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, invalidNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
                        
             invalidNoise = Gaussian(); % wrong dimension
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, invalidNoise, this.horizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -349,27 +365,27 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidHorizonLength = [1 2]; % not a scalar
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidHorizonLength = -1; % negative scalar
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidHorizonLength = 0; 
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidHorizonLength = 1.5; % not an integer
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
             
             invalidHorizonLength = inf; % not finite
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, invalidHorizonLength, ...
                 this.x0, this.x0Cov), expectedErrId);
         end
         
@@ -379,18 +395,18 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidX0 = ones(this.dimX +1); % not a vector
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 invalidX0, this.x0Cov), expectedErrId);
             
             invalidX0 = ones(this.dimX +1, 1); % wrong dimensions
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 invalidX0, this.x0Cov), expectedErrId);
             
             invalidX0 = ones(this.dimX, 1); % not finite
             invalidX0(1) = nan;
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 invalidX0, this.x0Cov), expectedErrId);
         end
         
@@ -400,32 +416,37 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             invalidX0Cov = ones(this.dimX +1, 1); % not a matrix
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, invalidX0Cov), expectedErrId);
             
             invalidX0Cov = ones(this.dimX +1, this.dimX); % wrong dimensions
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, invalidX0Cov), expectedErrId);
             
             invalidX0Cov = ones(this.dimX); % not pd
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, invalidX0Cov), expectedErrId);
         end
         
         %% testIMMBasedRecedingHorizonControllerInvalidFlag
         function testIMMBasedRecedingHorizonControllerInvalidFlag(this)
-            expectedErrId = 'IMMBasedRecedingHorizonController:InvalidUseMexFlag';
+            if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             
             invalidUseMexFlag = 'invalid'; % not a flag            
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov, invalidUseMexFlag), expectedErrId);
             
             invalidUseMexFlag = [false true]; % not a flag            
             this.verifyError(@() IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov, invalidUseMexFlag), expectedErrId);
         end
 %%
@@ -433,7 +454,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         %% testIMMBasedRecedingHorizonController
         function testIMMBasedRecedingHorizonController(this)
             controller = IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov);
                         
             this.verifyEqual(controller.getControllerPlantState(), this.x0); 
@@ -455,7 +476,8 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         modeStates = repmat([this.x0; eta], 1, numModes);
         modeProbs = zeros(1, numModes);
         modeProbs(end) = 1;
-        expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix);
+        expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+            this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
 
         actualInputSequence = this.controllerUnderTest.computeControlSequence();
         this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
@@ -474,10 +496,266 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         this.controllerUnderTest.changeCaDelayProbs(newCaDelayProbs);            
                     
         expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
-            this.modeTransitionMatrix' * modeProbs(:), newTransitionMatrix);
+            this.modeTransitionMatrix' * modeProbs(:), newTransitionMatrix, ...
+            this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
         actualInputSequence = this.controllerUnderTest.computeControlSequence();
         this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol); 
-    end
+    end    
+%%
+%%
+    %% testChangeCostMatricesInvalidCostMatrices
+        function testChangeCostMatricesInvalidCostMatrices(this)
+            expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrix';
+  
+            invalidQ = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(invalidQ, this.R), ...
+                expectedErrId);
+            
+            invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(invalidQ, this.R), ...
+                expectedErrId);
+            
+            invalidQ = eye(this.dimX); % correct dims, but inf
+            invalidQ(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(invalidQ, this.R), ...
+                expectedErrId);
+            
+            expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
+            invalidQ = -eye(this.dimX); % Q is not psd
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(invalidQ, this.R), ...
+                expectedErrId);
+            
+            % now test for the R matrix
+            expectedErrId = 'Validator:ValidateCostMatrices:InvalidRMatrix';
+            
+            invalidR = eye(this.dimU + 1, this.dimU); % not square
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(this.Q, invalidR), ...
+                expectedErrId);
+            
+            invalidR = eye(this.dimU); % correct dims, but inf
+            invalidR(1,1) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(this.Q, invalidR), ...
+                expectedErrId);
+            
+            invalidR = ones(this.dimU); % R is not pd
+            this.verifyError(@() this.controllerUnderTest.changeCostMatrices(this.Q, invalidR), ...
+                expectedErrId);
+        end
+
+        %% testChangeCostMatrices
+        function testChangeCostMatrices(this)
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+            
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % compute the new expected controller state
+            newModeStates = zeros(size(this.augA, 1), numModes);
+            for i=1:numModes
+                newModeStates(:, i) = this.augA(:, :, i) * modeStates(:, i) + this.augB(:, :, i) * expectedInputSequence;
+            end
+ 
+            % now change Q and R
+            newQ = this.Q + eye(this.dimX);
+            newR = this.R + eye(this.dimU);
+            [newAugQ, newAugR] = Utility.createAugmentedCostModel(this.sequenceLength, newQ, newR); 
+            this.controllerUnderTest.changeCostMatrices(newQ, newR);           
+      
+            expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                this.augA, this.augB, newAugQ, newAugR, newQ, newR);
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
+        end
+%%
+%%
+        %% testChangeModelParametersInvalidAMatrix
+        function testChangeModelParametersInvalidAMatrix(this)
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
+            
+            invalidA = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX); % correct dims, but inf
+            invalidA(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidBMatrix
+        function testChangeModelParametersInvalidBMatrix(this)
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            
+            invalidB = eye(this.dimX, this.dimU + 1); % invalid dims
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, this.W), ...
+                expectedErrId);            
+             
+            invalidB = eye(this.dimX, this.dimU); % correct dims, but inf
+            invalidB(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, this.W), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidWMatrix
+        function testChangeModelParametersInvalidWMatrix(this)
+            expectedErrId = 'Validator:ValidateSysNoiseCovarianceMatrix:InvalidCovDim';
+            
+            invalidW = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+            
+            invalidW = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+            
+            invalidW = zeros(this.dimX); % matrix is square, but not positive definite
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidCMatrix
+        function testChangeModelParametersInvalidCMatrix(this)
+            expectedErrId = 'Validator:ValidateMeasurementMatrix:InvalidMeasMatrixDims';
+            
+            invalidC = eye(this.dimY + 1, this.dimX); % invalid dims
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, this.W, invalidC), ...
+                expectedErrId);            
+             
+            invalidC = eye(this.dimY, this.dimX); % correct dims, but inf
+            invalidC(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, this.W, invalidC), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersNewA
+        function testChangeModelParametersNewA(this)
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+            
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % now change A
+            newA = this.A + eye(this.dimX);            
+            [~, ~, ~, ~, newAugA, ~] = Utility.createAugmentedPlantModel(this.sequenceLength, newA, this.B); 
+            
+            % compute the new expected controller state
+            newModeStates = zeros(size(this.augA, 1), numModes);
+            for i=1:numModes
+                newModeStates(:, i) = newAugA(:, :, i) * modeStates(:, i) + this.augB(:, :, i) * expectedInputSequence;
+            end  
+            
+            expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                newAugA, this.augB, this.augQ, this.augR, this.Q, this.R);
+            
+            this.controllerUnderTest.changeModelParameters(newA, this.B, this.W)     
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
+        end
+        
+        %% testChangeModelParametersNewB
+        function testChangeModelParametersNewB(this)
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+            
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % now change B, affects both augA and augB
+            newB = -this.B;
+            [~, ~, ~, ~, newAugA, newAugB] = Utility.createAugmentedPlantModel(this.sequenceLength, this.A, newB); 
+            
+            % compute the new expected controller state
+            newModeStates = zeros(size(this.augA, 1), numModes);
+            for i=1:numModes
+                newModeStates(:, i) = newAugA(:, :, i) * modeStates(:, i) + newAugB(:, :, i) * expectedInputSequence;
+            end      
+            expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                newAugA, newAugB, this.augQ, this.augR, this.Q, this.R);
+            
+            this.controllerUnderTest.changeModelParameters(this.A, newB, this.W)     
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
+        end
+        
+        %% testChangeModelParametersNewW
+        function testChangeModelParametersNewW(this)
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+            
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % now change W, does not result in a new costate
+            % state estimates are also not affected as we do not have a
+            % measurement, so only prediction of estimates
+            newW = 0.5 * this.W;         
+            
+            % compute the new expected controller state
+            newModeStates = zeros(size(this.augA, 1), numModes);
+            for i=1:numModes
+                newModeStates(:, i) = this.augA(:, :, i) * modeStates(:, i) + this.augB(:, :, i) * expectedInputSequence;
+            end      
+            expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+            
+            this.controllerUnderTest.changeModelParameters(this.A, this.B, newW)     
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
+        end
 %%
 %%
         %% testSetEtaStateInvalidEta
@@ -766,7 +1044,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         %% testComputeControlSequenceZeroStateNoMeasurementsNoModesNoMex
         function testComputeControlSequenceZeroStateNoMeasurementsNoModesNoMex(this)
              controller = IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov, false);
             this.assertFalse(controller.useMexImplementation);            
             
@@ -798,7 +1076,8 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             modeStates = repmat([this.x0; eta], 1, numModes);
             modeProbs = zeros(1, numModes);
             modeProbs(end) = 1;
-            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix);
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
            
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
@@ -810,7 +1089,8 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
                 newModeStates(:, i) = this.augA(:, :, i) * modeStates(:, i) + this.augB(:, :, i) * expectedInputSequence;
             end            
             expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
-                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix);
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);            
         end
@@ -818,7 +1098,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
         %% testComputeControlSequenceNoMeasurementsNodeModesNoMex
         function testComputeControlSequenceNoMeasurementsNodeModesNoMex(this)
             controller = IMMBasedRecedingHorizonController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
+                this.modeTransitionMatrix, this.sequenceLength, this.maxMeasDelay, this.W, this.measNoise, this.horizonLength, ...
                 this.x0, this.x0Cov, false);
             
             this.assertFalse(controller.useMexImplementation);            
@@ -830,7 +1110,8 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             modeStates = repmat([this.x0; eta], 1, numModes);
             modeProbs = zeros(1, numModes);
             modeProbs(end) = 1;
-            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix);
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
            
             actualInputSequence = controller.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
@@ -842,7 +1123,8 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
                 newModeStates(:, i) = this.augA(:, :, i) * modeStates(:, i) + this.augB(:, :, i) * expectedInputSequence;
             end            
             expectedInputSequence = this.computeExpectedInputForState(newModeStates, ...
-                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix);
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
             actualInputSequence = controller.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);            
         end        

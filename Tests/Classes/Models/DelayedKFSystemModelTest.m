@@ -5,7 +5,7 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -192,6 +192,20 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
                 augmentedSysMatrix(:, this.dimX+1:end));
         end
         
+ %%
+        %% testSetPlantInputMatrixInvalidMatrix
+        function testSetPlantInputMatrixInvalidMatrix(this)
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            
+            newInputMatrix = eye(this.dimX, this.dimU + 1); % two many cols
+            this.verifyError(@() this.modelUnderTest.setPlantInputMatrix(newInputMatrix), expectedErrId);
+            newInputMatrix = eye(this.dimX + 1, this.dimU); % two many rows
+            this.verifyError(@() this.modelUnderTest.setPlantInputMatrix(newInputMatrix), expectedErrId);            
+            newInputMatrix = inf(this.dimX, this.dimU); % contains inf
+            this.verifyError(@() this.modelUnderTest.setPlantInputMatrix(newInputMatrix), expectedErrId);
+        end
+ %%
+        
         %% testSetSystemNoiseMatrixInvalidMatrix
         function testSetSystemNoiseMatrixInvalidMatrix(this)
             expectedErrId = 'DelayedKFSystemModel:SetSystemNoiseMatrix:InvalidDimensions';
@@ -250,8 +264,84 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             % inputs as matrix of correct dimension, but with nan
             invalidInputs = this.nanUncertainInputs;
             this.verifyError(@() this.modelUnderTest.setSystemInput(invalidInputs), expectedErrId);
+        end        
+%%
+        %% testChangeNoiseInvalidNoise
+        function testChangeNoiseInvalidNoise(this)
+            expectedErrId = 'DelayedKFSystemModel:SetNoise:InvalidSystemNoise';
+            
+            invalidNoise = this; % not a Distribution
+            this.verifyError(@() this.modelUnderTest.changeNoise(invalidNoise), expectedErrId);            
+            invalidNoise = Gaussian(zeros(this.dimX + 1,1), eye(this.dimX + 1)) ; % invalid dimension
+            this.verifyError(@() this.modelUnderTest.changeNoise(invalidNoise), expectedErrId);
         end
         
+        %% testChangeNoise 
+        function testChangeNoise(this)
+            newNoiseMean = ones(this.dimX, 1);
+            newNoiseCov = this.W * 2;
+            
+            % check with non-equal input weights
+            newProbs = [1:this.numPossibleInputs];
+            newProbs = newProbs ./ sum(newProbs); % normalize
+            inputMean = sum(newProbs .* this.uncertainInputs);
+            inputCov = sum(newProbs .* (this.uncertainInputs - inputMean) * (this.uncertainInputs - inputMean)');
+            expectedMean = this.B * inputMean + newNoiseMean;
+            expectedCov = newNoiseCov + this.B * inputCov * this.B';
+            % set the new weights and the uncertain inputs
+            this.modelUnderTest.setDelayWeights(newProbs)           
+            this.modelUnderTest.setSystemInput(this.uncertainInputs);
+            
+            this.modelUnderTest.changeNoise(Gaussian(newNoiseMean, newNoiseCov));
+            
+            actualPlantNoise = this.modelUnderTest.noise;
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
+            
+            this.verifyClass(actualPlantNoise, ?Gaussian);
+            this.verifyEqual(actualMean, expectedMean, 'AbsTol', 1e-10);
+            this.verifyEqual(actualCov, expectedCov, 'AbsTol', 1e-10);
+        end
+         
+        %% testChangeNoiseNoInputs
+        function testChangeNoiseNoInputs(this)
+            newNoiseMean = ones(this.dimX, 1);
+            newNoiseCov = this.W * 2;         
+            this.modelUnderTest.changeNoise(Gaussian(newNoiseMean, newNoiseCov));
+            
+            actualPlantNoise = this.modelUnderTest.noise;
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
+            
+            this.verifyClass(actualPlantNoise, ?Gaussian);
+            this.verifyEqual(actualMean, newNoiseMean, 'AbsTol', 1e-10);
+            this.verifyEqual(actualCov, newNoiseCov, 'AbsTol', 1e-10);
+        end
+        
+        %% testChangeNoiseNoInputUncertainty
+        function testChangeNoiseNoInputUncertainty(this)
+            newNoiseMean = zeros(this.dimX, 1);
+            newNoiseCov = this.W * 2;
+            
+            newProbs = [1 zeros(1, numel(this.inputProbs) -1)]';
+            % compute the additional uncertainty resulting from these probs
+            % there should be none
+            inputMean = this.uncertainInputs(:, 1);
+            expectedMean = this.B * inputMean;
+            expectedCov = newNoiseCov;
+            % set the new weights and the uncertain inputs
+            this.modelUnderTest.setDelayWeights(newProbs)           
+            this.modelUnderTest.setSystemInput(this.uncertainInputs);
+            
+            this.modelUnderTest.changeNoise(Gaussian(newNoiseMean, newNoiseCov));
+            
+            actualPlantNoise = this.modelUnderTest.noise;
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
+            
+            this.verifyClass(actualPlantNoise, ?Gaussian);
+            this.verifyEqual(actualMean, expectedMean, 'AbsTol', 1e-10);
+            this.verifyEqual(actualCov, expectedCov, 'AbsTol', 1e-10);
+        end
+        
+%%
         %% testSetSystemInput
         function testSetSystemInput(this)
             % compute the additional uncertainty
@@ -283,6 +373,29 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
         
         %% testSetDelayWeights
         function testSetDelayWeights(this)
+            % check with non-equal weights
+            newProbs = [1:this.numPossibleInputs];
+            newProbs = newProbs ./ sum(newProbs); % normalize
+            inputMean = sum(newProbs .* this.uncertainInputs);
+            inputCov = sum(newProbs .* (this.uncertainInputs - inputMean) * (this.uncertainInputs - inputMean)');
+            expectedMean = this.B * inputMean;
+            expectedCov = this.W + this.B * inputCov * this.B';
+             % set the new weights
+            this.modelUnderTest.setDelayWeights(newProbs)
+            
+            % set the input and check if the additional noise is as
+            % expected
+            this.modelUnderTest.setSystemInput(this.uncertainInputs);
+            actualPlantNoise = this.modelUnderTest.noise;
+            [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
+            
+            this.verifyClass(actualPlantNoise, ?Gaussian);
+            this.verifyEqual(actualMean, expectedMean, 'AbsTol', 1e-10);
+            this.verifyEqual(actualCov, expectedCov, 'AbsTol', 1e-10);
+        end
+        
+        %% testSetDelayWeightsNoUncertainty
+        function testSetDelayWeightsNoUncertainty(this)
             newProbs = [1 zeros(1, numel(this.inputProbs) -1)]';
             % compute the additional uncertainty resulting from these probs
             % there should be none
@@ -301,8 +414,8 @@ classdef DelayedKFSystemModelTest < matlab.unittest.TestCase
             [actualMean, actualCov] = actualPlantNoise.getMeanAndCov();
             
             this.verifyClass(actualPlantNoise, ?Gaussian);
-            this.verifyEqual(actualMean, expectedMean);
-            this.verifyEqual(actualCov, expectedCov);
+            this.verifyEqual(actualMean, expectedMean, 'AbsTol', 1e-10);
+            this.verifyEqual(actualCov, expectedCov, 'AbsTol', 1e-10);
         end
     end
     

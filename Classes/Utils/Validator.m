@@ -6,7 +6,7 @@ classdef Validator
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -61,10 +61,11 @@ classdef Validator
         end
         
         %% validateInputMatrix
-        function validateInputMatrix(B, dimX)
+        function validateInputMatrix(B, dimX, dimU)
             % Convenience function to validate the input matrix B.
             % In particular, this function errors if the matrix is not
-            % of appropriate dimensions (i.e., does not possess <dimX> rows) or contains NaN or inf values.
+            % of appropriate dimensions (i.e., does not possess <dimX> rows, and, if dimU is specified does not possess <dimU> cols)
+            % or contains NaN or inf values.
             % 
             %
             % Parameters:
@@ -74,9 +75,15 @@ classdef Validator
             %   >> dimX (Positive integer)
             %      The dimension of the plant's state.
             %
-            assert(Checks.isFixedRowMat(B, dimX) && all(isfinite(B(:))), ...
-                'Validator:ValidateInputMatrix:InvalidInputMatrix', ...
-                '** Input matrix <B> must be a real-valued matrix with %d rows **', dimX); 
+            if nargin == 2
+                assert(Checks.isFixedRowMat(B, dimX) && all(isfinite(B(:))), ...
+                    'Validator:ValidateInputMatrix:InvalidInputMatrix', ...
+                    '** Input matrix <B> must be a real-valued matrix with %d rows **', dimX); 
+            else
+                assert(Checks.isMat(B, dimX, dimU) && all(isfinite(B(:))), ...
+                    'Validator:ValidateInputMatrix:InvalidInputMatrixDims', ...
+                    '** Input matrix <B> is expected to be real-valued %d-by-%d matrix**', dimX, dimU);
+            end
         end
         
         %% validateMeasurementMatrix
@@ -262,8 +269,8 @@ classdef Validator
                     && isequal(modeTransitionMatrix <= 1 & modeTransitionMatrix >= 0, ones(numModes)) ...
                     && isequal(round(sum(modeTransitionMatrix, 2) * 1e8), ones(numModes, 1) * 1e8), ...
                     'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim', ...
-                    ['** <modeTransitionMatrix> must be %d-dimensional and stochastic, i.e. each entry must be in [0,1] ' ...
-                    'and all rows must sum up to 1 **'], numModes); 
+                    ['** <modeTransitionMatrix> must be %d-by-%d-dimensional and stochastic, i.e. each entry must be in [0,1] ' ...
+                    'and all rows must sum up to 1 **'], numModes, numModes); 
             end           
         end
         
@@ -279,6 +286,20 @@ classdef Validator
             assert(Checks.isPosScalar(sequenceLength) && mod(sequenceLength, 1) == 0, ...
                 'Validator:ValidateSequenceLength:InvalidSequenceLength', ...
                 '** Input parameter <sequenceLength> (control sequence length) must be a positive integer **');
+        end
+        
+        %% validateMaxPacketDelay
+        function validateMaxPacketDelay(maxPacketDelay, infAllowed)
+            if nargin == 1 || infAllowed
+                assert(Checks.isNonNegativeScalar(maxPacketDelay) ...
+                    && (mod(maxPacketDelay, 1) == 0 || isinf(maxPacketDelay)), ...
+                    'Validator:ValidateMaxPacketDelay:InvalidMaxPacketDelay', ...
+                    '** Input parameter <maxPacketDelay> (maximum allowed packet delay) must be a nonnegative integer or inf **');
+            else
+                 assert(Checks.isNonNegativeScalar(maxPacketDelay) && (mod(maxPacketDelay, 1) == 0), ...
+                    'Validator:ValidateMaxPacketDelay:InvalidMaxPacketDelay', ...
+                    '** Input parameter <maxPacketDelay> (maximum allowed packet delay) must be a nonnegative integer **');
+            end 
         end
     end
 end

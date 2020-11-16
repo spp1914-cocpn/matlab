@@ -5,7 +5,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -76,6 +76,8 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         notApplicableDelays;
         measModel;
         measNoise;
+        
+        modeTransitionProbabilities;
     end
     
     methods (TestMethodSetup)
@@ -85,6 +87,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.numPossibleInputs = 5;
             % all inputs can be "active" with equal probability
             this.inputProbs = ones(1, this.numPossibleInputs) / this.numPossibleInputs;
+            this.modeTransitionProbabilities = repmat(this.inputProbs, this.numPossibleInputs, 1); % stationary distribution is uniform
             this.filtername = 'TestDelayedKF';
             this.zeroDelayFiltername = 'TestZeroDelayedKF';
             
@@ -117,8 +120,8 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.delayFilterModel.setSystemInput(this.uncertainInputs);
             this.zeroDelayFilterModel.setSystemInput(this.uncertainInputs);
             
-            this.delayFilter = DelayedKF(this.maxMeasDelay, this.filtername);
-            this.zeroDelayFilter = DelayedKF(DelayedKFTest.zeroMeasDelay, this.zeroDelayFiltername);
+            this.delayFilter = DelayedKF(this.maxMeasDelay, this.modeTransitionProbabilities, this.filtername);
+            this.zeroDelayFilter = DelayedKF(DelayedKFTest.zeroMeasDelay, this.modeTransitionProbabilities, this.zeroDelayFiltername);
         end
     end
     
@@ -166,6 +169,17 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         
         %% computeUpdatedMoments
         function [expectedUpdatedMean, expectedUpdatedCov] = computeUpdatedMoments(this)
+            % first, compute the prediction step
+            zeroMatrix = zeros(this.dimX, this.dimX * this.maxMeasDelay);
+            % augmented system noise matrix
+            augG = [eye(this.dimX); zeroMatrix'];
+            augA = [this.A, zeroMatrix; ...
+                Utils.blockDiag(eye(this.dimX), this.maxMeasDelay), zeroMatrix'];
+            augCov = repmat(this.stateGaussianCov, this.maxMeasDelay + 1, this.maxMeasDelay + 1);
+            
+            predictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            predictedCov = augA * augCov * augA' + augG * (this.W + this.B * this.inputCov * this.B') * augG';
+            
             % Use straightforward implementation of the filter algorithm given
             % in section 4.2.1 in
             %
@@ -176,11 +190,10 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             %
             gammaF = [eye(this.dimX) repmat(zeros(this.dimX), 1, this.maxMeasDelay)];
             augV = Utils.blockDiag(this.V, this.maxMeasDelay + 1);
-            augMean = repmat(this.stateGaussianMean, this.maxMeasDelay + 1, 1);
-            augCov = repmat(this.stateGaussianCov, this.maxMeasDelay + 1, this.maxMeasDelay + 1);
+            augMean = [predictedMean; repmat(this.stateGaussianMean, this.maxMeasDelay, 1)];  
             % process the delayed measurements one after another
-            expectedUpdatedMean = this.stateGaussianMean;
-            expectedUpdatedCov = augCov;
+            expectedUpdatedMean = predictedMean;
+            expectedUpdatedCov = predictedCov;
             for j=1:numel(this.applicableDelays)
                 delay = this.applicableDelays(j);
                 meas = this.applicableMeasurements(:, j);
@@ -205,30 +218,58 @@ classdef DelayedKFTest < matlab.unittest.TestCase
     end
     
     methods (Test)
-        %% testDelayedKF
-        function testDelayedKFNoName(this)
-            filter = DelayedKF(this.maxMeasDelay);
+        %% testDelayedKFNoName
+        function testDelayedKFNoName(this)            
+            filter = DelayedKF(this.maxMeasDelay, this.modeTransitionProbabilities);
+            [mode, probability] = filter.getPreviousModeEstimate();
             
             this.verifyEqual(filter.getName(), DelayedKFTest.defaultFiltername);
             this.verifyEqual(filter.getStateDim(), 0);
+            
+            this.verifyEqual(mode, this.numPossibleInputs);
+            this.verifyEqual(probability, 1);
         end
         
         %% testDelayedKFZeroMaxMeasDelay
         function testDelayedKFZeroMaxMeasDelay(this)
-            filter = DelayedKF(DelayedKFTest.zeroMeasDelay, this.zeroDelayFiltername);
+            filter = DelayedKF(DelayedKFTest.zeroMeasDelay, this.modeTransitionProbabilities, this.zeroDelayFiltername);            
             
             this.verifyEqual(filter.getMaxMeasurementDelay(), DelayedKFTest.zeroMeasDelay);
             this.verifyEqual(filter.getName(), this.zeroDelayFiltername);
             this.verifyEqual(filter.getStateDim(), 0);
         end
         
+        %% testDelayedKFInvalidModeTransitionMatrix
+        function testDelayedKFInvalidModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrix';
+            
+            % transition matrix must be square
+            invalidTransitionMatrix = [0.7 0.2 0.1; 0.2 0.7 0.1];
+            this.verifyError(@() DelayedKF(DelayedKFTest.zeroMeasDelay, invalidTransitionMatrix, this.filtername),...
+                expectedErrId);    
+            
+            % row sums must be 1
+            invalidTransitionMatrix = [0.7 0.3; 0.6 0.5];
+            this.verifyError(@() DelayedKF(DelayedKFTest.zeroMeasDelay, invalidTransitionMatrix, this.filtername),...
+                expectedErrId);
+            
+            % entries must be in [0,1]
+            invalidTransitionMatrix = [1.3 -0.3; 0.6 0.4];
+            this.verifyError(@() DelayedKF(DelayedKFTest.zeroMeasDelay, invalidTransitionMatrix, this.filtername),...
+                expectedErrId);
+        end
+        
         %% testDelayedKF
         function testDelayedKF(this)
-            filter = DelayedKF(this.maxMeasDelay, this.filtername);
+            filter = DelayedKF(this.maxMeasDelay, this.modeTransitionProbabilities, this.filtername);
+            [mode, probability] = filter.getPreviousModeEstimate();
             
             this.verifyEqual(filter.getMaxMeasurementDelay(), this.maxMeasDelay);
             this.verifyEqual(filter.getName(), this.filtername);
             this.verifyEqual(filter.getStateDim(), 0);
+            
+            this.verifyEqual(mode, this.numPossibleInputs);
+            this.verifyEqual(probability, 1);
         end
         
         %% testSetStateInvalidState
@@ -267,107 +308,207 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.verifyEqualWithAbsTol(actualCov, this.stateGaussianMixtureCov);
             
         end
-        
-        %% testPerformUpdateInvalidMeasModel
-        function testPerformUpdateInvalidMeasModel(this)
-            expectedErrId = 'Filter:UnsupportedMeasurementModel';
+%%
+%%
+        %% testGetPreviousModeEstimate
+        function testGetPreviousModeEstimate(this)
+            this.delayFilter.setState(this.stateGaussianMixture);
+            % first assert, that the previous mode estimate is correct
+            % (we assume that initially we are in last mode)
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();            
+            this.assertEqual(mode, this.numPossibleInputs);
+            this.assertEqual(probability, 1);
             
-            this.delayFilter.setState(this.stateGaussian);
-            % not a LinearMeasurementModel
-            invalidMeasModel = this.delayFilterModel;
-            this.verifyError(@() this.delayFilter.update(invalidMeasModel, this.delayedMeasurements, this.delays), expectedErrId);
+            % now perform a step, without measurements or mode observations
+            this.delayFilter.step(this.delayFilterModel, this.measModel, [], []);
+            
+            % the mode should have been predicted correctly
+            % we end up in the limit distribution
+            [newMode, newProbability] = this.delayFilter.getPreviousModeEstimate(); 
+            this.verifyEqual(newProbability, this.inputProbs(1));
+            this.verifyEqual(newMode, 1);
+        end
+%%
+%%
+        %% testGetModeEstimate
+        function testGetModeEstimate(this)
+            % use a different mode transition matrix in this test case
+            transitionMatrix = eye(this.numPossibleInputs);
+            filterUnderTest = DelayedKF(this.maxMeasDelay, transitionMatrix);
+            
+            % first assert, that the previous mode estimate is correct
+            % (we assume that initially we are in last mode)
+            [mode, probability] = filterUnderTest.getPreviousModeEstimate();            
+            this.assertEqual(mode, this.numPossibleInputs);
+            this.assertEqual(probability, 1);
+            
+            % with this transition matrix, we should always remain in that
+            % mode
+            [currentMode, currentModeProbability] = filterUnderTest.getModeEstimate();            
+            this.verifyEqual(currentMode, this.numPossibleInputs);
+            this.verifyEqual(currentModeProbability, 1);
+        end
+%%
+%%
+        %% testSetModeTransitionMatrixInvalidMatrix
+        function testSetModeTransitionMatrixInvalidMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
+            
+            % transition matrix must be square
+            invalidTransitionMatrix = [0.7 0.2 0.1; 0.2 0.7 0.1];
+            this.verifyError(@() this.delayFilter.setModeTransitionMatrix(invalidTransitionMatrix), expectedErrId);
+            
+            % transition matrix must be square and have appropriate
+            % dimensions (5x5 expected)
+            invalidTransitionMatrix = [0.7 0.2 0.1; 0.2 0.7 0.1; 0.5 0.25 0.25];
+            this.verifyError(@() this.delayFilter.setModeTransitionMatrix(invalidTransitionMatrix), expectedErrId);
+            
+            % row sums must be 1
+            invalidTransitionMatrix = [0.7 0.3; 0.6 0.5];
+            this.verifyError(@() this.delayFilter.setModeTransitionMatrix(invalidTransitionMatrix), expectedErrId);
+            
+            % entries must be in [0,1]
+            invalidTransitionMatrix = [1.3 -0.3; 0.6 0.4];
+            this.verifyError(@() this.delayFilter.setModeTransitionMatrix(invalidTransitionMatrix), expectedErrId);
         end
         
-        %% testPerformUpdateNoApplicableMeas
-        function testPerformUpdateNoApplicableMeas(this)
-                       
-            this.delayFilter.setState(this.stateGaussian);
-            % try to perform a measurement update with measurements that are too old
-            this.delayFilter.update(this.measModel, this.notApplicableMeasurements, this.notApplicableDelays);
+        %% testSetModeTransitionMatrix
+        function testSetModeTransitionMatrix(this)
+            % first assert, that the previous mode estimate is correct
+            % (we assume that initially we are in last mode)
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();            
+            this.assertEqual(mode, this.numPossibleInputs);
+            this.assertEqual(probability, 1);
             
-            % no applicable measurements, thus no update is carried out
-            expectedMean = this.stateGaussianMean;
-            expectedCov = this.stateGaussianCov;
+            expectedNewTransitionMatrix = eye(this.numPossibleInputs);
             
-            actualState = this.delayFilter.getState();
-            
-            this.verifyClass(actualState, ?Gaussian);
-            
-            [actualMean, actualCov] = actualState.getMeanAndCov();
-            
-            this.verifyEqualWithAbsTol(actualMean, expectedMean);
-            this.verifyEqualWithAbsTol(actualCov, expectedCov);
-            this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
+            this.delayFilter.setModeTransitionMatrix(expectedNewTransitionMatrix);
+            % check a side effect: new transition matrix shouldn't have
+            % impact on current true mode which is a prediction based on
+            % previous estimate
+            % we expect a uniform distribution which is the limit
+            % distribution
+            [currentMode, currentModeProbability] = this.delayFilter.getModeEstimate();            
+            this.verifyEqual(currentMode, 1);
+            this.verifyEqual(currentModeProbability, this.inputProbs(1));
         end
-        
-        %% testPerformUpdateZeroMaxMeasDelay
-        function testPerformUpdateZeroMaxMeasDelay(this)
-            % we expect that only the first measurement is processed
-            this.zeroDelayFilter.setState(this.stateGaussian);
-            this.zeroDelayFilter.update(this.measModel, this.delayedMeasurements, this.delays);
+%%
+%%
+        %% testPredict
+        function testPredict(this)
+            expectedErrId = 'Filter:InvalidPredictionStep';
             
-            % update should be a usual Kalman filter update step
-            residualCov = this.C * this.stateGaussianCov * this.C' + this.V;
-            gain = this.stateGaussianCov * this.C' * inv(residualCov);
-            expectedMean = this.stateGaussianMean + gain * (this.zeroDelayMeasurement - this.C * this.stateGaussianMean);
-            expectedCov = this.stateGaussianCov - gain * residualCov * gain';
-            
-            actualState = this.zeroDelayFilter.getState();
-            
-            this.verifyClass(actualState, ?Gaussian);
-            
-            [actualMean, actualCov] = actualState.getMeanAndCov();
-
-            % first, a sanity check: posterior cov must be smaller or equal than prior
-            % cov -> check the eigenvalues of the difference matrix
-            this.verifyGreaterThanOrEqual(eig(this.stateGaussianMixtureCov - actualCov), 0);
-            
-            this.verifyEqualWithAbsTol(actualMean, expectedMean);
-            this.verifyEqualWithAbsTol(actualCov, expectedCov);
-            this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
+            this.verifyError(@() this.delayFilter.predict(this.delayFilterModel), expectedErrId);
         end
+%%
+%%
+        %% testUpdate
+        function testUpdate(this)
+            expectedErrId = 'Filter:InvalidUpdateStep';
         
-        %% testPerformUpdate
-        function testPerformUpdate(this)
-            % two measurements should be processed
-            this.delayFilter.setState(this.stateGaussian);
-            this.delayFilter.update(this.measModel, this.delayedMeasurements, this.delays);
+            this.verifyError(@() this.delayFilter.update(this.measModel, this.delayedMeasurements, this.delays), expectedErrId);
+        end
+%%
+%%            
+        %% testStepInvalidNumberOfArguments
+        function testStepInvalidNumberOfArguments(this)
+            expectedErrId = 'Filter:InvalidStep:InvalidNumArgs';
             
-            [expectedUpdatedMean, expectedUpdatedCov] = this.computeUpdatedMoments();
-            
-            actualState = this.delayFilter.getState();
-            
-            this.verifyClass(actualState, ?Gaussian);
-            
-            [actualMean, actualCov] = actualState.getMeanAndCov();
-                      
-            this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
-            this.verifyEqualWithAbsTol(actualMean, expectedUpdatedMean);
-            this.verifyEqualWithAbsTol(actualCov, expectedUpdatedCov);
+            % pass 6 arguments, i.e, an observed mode, but not a
+            % corresponding delay
+            observedMode = 1;
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, 0, observedMode), ...
+                expectedErrId);            
         end
   
-%%
-%%        
-        %% testPerformPredictionInvalidSysModel
-        function testPerformPredictionInvalidSysModel(this)
-            expectedErrId = 'Filter:UnsupportedSystemModel';
+        %% testStepInvalidMeasurements
+        function testStepInvalidMeasurements(this)
+            expectedErrId = 'Filter:InvalidMeasurements';
             
-            this.delayFilter.setState(this.stateGaussian);
-            % not a DelayedKFSystemModel
-            invalidSysModel = LinearPlant(this.A, this.B, this.W);
-            this.verifyError(@() this.delayFilter.predict(invalidSysModel), expectedErrId);
+            invalidMeasurements = ones(this.dimY, this.dimY, this.dimY); % not a matrix
+            
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, invalidMeasurements, 0), ...
+                expectedErrId);
+        end
+
+        %% testStepInvalidMeasDelays
+        function testStepInvalidMeasDelays(this)
+            expectedErrId = 'Filter:InvalidMeasDelay';
+            
+            % delays must not be a negative scalar
+            invalidDelay = [1 -1 3];
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, invalidDelay), ...
+                expectedErrId);
+            
+             % delays must not be fractional
+            invalidDelay = [1.5 1 2];
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, invalidDelay), ...
+                expectedErrId);
+            
+            % if delays are given as nonnegative vector, must consist of
+            % <numMeas> elements
+            invalidDelays = [1 2]; % vector is too short
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, invalidDelays), ...
+                expectedErrId);
+        end   
+        
+        %% testStepInvalidModes(this)
+        function testStepInvalidModes(this)
+            expectedErrId = 'Filter:InvalidModeObservations';
+
+            % we observe an invalid mode
+            invalidMode = 0;
+            modeDelay = 0;
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, ...
+                this.delays, invalidMode, modeDelay), expectedErrId);
+            
+            % we observe a valid and an invalid mode
+            invalidModes = [1 this.numPossibleInputs + 1];
+            modeDelays = [0 1];
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, ...
+                this.delays, invalidModes, modeDelays), expectedErrId);
         end
         
-        %% testPerformPrediction
-        function testPerformPrediction(this)
-             % should reduce to a normal prediction of a Kalman filter
+        %% testStepInvalidModeDelays
+        function testStepInvalidModeDelays(this)
+            expectedErrId = 'Filter:InvalidModeDelays';
+            
+            observedModes = [1 this.numPossibleInputs];
+            
+            invalidModeDelays = 1; % a single delay
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, ...
+                this.delays, observedModes, invalidModeDelays), expectedErrId);
+            
+            invalidModeDelays = [1 1.5]; % a valid and an invalid delay
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, ...
+                this.delays, observedModes, invalidModeDelays), expectedErrId);
+            
+            invalidModeDelays = [1 2 3]; % vector of delays is too large
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, ...
+                this.delays, observedModes, invalidModeDelays), expectedErrId);
+        end        
+        
+        %% testStepIssueWarningDiscardModeObservation
+        function testStepIssueWarningDiscardModeObservation(this)
+            % we just observe a mode, don't have a measurmeent at hand
+            % mode observation is expected to be discarded with warning, but
+            % result should be a successful prediction            
+            expectedWarningId = 'Filter:IgnoringModeObservations';
+            this.delayFilter.setState(this.stateGaussian)
+            
+            modeDelay = 100; % way too old
+            modeObservation = 1;
+            
+            this.verifyWarning(@() this.delayFilter.step(this.delayFilterModel, this.measModel, [], ...
+                [], modeObservation, modeDelay), expectedWarningId);
+            
+            % should reduce to a normal prediction of a Kalman filter
             expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
                 + this.B * this.inputCov * this.B';
             
-            % set the state and perform a prediction
-            this.delayFilter.setState(this.stateGaussian);
-            this.delayFilter.predict(this.delayFilterModel);
+            % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();        
             actualPredictedState = this.delayFilter.getState();
             
             this.verifyClass(actualPredictedState, ?Gaussian);
@@ -381,18 +522,36 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.verifyEqualWithAbsTol(actualPredictedMean, expectedPredictedMean);
             this.verifyEqualWithAbsTol(actualPredictedCov, expectedPredictedCov);
             this.verifyEqualWithAbsTol(actualPredictedCov, actualPredictedCov'); % should be symmetric
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+        end        
+%%
+%%
+        %% testPerformUpdateInvalidMeasModel
+        function testPerformUpdateInvalidMeasModel(this)
+            expectedErrId = 'Filter:UnsupportedMeasurementModel';
+            
+            this.delayFilter.setState(this.stateGaussian);
+            % not a LinearMeasurementModel
+            invalidMeasModel = this.delayFilterModel;
+            this.verifyError(@() this.delayFilter.step(this.delayFilterModel, invalidMeasModel, this.delayedMeasurements, this.delays), expectedErrId);
         end
         
-        %% testPerformPredictionZeroMaxMeasDelay
-        function testPerformPredictionZeroMaxMeasDelay(this)
+        %% testPerformUpdateNoApplicableMeas
+        function testPerformUpdateNoApplicableMeas(this)                       
+            this.delayFilter.setState(this.stateGaussian);
+            % try to perform a measurement update with a measurement that is too old
+            this.delayFilter.step(this.delayFilterModel, this.measModel, this.notApplicableMeasurements, this.notApplicableDelays);
+            
             % should reduce to a normal prediction of a Kalman filter
             expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
                 + this.B * this.inputCov * this.B';
             
-            this.zeroDelayFilter.setState(this.stateGaussian);
-            this.zeroDelayFilter.predict(this.zeroDelayFilterModel);
-            actualPredictedState = this.zeroDelayFilter.getState();
+            % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();        
+            actualPredictedState = this.delayFilter.getState();
             
             this.verifyClass(actualPredictedState, ?Gaussian);
             
@@ -405,6 +564,213 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.verifyEqualWithAbsTol(actualPredictedMean, expectedPredictedMean);
             this.verifyEqualWithAbsTol(actualPredictedCov, expectedPredictedCov);
             this.verifyEqualWithAbsTol(actualPredictedCov, actualPredictedCov'); % should be symmetric
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.delayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 0);
+            this.verifyEqual(actualNumDiscardedMeas, 1);
+        end
+        
+        %% testPerformUpdateZeroMaxMeasDelay
+        function testPerformUpdateZeroMaxMeasDelay(this)
+            % we expect that only the first measurement is processed
+            this.zeroDelayFilter.setState(this.stateGaussian);
+            this.zeroDelayFilter.step(this.zeroDelayFilterModel, this.measModel, this.delayedMeasurements, this.delays);
+            
+            % prediction
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
+                + this.B * this.inputCov * this.B';
+            
+            % update should be a usual Kalman filter update step
+            residualCov = this.C * expectedPredictedCov * this.C' + this.V;
+            gain = expectedPredictedCov * this.C' * inv(residualCov);
+            expectedMean = expectedPredictedMean + gain * (this.zeroDelayMeasurement - this.C * expectedPredictedMean);
+            expectedCov = expectedPredictedCov - gain * residualCov * gain';
+            
+            % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.zeroDelayFilter.getPreviousModeEstimate();
+            
+            actualState = this.zeroDelayFilter.getState();
+            
+            this.verifyClass(actualState, ?Gaussian);
+            
+            [actualMean, actualCov] = actualState.getMeanAndCov();
+            
+            this.verifyEqualWithAbsTol(actualMean, expectedMean);
+            this.verifyEqualWithAbsTol(actualCov, expectedCov);
+            this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.zeroDelayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 1);
+            this.verifyEqual(actualNumDiscardedMeas, 2);
+        end
+        
+        %% testPerformUpdate
+        function testPerformUpdate(this)
+            % two measurements should be processed, one discarded
+            this.delayFilter.setState(this.stateGaussian);
+            this.delayFilter.step(this.delayFilterModel, this.measModel, this.delayedMeasurements, this.delays);
+            
+            [expectedUpdatedMean, expectedUpdatedCov] = this.computeUpdatedMoments();
+            
+            actualState = this.delayFilter.getState();
+            % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();
+            
+            this.verifyClass(actualState, ?Gaussian);
+            
+            [actualMean, actualCov] = actualState.getMeanAndCov();
+                      
+            this.verifyEqualWithAbsTol(actualCov, actualCov'); % should be symmetric
+            this.verifyEqualWithAbsTol(actualMean, expectedUpdatedMean);
+            this.verifyEqualWithAbsTol(actualCov, expectedUpdatedCov);            
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.delayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 2);
+            this.verifyEqual(actualNumDiscardedMeas, 1);
+        end        
+%%
+%%        
+        %% testPerformPredictionInvalidSysModel
+        function testPerformPredictionInvalidSysModel(this)
+            expectedErrId = 'Filter:UnsupportedSystemModel';
+            
+            this.delayFilter.setState(this.stateGaussian);
+            % not a DelayedKFSystemModel
+            invalidSysModel = LinearPlant(this.A, this.B, this.W);
+            this.verifyError(@() this.delayFilter.step(invalidSysModel, this.measModel, this.delayedMeasurements, this.delays), expectedErrId);
+        end
+        
+        %% testPerformPrediction
+        function testPerformPrediction(this)
+            % should reduce to a normal prediction of a Kalman filter
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
+                + this.B * this.inputCov * this.B';
+            
+            % set the state and perform a prediction
+            this.delayFilter.setState(this.stateGaussian);
+            this.delayFilter.step(this.delayFilterModel, this.measModel, [], []);
+            actualPredictedState = this.delayFilter.getState();
+            % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();
+            
+            this.verifyClass(actualPredictedState, ?Gaussian);
+            
+            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCov();
+            
+            % sanity check: resuting cov must be larger
+            % than initial cov -> check the eigenvalues of the difference matrix
+            this.verifyGreaterThan(eig(actualPredictedCov - this.stateGaussianCov), 0);
+            
+            this.verifyEqualWithAbsTol(actualPredictedMean, expectedPredictedMean);
+            this.verifyEqualWithAbsTol(actualPredictedCov, expectedPredictedCov);
+            this.verifyEqualWithAbsTol(actualPredictedCov, actualPredictedCov'); % should be symmetric
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.delayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 0);
+            this.verifyEqual(actualNumDiscardedMeas, 0);
+        end
+        
+        %% testPerformPredictionWithModeObservations
+        function testPerformPredictionWithModeObservations(this)
+            % init the filter and proceed one step
+            this.delayFilter.setState(this.stateGaussian);
+            this.delayFilter.step(this.delayFilterModel, this.measModel, [], []);
+            
+            modeObservations = [1 2 2 1];
+            modeDelays = [4 2 1 3];
+            expectedPreviousTrueMode = 2;
+     
+            % set the state and perform a prediction
+            this.delayFilter.setState(this.stateGaussian);
+            this.delayFilter.step(this.delayFilterModel, this.measModel, [], [], modeObservations, modeDelays);
+            
+            % should reduce to a normal prediction of a Kalman filter
+            % (without input uncertainty)
+            expectedPredictedMean = this.A  * this.stateGaussianMean ...
+                + this.B * this.uncertainInputs(:, expectedPreviousTrueMode) + this.sysNoiseMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W;                
+            
+            actualPredictedState = this.delayFilter.getState();
+            % the resulting mode distribution should be the a unit vector
+            [mode, probability] = this.delayFilter.getPreviousModeEstimate();
+            
+            this.verifyClass(actualPredictedState, ?Gaussian);
+            
+            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCov();
+            
+            % sanity check: resuting cov must be larger
+            % than initial cov -> check the eigenvalues of the difference matrix
+            this.verifyGreaterThan(eig(actualPredictedCov - this.stateGaussianCov), 0);
+            
+            this.verifyEqualWithAbsTol(actualPredictedMean, expectedPredictedMean);
+            this.verifyEqualWithAbsTol(actualPredictedCov, expectedPredictedCov);
+            this.verifyEqualWithAbsTol(actualPredictedCov, actualPredictedCov'); % should be symmetric
+            
+            this.verifyEqual(probability, 1);
+            this.verifyEqual(mode, expectedPreviousTrueMode);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.delayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 0);
+            this.verifyEqual(actualNumDiscardedMeas, 0);
+            
+            % finally, check if the current mode is correctly predicted
+            % the resulting mode distribution should be the stationary one
+            [predictedMode, predictedModeProb] = this.delayFilter.getModeEstimate();
+            this.verifyEqual(predictedModeProb, this.inputProbs(1));
+            this.verifyEqual(predictedMode, 1);
+        end
+        
+        %% testPerformPredictionZeroMaxMeasDelay
+        function testPerformPredictionZeroMaxMeasDelay(this)
+            % should reduce to a normal prediction of a Kalman filter
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
+                + this.B * this.inputCov * this.B';
+            
+            this.zeroDelayFilter.setState(this.stateGaussian);
+            this.zeroDelayFilter.step(this.zeroDelayFilterModel, this.measModel, [], []);
+            actualPredictedState = this.zeroDelayFilter.getState();
+             % the resulting mode distribution should be the stationary one
+            [mode, probability] = this.zeroDelayFilter.getPreviousModeEstimate();
+            
+            this.verifyClass(actualPredictedState, ?Gaussian);
+            
+            [actualPredictedMean, actualPredictedCov] = actualPredictedState.getMeanAndCov();
+            
+            % sanity check: resuting cov must be larger
+            % than initial cov -> check the eigenvalues of the difference matrix
+            this.verifyGreaterThan(eig(actualPredictedCov - this.stateGaussianCov), 0);
+            
+            this.verifyEqualWithAbsTol(actualPredictedMean, expectedPredictedMean);
+            this.verifyEqualWithAbsTol(actualPredictedCov, expectedPredictedCov);
+            this.verifyEqualWithAbsTol(actualPredictedCov, actualPredictedCov'); % should be symmetric
+            
+            this.verifyEqual(probability, this.inputProbs(1));
+            this.verifyEqual(mode, 1);
+            
+            % finally check if the update data was stored correctly
+            [actualNumUsedMeas, actualNumDiscardedMeas] = this.zeroDelayFilter.getLastUpdateMeasurementData();
+            this.verifyEqual(actualNumUsedMeas, 0);
+            this.verifyEqual(actualNumDiscardedMeas, 0);
         end
     end
 end

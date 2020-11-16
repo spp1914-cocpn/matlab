@@ -5,7 +5,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -55,6 +55,8 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
         inputConstraintWeightings;
         inputConstraints;
         
+        caDelayProbs;
+        
         controllerUnderTest;
     end
     
@@ -89,6 +91,9 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             this.inputConstraintWeightings = ones(this.dimU, 1);
             this.inputConstraints = 10000;           
            
+            % fixed delay is 1 time step
+            this.caDelayProbs = [0 1 0 0 0 0];
+            
             % only the first state variable is to be driven to the origin
             this.Z = [1 0];
             this.Qref = this.Q(1,1);
@@ -102,75 +107,66 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
         function setupControllerUnderTest(this, doTrackRef)
             if doTrackRef
                 this.controllerUnderTest = LinearlyConstrainedPredictiveController(this.A, this.B, this.Qref, this.R, this.sequenceLength, ...
-                    this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints, ...
+                    this.caDelayProbs, this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints, ...
                     this.Z, this.refTrajectory);
             else
                 this.controllerUnderTest = LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, ...
-                    this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints);
+                    this.caDelayProbs, this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints);
             end
         end
         
         %% computeTrajectories
         function [stateTrajectory, inputTrajectory] = computeTrajectories(this)
-            % without effective constraints, problem reduces to LQR
-            % compute the required gain matrices (backward in) time according to
-            %
-            % Thereom 6.28 (p. 494) from
-            %
-            % Huibert Kwakernaak, and Raphael Sivan, 
-            % Linear Optimal Control Systems,
-            % Wiley-Interscience, New York, 1972.
-            %
-            P = this.Q;
-            L = zeros(this.dimU, this.dimX, this.horizonLength); % -F in the theorem
-            for j=this.horizonLength:-1:1
-                L(:, :, j) = -inv(this.R + this.B' * (this.Q + P) * this.B) * this.B' * (this.Q + P) * this.A;
-                P = this.A' * (this.Q + P) * (this.A +this.B * L(:, :, j));
-            end
+            % without effective constraints, problem reduces to LQR                        
+            L = dlqr(this.A, this.B, this.Q, this.R);
             
             stateTrajectory = zeros(this.dimX, this.horizonLength + 1);
             inputTrajectory = zeros(this.dimU, this.horizonLength);
-            
+            % we have defined the delay probabilities such that every
+            % packet is delayed 1 time step
+            % so the expected inputs for the prediction of the state are: 
+            % at stage 1 to compute x_k+1|k: zero ->"from previous packet"
+            % at stage i to compute x_k+i+1|k: u_k+i|k -> "from the current packet"
             stateTrajectory(:, 1) = this.initialPlantState;
-            for j = 1:this.horizonLength
+            stateTrajectory(:, 2) = this.A * stateTrajectory(:, 1);
+            % u_k|k remains zero, since delay is 1 so this entry will never
+            % become active
+            for j = 2:this.horizonLength
                 % compute new input
-                inputTrajectory(:, j) = L(:, :, j) * stateTrajectory(:, j);
+                inputTrajectory(:, j) = -L * stateTrajectory(:, j);
+                % and predict using "expected" input
                 stateTrajectory(:, j + 1) = this.A * stateTrajectory(:, j) + this.B * inputTrajectory(:, j);
-            end
+            end            
         end
         
         %% computeTrajectoriesRef
         function [stateTrajectoryRef, inputTrajectoryRef] = computeTrajectoriesRef(this)
-            % without effective constraints, problem reduces to LQR
-            % compute the required gain matrices (backward in) time according to
-            %
-            % Thereom 6.28 (p. 494) from
-            %
-            % Huibert Kwakernaak, and Raphael Sivan, 
-            % Linear Optimal Control Systems,
-            % Wiley-Interscience, New York, 1972.
-            %
-            P = this.Qref;
-            L = zeros(this.dimU, this.dimX, this.horizonLength); % -F in the theorem
-            for j=this.horizonLength:-1:1
-                L(:, :, j) = -inv(this.R + this.B' * (this.Qref + P) * this.B) * this.B' * (this.Qref + P) * this.A;
-                P = this.A' * (this.Qref + P) * (this.A + this.B * L(:, :, j));
-            end
+            % without effective constraints, problem reduces to LQR with reference weighting            
+            discSys = ss(this.A, this.B, this.Z, [], -1);
+            L = lqry(discSys, this.Qref, this.R);
             
             stateTrajectoryRef = zeros(this.dimX, this.horizonLength + 1);
             inputTrajectoryRef = zeros(this.dimU, this.horizonLength);
-            
+            % we have defined the delay probabilities such that every
+            % packet is delayed 1 time step
+            % so the expected inputs for the prediction of the state are: 
+            % at stage 1 to compute x_k+1|k: zero ->"from previous packet"
+            % at stage i to compute x_k+i+1|k: u_k+i|k -> "from the current packet"
             stateTrajectoryRef(:, 1) = this.initialPlantState;
-            for j = 1:this.horizonLength
+            stateTrajectoryRef(:, 2) = this.A * stateTrajectoryRef(:, 1);
+            % u_k|k remains zero, since delay is 1 so this entry will never
+            % become active
+            for j = 2:this.horizonLength
                 % compute new input
-                inputTrajectoryRef(:, j) = L(:, :, j) * stateTrajectoryRef(:, j);
+                inputTrajectoryRef(:, j) = -L * stateTrajectoryRef(:, j);
+                % and predict using "expected" input
                 stateTrajectoryRef(:, j + 1) = this.A * stateTrajectoryRef(:, j) + this.B * inputTrajectoryRef(:, j);
-            end
+            end      
         end
         
         %% computeCosts
         function costs = computeCosts(this)
-            % compute the costs in a straightforward manner
+            % compute the costs in a straightforward manner            
             costs =  this.stateTrajectory(:, end)' * this.Q * this.stateTrajectory(:, end);
             for j = 1:this.horizonLength
                 costs = costs + this.stateTrajectory(:, j)' * this.Q * this.stateTrajectory(:, j) ...
@@ -193,66 +189,69 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
     methods (Test)
         %% testLinearlyConstrainedPredictiveControllerInvalidSysMatrix
         function testLinearlyConstrainedPredictiveControllerInvalidSysMatrix(this)
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'Validator:ValidateSystemMatrix:InvalidMatrix';
-            
+                        
             invalidA = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() LinearlyConstrainedPredictiveController(invalidA, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidA = inf(this.dimX, this.dimX); % square but inf
             this.verifyError(@() LinearlyConstrainedPredictiveController(invalidA, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
         end
         
         %% testLinearlyConstrainedPredictiveControllerInvalidInputMatrix
         function testLinearlyConstrainedPredictiveControllerInvalidInputMatrix(this)
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrix';
             
             invalidB = eye(this.dimX + 1, this.dimU); % invalid dims
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, invalidB, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidB = eye(this.dimX, this.dimU); % correct dims, but nan
             invalidB(1, 1) = nan;
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, invalidB, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
         end
         
         %% testLinearlyConstrainedPredictiveControllerInvalidCostMatrices
         function testLinearlyConstrainedPredictiveControllerInvalidCostMatrices(this)
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrix';
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, invalidQ, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, invalidQ, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, invalidQ, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, invalidQ, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
@@ -261,20 +260,20 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, invalidR, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, invalidR, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, invalidR, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
         end
@@ -282,11 +281,12 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
         
         %% testLinearlyConstrainedPredictiveControllerInvalidStateConstraints
         function testLinearlyConstrainedPredictiveControllerInvalidStateConstraints(this) %#ok
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'LinearlyConstrainedPredictiveController:ValidateStateConstraints:InvalidStateWeightings';
             
             invalidStateConstraintWeightings = ones(this.dimX +1 , 2); % incorrect dims
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, invalidStateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, invalidStateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
@@ -294,24 +294,25 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             
             invalidStateConstraints = eye(this.dimX); % not a vector
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, invalidStateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, invalidStateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
             invalidStateConstraints = ones(this.dimX, 1); % incorrect dims
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, invalidStateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, invalidStateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
         end
         
         %% testLinearlyConstrainedPredictiveControllerInvalidInputConstraints
         function testLinearlyConstrainedPredictiveControllerInvalidInputConstraints(this) %#ok
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'LinearlyConstrainedPredictiveController:ValidateInputConstraints:InvalidInputWeightings';
             
             invalidInputConstraintWeightings = ones(this.dimU +1 , 2); % incorrect dims
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 invalidInputConstraintWeightings, this.inputConstraints), ...
                 expectedErrId);
             
@@ -319,24 +320,25 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             
             invalidInputConstraints = eye(this.dimU); % not a vector
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, invalidInputConstraints), ...
                 expectedErrId);           
              
             invalidInputConstraints = ones(this.dimU, 1); % incorrect dims
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, invalidInputConstraints), ...
                 expectedErrId);
         end
         
         %% testLinearlyConstrainedPredictiveControllerInvalidNumArgs
         function testLinearlyConstrainedPredictiveControllerInvalidNumArgs(this)
+            delayProbs = [0.25 0.25 0.25 0.25];
             expectedErrId = 'LinearlyConstrainedPredictiveController:InvalidNumberOfArguments';
             
-            % use 10 arguments, we expect either 9 or 11
+            % use 11 arguments, we expect either 10 or 12
             this.verifyError(@() LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, this.stateConstraintWeightings, this.stateConstraints, ...
+                this.sequenceLength, delayProbs, this.stateConstraintWeightings, this.stateConstraints, ...
                 this.inputConstraintWeightings, this.inputConstraints, []), ...
                 expectedErrId);
         end
@@ -344,8 +346,9 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
 %%
         %% testLinearlyConstrainedPredictiveController
         function testLinearlyConstrainedPredictiveController(this)
+            delayProbs = [0.25 0.25 0.25 0.25];
             % should not crash
-            controller = LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, ...
+            controller = LinearlyConstrainedPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, delayProbs, ...
                 this.stateConstraintWeightings, this.stateConstraints, this.inputConstraintWeightings, this.inputConstraints);
               
             this.verifyTrue(controller.requiresExternalStateEstimate); % needs a filter or state feedback
@@ -369,35 +372,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             this.verifyEqual(actualConstraints, this.inputConstraints);
             this.verifyEqual(actualWeightings, this.inputConstraintWeightings);
         end
-        
-        %% testChangeSequenceLength
-        function testChangeSequenceLength(this)
-            this.setupControllerUnderTest(false);
-            
-            this.assertEqual(this.controllerUnderTest.sequenceLength, this.sequenceLength);
-            
-            newSeqLength = this.sequenceLength -1; % is smaller now
-            this.controllerUnderTest.changeSequenceLength(newSeqLength);
-            
-            this.verifyEqual(this.controllerUnderTest.sequenceLength, newSeqLength);
-            
-            newSeqLength = this.horizonLength; % border case
-            this.controllerUnderTest.changeSequenceLength(newSeqLength);
-            
-            this.verifyEqual(this.controllerUnderTest.sequenceLength, newSeqLength);
-        end
-        
-        %% testChangeSequenceLengthInvalidSequenceLength
-        function testChangeSequenceLengthInvalidSequenceLength(this)
-            this.setupControllerUnderTest(false);
-            expectedErrId = 'LinearlyConstrainedPredictiveController:SetSequenceLength:InvalidSequenceLength';
-            
-            this.assertEqual(this.controllerUnderTest.sequenceLength, this.sequenceLength);
-            
-            invalidSeqLength = this.sequenceLength + 2; % exceeds the length of the horizon
-            this.verifyError(@() this.controllerUnderTest.changeSequenceLength(invalidSeqLength), expectedErrId);
-        end
-        
+                
         %% testChangeStateConstraintsInvalidConstraints
         function testChangeStateConstraintsInvalidConstraints(this)
             this.setupControllerUnderTest(false);
@@ -419,6 +394,18 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             invalidStateConstraints = ones(this.dimX, 1); % incorrect dims
             this.verifyError(@() this.controllerUnderTest.changeStateConstraints(newStateConstraintWeightings, invalidStateConstraints), ...
                 expectedErrId);
+        end
+        
+        %% testChangeStateConstraintsNoConstraints
+        function testChangeStateConstraintsNoConstraints(this)
+            this.setupControllerUnderTest(false);
+            
+            newStateConstraints = [];
+            newStateConstraintWeightings = this.stateConstraintWeightings + 42; % ignored 
+            this.controllerUnderTest.changeStateConstraints(newStateConstraintWeightings, newStateConstraints);
+            
+            [actualConstraints, ~] = this.controllerUnderTest.getStateConstraints();
+            this.verifyEmpty(actualConstraints);            
         end
         
         %% testChangeStateConstraints
@@ -490,17 +477,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             actualSequence = this.verifyWarningFree(@() this.controllerUnderTest.computeControlSequence(zeroState, mode, timestep));
             
             this.verifyEqual(actualSequence, expectedSequence, ...
-                'AbsTol', LinearlyConstrainedPredictiveControllerTest.absTol);
-            
-            % now change the sequence length and compute again
-            newSeqLength = this.sequenceLength + 2;
-            expectedSequence = zeros(this.dimU * newSeqLength, 1);
-            this.controllerUnderTest.changeHorizonLength(newSeqLength);
-            this.controllerUnderTest.changeSequenceLength(newSeqLength);
-            
-            actualSequence = this.verifyWarningFree(@() this.controllerUnderTest.computeControlSequence(zeroState, mode, timestep));
-            this.verifyEqual(actualSequence, expectedSequence, ...
-                'AbsTol', LinearlyConstrainedPredictiveControllerTest.absTol);
+                'AbsTol', LinearlyConstrainedPredictiveControllerTest.absTol);      
         end
         
          %% testDoControlSequenceComputationZeroStateRef
@@ -512,8 +489,7 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             % assert that initial difference to ref is zero
             state = [this.refTrajectory(:, timestep); 42];
             this.assertTrue(this.Z * state == this.refTrajectory(:, timestep));
-            
-            
+                        
             mode = 1; % not needed but has to be passed
             expectedSequence = zeros(this.dimU * this.horizonLength, 1);
 

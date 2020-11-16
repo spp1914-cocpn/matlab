@@ -1,7 +1,6 @@
 classdef InfiniteHorizonController < SequenceBasedController
     % Implementation of the optimal infinite horizon linear sequence-based LQG controller for
-    % NCS with a TCP-like network connecting the controller and the
-    % actuator.
+    % NCS with a TCP-like network connecting the controller and the actuator.
     %
     % While this implementation is to some extent more general than the original one of Fischer et al., 
     % which can be found <a href="matlab:web('http://www.cloudrunner.eu/algorithm/142/optimal-sequence-based-lqg-control-over-tcp-like-networks/version/1/')" >here</a>, 
@@ -22,7 +21,7 @@ classdef InfiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -85,7 +84,7 @@ classdef InfiniteHorizonController < SequenceBasedController
         %       computed)
         status = 0;
         
-        useMexImplementation@logical=true; 
+        useMexImplementation(1,1) logical = true; 
         % by default, we use the C++ (mex) implementation for computation of controller gains
         % this is faster, but can produce slightly different results
     end
@@ -117,7 +116,7 @@ classdef InfiniteHorizonController < SequenceBasedController
 
     methods (Access = public)
         %% InfiniteHorizonController
-        function this = InfiniteHorizonController(A, B, Q, R, delayProb, sequenceLength, useMexImplementation)
+        function this = InfiniteHorizonController(A, B, Q, R, modeTransitionMatrix, sequenceLength, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -133,9 +132,8 @@ classdef InfiniteHorizonController < SequenceBasedController
             %   >> R (Positive definite matrix)
             %      The input weighting matrix in the controller's underlying cost function.
             %
-            %   >> delayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
@@ -163,11 +161,9 @@ classdef InfiniteHorizonController < SequenceBasedController
             this.Q = Q;
             this.R = R;
                                      
-            % delayProb
-            Validator.validateDiscreteProbabilityDistribution(delayProb);
-                       
-            this.transitionMatrix = Utility.calculateDelayTransitionMatrix(...
-                Utility.truncateDiscreteProbabilityDistribution(delayProb, sequenceLength + 1));
+            % mode transition matrix
+            Validator.validateTransitionMatrix(modeTransitionMatrix, sequenceLength + 1);
+            this.transitionMatrix = modeTransitionMatrix;
             
              % Check for stabilizablity of A by B
             assert(dimX -rank(ctrb(A, B)) == 0, ...
@@ -179,9 +175,6 @@ classdef InfiniteHorizonController < SequenceBasedController
             this.sysState = zeros(this.dimState, 1);
             
             if nargin == 7
-                assert(Checks.isFlag(useMexImplementation), ...
-                    'InfiniteHorizonController:InvalidUseMexFlag', ...
-                    '** <useMexImplementation> must be a flag **');
                 this.useMexImplementation = useMexImplementation;
             end
             

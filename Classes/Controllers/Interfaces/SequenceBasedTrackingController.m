@@ -6,7 +6,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -28,12 +28,12 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (SetAccess = immutable, GetAccess = protected)
-        Z;
-        dimRef;
+        Z; % can be empty
+        dimRef(1,1) double {mustBeInteger, mustBePositive} = 1;
     end
     
     properties (SetAccess = immutable, GetAccess = public)
-        refTrajectory;
+        refTrajectory; % can be empty
     end
     
     methods (Access = protected)
@@ -61,12 +61,16 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             %      The time-invariant plant output (performance) matrix, 
             %      i.e., z_k = Z*x_k
             %
-            %   >> refTrajectory (Matrix, n-by-horizonLength+1)
+            %   >> refTrajectory (Matrix, n-by-expectedTrajectoryLength)
             %      The reference trajectory to track, given as a matrix
             %      with the reference plant outputs column-wise arranged.
             %
             %   >> expectedTrajectoryLength (Positive integer)
-            %      The expected length reference trajectory.
+            %      The expected length of reference trajectory.
+            %      If a value is passed here, the  passed refTrajectory
+            %      must have at least expectedTrajectoryLength, i.e.,
+            %      at least expectedTrajectoryLength reference plant
+            %      outputs.
             %      Pass the empty matrix here, if no checks shall be done.
             %
             % Returns:
@@ -77,7 +81,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
             if ~isempty(Z)
                 assert(Checks.isFixedColMat(Z, dimPlantState) && all(isfinite(Z(:))), ...
                     'SequenceBasedTrackingController:InvalidZMatrix', ...
-                    '** Input parameter <Z> (Plant output/performance maxtrix) must be a real-valued matrix with %d cols **', ...
+                    '** Input parameter <Z> (Plant output/performance matrix) must be a real-valued matrix with %d cols **', ...
                     dimPlantState); 
                                 
                 this.Z = Z;
@@ -87,7 +91,7 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
                 else
                     this.validateReferenceTrajectory(refTrajectory, expectedTrajectoryLength);
                 end
-                this.refTrajectory = refTrajectory;
+                this.refTrajectory = refTrajectory; % store the whole reference, even if only a subset is used
             else
                 this.Z = [];
                 this.dimRef = dimPlantState;
@@ -130,17 +134,16 @@ classdef (Abstract) SequenceBasedTrackingController < SequenceBasedController
     methods (Access = private)
         %% validateReferenceTrajectory
         function validateReferenceTrajectory(this, refTrajectory, expectedTrajectoryLength)
-            if nargin == 3
-                assert(Checks.isMat(refTrajectory, this.dimRef, expectedTrajectoryLength) && all(isfinite(refTrajectory(:))), ...
-                    'SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
-                    '** Reference trajectory <referenceTrajectory> must be a real-valued %d-by-%d matrix **',...
-                    this.dimRef, expectedTrajectoryLength);                    
-            else
-                assert(Checks.isFixedRowMat(refTrajectory, this.dimRef) && all(isfinite(refTrajectory(:))), ...
+            assert(Checks.isFixedRowMat(refTrajectory, this.dimRef) && all(isfinite(refTrajectory(:))), ...
                     'SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
                     '** Reference trajectory <referenceTrajectory> must be a real-valued matrix with %d rows**',...
                     this.dimRef);
-            end           
+            if nargin == 3
+                assert(size(refTrajectory, 2) >= expectedTrajectoryLength, ...
+                    'SequenceBasedTrackingController:InvalidReferenceTrajectory', ...
+                    '** Reference trajectory <referenceTrajectory> must have at least %d columns**',...
+                    expectedTrajectoryLength);
+            end
         end
     end
 end

@@ -5,7 +5,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -46,7 +46,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
         %% initControllerUnderTest
         function controller = initControllerUnderTest(this)
              controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength);
+                this.transitionMatrix, this.sequenceLength);
         end
         
         %% computeExpectedCosts
@@ -160,12 +160,12 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
              
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() InfiniteHorizonController(invalidSysMatrix, this.B, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength), expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() InfiniteHorizonController(invalidSysMatrix, this.B, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength), expectedErrId);
         end
         
         %% testInfiniteHorizonControllerInvalidInputMatrix
@@ -174,12 +174,12 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() InfiniteHorizonController(this.A, invalidInputMatrix, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength), expectedErrId);
              
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() InfiniteHorizonController(this.A, invalidInputMatrix, this.Q, this.R, ...
-                 this.delayProbs, this.sequenceLength), expectedErrId);
+                 this.transitionMatrix, this.sequenceLength), expectedErrId);
         end
         
                 
@@ -193,55 +193,61 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, invalidQ, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             % now test for the R matrix
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidRMatrix';
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, invalidR, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
         end
         
         %% testInfiniteHorizonControllerInvalidDelayProbs
         function testInfiniteHorizonControllerInvalidDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = blkdiag(1, this.transitionMatrix);% invalid dimensions
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength), expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0.8 0.2]; % not a matrix
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength), expectedErrId);
             
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                invalidDelayProbs, this.sequenceLength), expectedErrId);
+                invalidModeTransitionMatrix, this.sequenceLength), expectedErrId);
+            
+            invalidModeTransitionMatrix = this.transitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
+            this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
+                invalidModeTransitionMatrix, this.sequenceLength), expectedErrId);
         end
         
         %% testInfiniteHorizonControllerInvalidPlant
@@ -250,16 +256,21 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             expectedErrId = 'InfiniteHorizonController:InvalidPlant';
             
             this.verifyError(@() InfiniteHorizonController(this.A, this.B, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
         end
         
         %% testInfiniteHorizonControllerInvalidFlag
         function testInfiniteHorizonControllerInvalidFlag(this)
-            expectedErrId = 'InfiniteHorizonController:InvalidUseMexFlag';
+             if verLessThan('matlab', '9.8')
+                % Matlab R2018 or R2019
+                expectedErrId = 'MATLAB:type:InvalidInputSize';
+            else
+                expectedErrId = 'MATLAB:validation:IncompatibleSize';
+            end
             invalidUseMexFlag = 'invalid'; % not a flag
             
             this.verifyError(@() InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, invalidUseMexFlag), expectedErrId);
+                this.transitionMatrix, this.sequenceLength, invalidUseMexFlag), expectedErrId);
         end
         
         %% testInifiniteHorizonControllerConvergenceImpossible
@@ -270,7 +281,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             
             A_invalid = 10 * this.A_ctrb; % the spectral radius of this matrix is 10
             this.verifyError(@() InfiniteHorizonController(A_invalid, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength), expectedErrId);
+                this.transitionMatrix, this.sequenceLength), expectedErrId);
         end
 %%
 %%
@@ -278,7 +289,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
         function testInfiniteHorizonController(this)
             % successfully initialize controller, should not crash
             controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength);
+                this.transitionMatrix, this.sequenceLength);
             
             this.verifyNotEmpty(controller);
             
@@ -350,7 +361,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % previous mode
             useMexImplementation = false;
             controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, useMexImplementation);
+                this.transitionMatrix, this.sequenceLength, useMexImplementation);
             this.assertFalse(controller.useMexImplementation);
             
             expectedSequence = zeros(this.dimU, 1);
@@ -385,7 +396,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
         function testDoControlSequenceComputationNoMex(this)
             useMexImplementation = false;
             controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
-                this.delayProbs, this.sequenceLength, useMexImplementation);
+                this.transitionMatrix, this.sequenceLength, useMexImplementation);
             
             this.assertFalse(controller.useMexImplementation);
             expectedInputs = this.computeExpectedInputs();
