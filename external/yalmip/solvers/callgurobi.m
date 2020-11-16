@@ -1,7 +1,14 @@
 function output = callgurobi(interfacedata)
 
+% Gurobi 8 does not like seeing options for gurobi 9
+if ~isempty(interfacedata.options.gurobi)
+    if isequal(interfacedata.options.gurobi,interfacedata.options.default.gurobi)
+        interfacedata.options.gurobi = [];
+    end
+end
+
 options = interfacedata.options;
-nOriginal = length(interfacedata.c);
+nOriginal = nnz(interfacedata.variabletype == 0);
 model = yalmip2gurobi(interfacedata);
 
 if interfacedata.options.savedebug
@@ -26,6 +33,12 @@ if isfield(result,'x')
 else
     x = zeros(nOriginal,1);
 end
+
+% On nonconvex models, monomials are included in the list of variables
+% simply set those terms to zero, not used anyway
+xtemp = zeros(length(interfacedata.c),1);
+xtemp(find(interfacedata.variabletype == 0)) = x;
+x = xtemp;
 
 problem = 0;
 qcDual = [];
@@ -87,12 +100,6 @@ infostr = yalmiperror(problem,interfacedata.solver.tag);
 % Standard interface 
 output = createOutputStructure(x,D_struc,[],problem,infostr,solverinput,solveroutput,solvertime);
 output.qcDual      = qcDual;
-
-
-
-
-
-
 
 
 

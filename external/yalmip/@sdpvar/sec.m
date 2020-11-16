@@ -1,23 +1,48 @@
 function varargout = sec(varargin)
-%SEC (overloaded)
 
 switch class(varargin{1})
-
-    case 'double'
-        error('Overloaded SDPVAR/SEC CALLED WITH DOUBLE. Report error')
 
     case 'sdpvar'
         varargout{1} = InstantiateElementWise(mfilename,varargin{:});
 
     case 'char'
 
-        operator = struct('convexity','none','monotonicity','none','definiteness','none','model','callback');
+        operator = CreateBasicOperator('callback');
         operator.derivative = @(x)(tan(x).*sec(x));
+        operator.convexity = @convexity;        
+        operator.inversebounds = @inversebounds;
 
         varargout{1} = [];
         varargout{2} = operator;
         varargout{3} = varargin{3};
 
     otherwise
-        error('SDPVAR/SEC called with CHAR argument?');
+        error(['SDPVAR/' upper(mfilename) ' called with weird argument']);
+end
+
+function vexity = convexity(xL,xU)
+if xL >= -pi/2 && xU <= pi/2
+    vexity = 'convex';
+else
+    vexity = 'none';
+end
+
+function [xLi,xUi] = inversebounds(fL,fU,xL,xU)
+
+if xL <= 0 && xU >= 0 && xL >=-pi/2 && xU <= pi/2
+    % Convex region
+    a = asec(fU);
+    xUi = a;
+    xLi = -a;
+elseif xL>=0 && xU <= pi/2
+    % Increasing region
+    xLi = asec(fL);
+    xUi = asec(fU);
+elseif xL >=-pi/2 && xU <= 0
+    % Decreasing region
+    xLi = -asec(fU);
+    xUi = -asec(fL);
+else
+    xLi = xL;
+    xUi = xU;
 end

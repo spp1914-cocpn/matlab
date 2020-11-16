@@ -109,7 +109,18 @@ if ~isempty(options)
     end
 end
 
-[F,obj,m,everything] = compilesos(F,obj,options,params,candidateMonomials);
+[F,obj,m,everything,modeltype] = compilesos(F,obj,options,params,candidateMonomials);
+
+if isempty(everything)
+    % compilesos has detected trivially infeasible
+    sol.yalmipversion = yalmip('version');
+    sol.matlabversion = version;
+    sol.yalmiptime = etime(clock,yalmip_time);
+    sol.solvertime = 0;         
+    sol.info = yalmiperror(1,'solvesos compilation');
+    sol.problem = 1;  
+    return
+end
 
 p = everything.p;
 normp = everything.normp;
@@ -181,21 +192,25 @@ end
 % **********************************************
 if options.verbose > 0
     if sol.problem == 1
-        if options.sos.model == 1
+        if modeltype == 1
             disp(' ')
             disp('-> Solver reported infeasible dual problem.')
-            disp('-> Your SOS problem is probably unbounded.')
-        elseif options.sos.model == 2
+            disp('-> Your SOS problem is probably unbounded (SOS is dualized).')
+            sol.problem = 2;
+            sol.info = strrep(sol.info,'Infeasible problem','Unbounded objective function');
+        elseif modeltype == 2
             disp(' ')
             disp('-> Solver reported infeasible primal problem.')
             disp('-> Your SOS problem is probably infeasible.')
         end
     elseif sol.problem == 2
-        if options.sos.model == 1
+        if modeltype == 1
             disp(' ')
             disp('-> Solver reported unboundness of the dual problem.')
-            disp('-> Your SOS problem is probably infeasible.')
-        elseif options.sos.model == 2
+            disp('-> Your SOS problem is probably infeasible (SOS is dualized).')
+            sol.problem = 1;
+            sol.info = strrep(sol.info,'Unbounded objective function','Infeasible problem');
+        elseif modeltype == 2
             disp(' ')
             disp('-> Solver reported unboundness of the primal problem.')
             disp('-> Your SOS problem is probably unbounded.')            
@@ -203,7 +218,8 @@ if options.verbose > 0
     elseif sol.problem == 12
             disp(' ')
             disp('-> Solver reported unboundness or infeasibility of the primal problem.')
-            disp('-> Your SOS problem is probably unbounded.')            
+            disp('-> Your SOS problem is probably unbounded but to clarify you should')   
+            disp('-> solve the problem again without an objective')            
     end
 end
 

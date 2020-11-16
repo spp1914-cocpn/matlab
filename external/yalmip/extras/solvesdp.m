@@ -23,7 +23,12 @@ end
 if nargin >= 3
     if isa(varargin{3},'struct')
         if isfield(varargin{3},'solver')
-            if isequal(varargin{3}.solver,'bisection')                
+            if isequal(varargin{3}.solver,'bisection')    
+                if any(is(varargin{1},'sos'))
+                    [F_sos,h_sos] = compilesos(varargin{1},varargin{2},varargin{3});
+                    varargin{1} = F_sos;
+                    varargin{2} = h_sos;
+                end
                 diagnostic = bisection(varargin{:});
                 return
             end
@@ -164,6 +169,8 @@ if length(F) > 0
                 display('Information on required paths https://yalmip.github.io/tutorial/installation/');
                 display(['For complete path, use addpath(genpath(''' fileparts(which('yalmiptest.m')) '''))']);
                 display('***');
+                error(lasterr)
+            else
                 error(lasterr)
             end
         end        
@@ -406,6 +413,7 @@ output.Primal = recoverdata.x_equ+recoverdata.H*output.Primal;
 % OUTPUT
 % ********************************
 diagnostic.yalmipversion = yalmip('ver');
+diagnostic.matlabversion = version;
 diagnostic.yalmiptime = etime(clock,yalmiptime)-output.solvertime;
 diagnostic.solvertime = output.solvertime;
 try

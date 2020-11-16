@@ -1,5 +1,4 @@
 function varargout = acosh(varargin)
-%ACOSH (overloaded)
 
 switch class(varargin{1})
 
@@ -8,8 +7,8 @@ switch class(varargin{1})
 
     case 'char'
 
-        operator = struct('convexity','none','monotonicity','none','definiteness','positive','model','callback');
-        operator.convexhull = [];
+        operator = CreateBasicOperator('positive','callback');   
+        operator.convexity = @convexity;
         operator.bounds = @bounds;
 
         varargout{1} = [];
@@ -17,7 +16,7 @@ switch class(varargin{1})
         varargout{3} = varargin{3};
 
     otherwise
-        error('SDPVAR/ACOSH called with CHAR argument?');
+        error(['SDPVAR/' upper(mfilename) ' called with weird argument']);
 end
 
 function [L,U] = bounds(xL,xU)
@@ -32,3 +31,11 @@ else
     U = inf;
 end
 
+function vexity = convexity(xL,xU)
+if xL >= 1
+    vexity = 'concave';
+elseif xU <= -1
+    vexity = 'concave';
+else
+    vexity = 'none';
+end

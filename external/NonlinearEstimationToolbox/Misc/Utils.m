@@ -9,6 +9,7 @@ classdef Utils
     %   decomposedStateUpdate          - Perform an update for a system state decomposed into two parts A and B.
     %   blockDiag                      - Create a block diagonal matrix.
     %   drawGaussianRndSamples         - Draw random samples from a multivariate Gaussian distribution.
+    %   resampling                     - Perform a simple resampling.
     %   diffQuotientState              - Compute first-order and second-order difference quotients of a function at the given nominal system state.
     %   diffQuotientStateAndNoise      - Compute first-order and second-order difference quotients of a function at the given nominal system state and nominal noise.
     %   diffQuotientStateInputAndNoise - Compute first-order and second-order difference quotients of a function at the given nominal system state, nominal input and nominal noise.
@@ -290,7 +291,46 @@ classdef Utils
             
             rndSamples = bsxfun(@plus, rndSamples, mean);
         end
+        
+        function [rndSamples, idx] = resampling(samples, cumWeights, numSamples)
+            % Perform a simple resampling.
+            %
+            % Parameters:
+            %   >> samples (Matrix)
+            %      Set of column-wise arranged sample positions to resample from.
+            %
+            %   >> cumWeights (Vector)
+            %      Vector containing the cumulative sample weights.
+            %
+            %   >> numSamples (Positive scalar)
+            %      Number of samples to draw from the given sample distribution.
+            %
+            % Returns:
+            %   << rndSamples (Matrix)
+            %      Column-wise arranged samples drawn from the given sample distribution.
+            %
+            %   << idx (Row vector)
+            %      Corresponding indices of the samples that were resampled from.
+            
+            u = rand(1, numSamples);
+            
+            u = sort(u);
+            
+            idx = zeros(1, numSamples);
+            
+            i = 1;
+            
+            for j = 1:numSamples
+                while u(j) > cumWeights(i)
+                    i = i + 1;
+                end
                 
+                idx(j) = i;
+            end
+            
+            rndSamples = samples(:, idx);
+        end
+        
         function [stateJacobian, stateHessians] = diffQuotientState(func, nominalState, step)
             % Compute first-order and second-order difference quotients of a function at the given nominal system state.
             %
