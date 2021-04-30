@@ -5,8 +5,8 @@ All not directly OMNeT++ co-simulation related MATLAB code (libraries, generic N
 For MATLAB-OMNeT++ co-simulation API, see ../libncs_matlab
 
 Reference implementations of the following control and estimation algorithms can be found here:
-* F. Rosenthal, B. Noack, and U.D. Hanebeck, [*State Estimation in Networked Control Systems with Delayed and Lossy Acknowledgments,*](https://doi.org/10.1007/978-3-319-90509-9_2) in: Lee S., Ko H., Oh S. (eds) Multisensor Fusion and Integration in the Wake of Big Data, Deep Learning and Cyber Physical System, Lecture Notes in Electrical Engineering, Volume 501, Springer, Cham, 2018.
-* F. Rosenthal, B. Noack, and U.D. Hanebeck, [*Sequence-Based Receding Horizon Control Over Networks with Delays and Data Losses,*](https://doi.org/10.23919/ACC.2019.8815149) Proceedings of the 2019 American Control Conference (ACC), Philadelphia, PA, USA, 2019. 
+* F. Rosenthal, B. Noack, and U. D. Hanebeck, [*State Estimation in Networked Control Systems with Delayed and Lossy Acknowledgments,*](https://doi.org/10.1007/978-3-319-90509-9_2) in: Lee S., Ko H., Oh S. (eds) Multisensor Fusion and Integration in the Wake of Big Data, Deep Learning and Cyber Physical System, Lecture Notes in Electrical Engineering, Volume 501, Springer, Cham, 2018.
+* F. Rosenthal, B. Noack, and U. D. Hanebeck, [*Sequence-Based Receding Horizon Control Over Networks with Delays and Data Losses,*](https://doi.org/10.23919/ACC.2019.8815149) Proceedings of the 2019 American Control Conference (ACC), Philadelphia, PA, USA, 2019. 
 * F. Rosenthal and U. D. Hanebeck, [*Sequence-Based Stochastic Receding Horizon Control Using IMM Filtering and Value Function Approximation,*](https://doi.org/10.1109/CDC40024.2019.9029717) Proceedings of the 58th IEEE Conference on Decision and Control (CDC), Nice, France, 2019.
 * F. Rosenthal and U. D. Hanebeck, [*Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks,*](https://doi.org/10.1016/j.ifacol.2020.12.1030) in: IFAC-PapersOnLine, Volume 53, Issue 2, 2020.  
 
