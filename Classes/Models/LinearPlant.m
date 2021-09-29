@@ -1,4 +1,4 @@
-classdef LinearPlant < LinearSystemModel
+classdef LinearPlant < LinearSystemModel & matlab.mixin.Copyable
     % Implementation (based on Maxim Dolgov's original one) of a linear (potentially time-varying) plant with white and zero mean Gaussian
     % process noise, i.e. x_{k+1} = A_{k}x_{k} + B_{k}u_{k} + G_{k}w_{k}.
     % By default, the system noise matrix G_{k} is the identity matrix.
@@ -11,7 +11,7 @@ classdef LinearPlant < LinearSystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -32,18 +32,22 @@ classdef LinearPlant < LinearSystemModel
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-    properties (SetAccess = private, GetAccess = public)
-        % system state dimension; (positive integer)
-        dimState = [];
+    properties (SetAccess = private, GetAccess = public)                
         % input matrix (B); (matrix of dimension <dimState> x <dimInput>)
         inputMatrix = [];
         % state constraints: state must be within [lb, ub]
         stateConstraints = []; % column wise arranged: [lb ub]
     end
 
-    properties (Access = private)
+    properties (SetAccess = immutable, GetAccess = public)
         % control input dimension (<dimInput>); (positive integer)
         dimInput= [];
+        % system state dimension; (positive integer)
+        dimState = [];
+    end
+    
+    properties (Access = private)
+        
         % applied control input; (col vector of dimension <dimInput>)
         input;
     end
@@ -75,8 +79,12 @@ classdef LinearPlant < LinearSystemModel
                 sysNoiseMatrix = [];
             end
             this@LinearSystemModel(systemMatrix, sysNoiseMatrix);
-            this.dimState = size(this.sysMatrix, 1);            
-            this.setSystemInputMatrix(inputMatrix); 
+            this.dimState = size(this.sysMatrix, 1);
+            
+            Validator.validateInputMatrix(inputMatrix, this.dimState);
+            this.inputMatrix = inputMatrix;
+            this.dimInput = size(inputMatrix, 2);
+            
             this.setNoise(noiseCovMatrix);
         end
         
@@ -104,7 +112,7 @@ classdef LinearPlant < LinearSystemModel
                     setNoise@LinearSystemModel(this, Gaussian(zeros(this.dimState, 1), covariance));
                 else
                    this.noise.set(zeros(this.dimState, 1), covariance);
-               end
+                end
             else
                 % we check if there is a match to the sys noise matrix
                     dimNoise = size(this.sysNoiseMatrix, 2);
@@ -112,7 +120,7 @@ classdef LinearPlant < LinearSystemModel
                         'LinearPlant:SetNoise:InvalidCovariance', ...
                         '** <covariance> must be a %d-by-%d matrix as system noise matrix is %d-by-%d', ...
                         dimNoise, dimNoise, this.dimState, dimNoise);
-                if isempty(this.noise)
+                if isempty(this.noise)                    
                     setNoise@LinearSystemModel(this, Gaussian(zeros(dimNoise, 1), covariance));
                 else
                     this.noise.set(zeros(dimNoise, 1), covariance);
@@ -162,10 +170,12 @@ classdef LinearPlant < LinearSystemModel
             % Parameters:
             %   >> inputMatrix (Matrix with <dimX> rows)
             %      The new system input matrix (B).
-                       
-            Validator.validateInputMatrix(inputMatrix, this.dimState);
+            
+            Validator.validateInputMatrix(inputMatrix, this.dimState, this.dimInput);
             this.inputMatrix = inputMatrix;
-            this.dimInput = size(inputMatrix, 2);
+            
+            % side effect in case system input is present
+            this.setSystemInput(this.input);
          end
         
         %% setSystemMatrix
@@ -177,9 +187,8 @@ classdef LinearPlant < LinearSystemModel
             %   >> sysMatrix (Square matrix)
             %      The new system matrix.
             
-            Validator.validateSystemMatrix(sysMatrix);
-            setSystemMatrix@LinearSystemModel(this, sysMatrix);
-            this.dimState = size(this.sysMatrix, 1);
+            Validator.validateSystemMatrix(sysMatrix, this.dimState);
+            setSystemMatrix@LinearSystemModel(this, sysMatrix);            
         end
         
         %% setStateConstraints
@@ -216,6 +225,17 @@ classdef LinearPlant < LinearSystemModel
             if ~isempty(this.stateConstraints)
                 isValid = all(this.stateConstraints(:, 1) <= state) && all(state <= this.stateConstraints(:, 2));
             end
+        end
+    end
+    
+    methods (Access = protected)
+        %% copyElement
+        function copyObj = copyElement(this)
+            % noise cannot be empty
+            [~,noiseCov] = this.noise.getMeanAndCov();
+            copyObj = LinearPlant(this.sysMatrix, this.inputMatrix, noiseCov, this.sysNoiseMatrix);
+            copyObj.setSystemInput(this.input); % this.input can be empty
+            copyObj.stateConstraints = this.stateConstraints; % they can be copied
         end
     end
 end

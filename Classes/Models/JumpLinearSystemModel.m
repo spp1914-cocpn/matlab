@@ -1,4 +1,4 @@
-classdef JumpLinearSystemModel < SystemModel
+classdef JumpLinearSystemModel < SystemModel & matlab.mixin.Copyable
     % Implementation of a Jump Linear System consisting of a set of
     % LinearSystemModels, usually refered to as modes, one of which being active at a time.
     % A specific example is a Markov Jump Linear System where the active
@@ -8,7 +8,7 @@ classdef JumpLinearSystemModel < SystemModel
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -50,7 +50,7 @@ classdef JumpLinearSystemModel < SystemModel
             %   >> numModes (Positive integer)
             %      The number of system modes.
             %
-            %   >> systemModels (Cell array containing LinearSystemModel subclasses)
+            %   >> systemModels (Cell array containing LinearPlants)
             %      A cell array consisting of the individual linear system models, one for each
             %      mode of the system.
             %
@@ -68,9 +68,9 @@ classdef JumpLinearSystemModel < SystemModel
         %% setModeSystemModels
         function setModeSystemModels(this, systemModels)
             assert(iscell(systemModels) && numel(systemModels) >= this.numModes ...
-                    && all(cellfun(@(model) Checks.isClass(model, 'LinearSystemModel'), systemModels)), ...
+                    && all(cellfun(@(model) Checks.isClass(model, 'LinearPlant'), systemModels)), ...
                 'JumpLinearSystemModel:InvalidModeSystemModels', ...
-                '** <systemModels> must be a cell array with at least %d LinearSystemModel(s). **', ...
+                '** <systemModels> must be a cell array with at least %d LinearPlant(s). **', ...
                 this.numModes);    
             
             % internally, store models as a row vector-like cell array
@@ -116,6 +116,18 @@ classdef JumpLinearSystemModel < SystemModel
             this.modeSystemModels{mode}.setSystemMatrix(sysMatrix);
         end
         
+        %% setSystemInputMatrixForMode
+        function setSystemInputMatrixForMode(this, sysInputMatrix, mode)
+            this.checkMode(mode);
+            this.modeSystemModels{mode}.setSystemInputMatrix(sysInputMatrix);
+        end
+        
+        %% setSystemNoiseCovarianceMatrixForMode
+        function setSystemNoiseCovarianceMatrixForMode(this, sysNoiseCov, mode)
+            this.checkMode(mode);
+            this.modeSystemModels{mode}.setNoise(sysNoiseCov);
+        end
+        
         %% setActiveMode
         function setActiveMode(this, activeMode)
             this.checkMode(activeMode);
@@ -150,6 +162,16 @@ classdef JumpLinearSystemModel < SystemModel
             blocks = cellfun(@(model) kron(model.sysMatrix, model.sysMatrix),...
                 this.modeSystemModels, 'UniformOutput', false);
             mss = max(abs(eig(blkdiag(blocks{:}) * kron(transitionMatrix', speye(dimState ^ 2))))) < 1;
+        end
+    end
+    
+    methods (Access = protected)
+        %% copyElement
+        function copyObj = copyElement(this)
+            copyObj = copyElement@matlab.mixin.Copyable(this);
+            for j=1:this.numModes
+                copyObj.modeSystemModels{j} = this.modeSystemModels{j}.copy();
+            end
         end
     end
     

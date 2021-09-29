@@ -5,7 +5,7 @@ classdef LinearPlantTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -218,32 +218,79 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             this.verifyEqual(actualInput, expectedInput);
         end
         
-        %% testSetSystemInputMatrix(this)
+        %% testSetSystemInputMatrixInvalidMatrices
         function testSetSystemInputMatrixInvalidMatrices(this)
-            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrix';
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
              
             % input matrix of wrong dimensions
             this.verifyError(@() this.plantUnderTest.setSystemInputMatrix(this.invalidDimsBMatrix), expectedErrId);
             % invalid input matrix
             this.verifyError(@() this.plantUnderTest.setSystemInputMatrix(this.invalidBMatrix), expectedErrId);
+            
+            % change of input dimension is not allowed
+            this.verifyError(@() this.plantUnderTest.setSystemInputMatrix([this.B, this.B]), expectedErrId);
         end
         
-        %% testSetSystemInputMatrix
-        function testSetSystemInputMatrix(this)
+        %% testSetSystemInputMatrixNoInput
+        function testSetSystemInputMatrixNoInput(this)
+            this.assertEmpty(this.plantUnderTest.getSystemInput());
             expectedB = this.B * 2;
             
             this.plantUnderTest.setSystemInputMatrix(expectedB);
             this.verifyEqual(this.plantUnderTest.inputMatrix, expectedB);
+            
+            % check the side effect
+            plantState = ones(this.dimX, 1);
+            noiseSample = zeros(this.dimX, 1); % for simplicity
+            expectedState = this.A * plantState;
+            actualState = this.plantUnderTest.systemEquation(plantState, noiseSample);
+            this.verifyEqual(actualState, expectedState);
+        end
+        
+        
+        %% testSetSystemInputMatrixInput
+        function testSetSystemInputMatrixInput(this)
+            this.assertEmpty(this.plantUnderTest.getSystemInput());
+                        
+            expectedB = this.B * 2;
+            
+            this.plantUnderTest.setSystemInputMatrix(expectedB);
+            this.plantUnderTest.setSystemInput(this.sysInput);
+            
+            this.verifyEqual(this.plantUnderTest.inputMatrix, expectedB);
+            
+            % check the side effect
+            plantState = ones(this.dimX, 1);
+            noiseSample = zeros(this.dimX, 1); % for simplicity
+            expectedState = this.A * plantState + expectedB * this.sysInput;
+            actualState = this.plantUnderTest.systemEquation(plantState, noiseSample);
+            this.verifyEqual(actualState, expectedState);
+                        
+            this.assertEqual(this.plantUnderTest.getSystemInput(), this.sysInput);
+            
+            % now change the input matrix again, this time an input is
+            % already given
+            expectedB = this.B * 3;
+            this.plantUnderTest.setSystemInputMatrix(expectedB);
+            % check the side effect
+            plantState = ones(this.dimX, 1);
+            noiseSample = zeros(this.dimX, 1); % for simplicity
+            expectedState = this.A * plantState + expectedB * this.sysInput;
+            actualState = this.plantUnderTest.systemEquation(plantState, noiseSample);
+            this.verifyEqual(actualState, expectedState);
         end
         
         %% testSetSystemMatrixInvalidMatrices
         function testSetSystemMatrixInvalidMatrices(this)
-            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidMatrix';
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
             
             % matrix of wrong dimensions, not square
             this.verifyError(@() this.plantUnderTest.setSystemMatrix(this.invalidDimsAMatrix), expectedErrId);
             % invalid matrix
             this.verifyError(@() this.plantUnderTest.setSystemMatrix(this.invalidAMatrix), expectedErrId);
+            
+            % change of state dimension is not allowed
+            this.verifyError(@() this.plantUnderTest.setSystemMatrix(blkdiag(this.A, 2)), expectedErrId);
         end
         
         %% testSetSystemMatrix
@@ -252,13 +299,7 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             
             this.plantUnderTest.setSystemMatrix(expectedA);
             this.verifyEqual(this.plantUnderTest.sysMatrix, expectedA);
-            this.verifyEqual(this.plantUnderTest.dimState, this.dimX);
-            
-            % change the dimension of the state
-            expectedA = eye(this.dimX * 3);
-            this.plantUnderTest.setSystemMatrix(expectedA);
-            this.verifyEqual(this.plantUnderTest.sysMatrix, expectedA);
-            this.verifyEqual(this.plantUnderTest.dimState, this.dimX * 3);
+            this.verifyEqual(this.plantUnderTest.dimState, this.dimX);            
         end
         
         %% testSetStateConstraintsInvalidLowerBound
@@ -381,6 +422,68 @@ classdef LinearPlantTest < matlab.unittest.TestCase
             this.verifyTrue(this.plantUnderTest.isValidState(validState));
             this.verifyTrue(this.plantUnderTest.isValidState(validState2));
             this.verifyFalse(this.plantUnderTest.isValidState(invalidState));
+        end
+        
+        %% testCopy
+        function testCopy(this)            
+            lowerBound = ones(this.dimX, 1);
+            lowerBound(end) = -inf;
+            upperBound = 10 * ones(1, this.dimX); % use row vector here
+            upperBound(end-1) = inf;
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            this.plantUnderTest.setSystemInput(this.sysInput);
+            
+            plantCopy = this.plantUnderTest.copy();
+            this.verifyEqual(this.plantUnderTest, plantCopy);
+            
+            plantCopy.setSystemMatrix(this.A / 2);
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            this.verifyEqual(this.plantUnderTest.sysMatrix, this.A);
+            
+            plantCopy.setSystemMatrix(this.A);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
+            
+            % now change the system input matrix
+            plantCopy.setSystemInputMatrix(this.B / 2);
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            this.verifyEqual(this.plantUnderTest.inputMatrix, this.B);
+            
+            plantCopy.setSystemInputMatrix(this.B);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
+                        
+            % now change the system noise matrix
+            plantCopy.setSystemNoiseMatrix(this.A);
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            this.verifyEmpty(this.plantUnderTest.sysNoiseMatrix);
+            
+            plantCopy.setSystemNoiseMatrix([]);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
+            
+            % now change the input
+            plantCopy.setSystemInput([]);
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            this.verifyEmpty(plantCopy.getSystemInput());
+            
+            plantCopy.setSystemInput(this.sysInput);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
+            
+            this.plantUnderTest.setStateConstraints(ones(this.dimX, 1), 10 * ones(1, this.dimX)); % slightly different
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            this.verifyEqual(plantCopy.stateConstraints, [lowerBound(:), upperBound(:)]);
+            
+            this.plantUnderTest.setStateConstraints(lowerBound, upperBound);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
+            
+            % finally, change the noise
+            plantCopy.setNoise(this.W * 1.5); % change noise covariance
+            [~,newCov] = plantCopy.noise.getMeanAndCov();
+            [~, oldCov] = this.plantUnderTest.noise.getMeanAndCov();
+            this.verifyEqual(newCov, this.W * 1.5);
+            this.verifyNotEqual(oldCov, newCov);            
+            this.verifyNotEqual(this.plantUnderTest, plantCopy);
+            
+            plantCopy.setNoise(this.W);
+            this.verifyEqual(this.plantUnderTest, plantCopy); % equal again
         end
     end
     

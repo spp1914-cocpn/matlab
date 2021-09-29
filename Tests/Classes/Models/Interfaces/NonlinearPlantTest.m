@@ -39,7 +39,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
     end
     
     methods (Access = private, Static)
-        function newState = sysFunction(stateSamples, input, noiseSamples)
+        function newState = sysFunction(stateSamples, input, ~)
             % deterministic system equation
             if isempty(input)
                 newState = stateSamples .^ 2;
@@ -64,46 +64,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
         end
     end
     
-    methods (Test)
-                     
-        %% testNonlinearPlantInvalidStateDim
-        function testNonlinearPlantInvalidStateDim(this)
-            if verLessThan('matlab', '9.8')
-                % Matlab R2018 or R2019
-                expectedErrId = 'MATLAB:UnableToConvert';
-            else
-                expectedErrId = 'MATLAB:validation:UnableToConvert';
-            end
-            
-            invalidDimX = @pwd; % not a scalar
-            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), expectedErrId);
-            
-            invalidDimX = -1; % negative
-            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), 'MATLAB:validators:mustBePositive');
-            
-            invalidDimX = 1.5; % not an integer
-            this.verifyError(@() TestPlantModel(invalidDimX, this.dimU), 'MATLAB:validators:mustBeInteger');
-        end
-        
-        %% testNonlinearPlantInvalidInputDim
-        function testNonlinearPlantInvalidInputDim(this)
-            if verLessThan('matlab', '9.8')
-                % Matlab R2018 or R2019
-                expectedErrId = 'MATLAB:UnableToConvert';
-            else
-                expectedErrId = 'MATLAB:validation:UnableToConvert';
-            end
-            
-            invalidDimU = @pwd; % not a scalar
-            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), expectedErrId);
-            
-            invalidDimU = -1; % negative
-            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), 'MATLAB:validators:mustBePositive');
-            
-            invalidDimU = 1.5; % not an integer
-            this.verifyError(@() TestPlantModel(this.dimX, invalidDimU), 'MATLAB:validators:mustBeInteger');
-        end
-        
+    methods (Test)        
         %% testNonlinearPlant
         function testNonlinearPlant(this)
             plant = TestPlantModel(this.dimX, this.dimU);
@@ -132,7 +93,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
            this.plantUnderTest.setSystemInput([]);
         end
         
-         %% testSetSystemInput
+         %% testGetSystemInput
         function testGetSystemInput(this)
            % set and immediately retrieve input
            this.plantUnderTest.setSystemInput(this.sysInput);
@@ -177,8 +138,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
             
             expectedA = diag(2 * nominalState);
             expectedB = [1 0 ; 0 1 ; 1 0 ];
-            expectedG = zeros(this.dimX);
-            
+            expectedG = zeros(this.dimX);            
             
             this.verifyEqual(A, expectedA);
             this.verifyEqual(B, expectedB);
@@ -259,7 +219,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
             % noise should not affect the result
             expectedStates = this.plantUnderTest.simulateForInput(stateSamples, []);
             
-            actualStates = this.plantUnderTest.systemEquation(stateSamples, zeroInputSamples, noiseSamples);
+            actualStates = this.plantUnderTest.systemEquation(stateSamples, noiseSamples);
             this.verifyEqual(actualStates, expectedStates);
             
             % input set
@@ -267,7 +227,7 @@ classdef NonlinearPlantTest < matlab.unittest.TestCase
             this.plantUnderTest.setSystemInput(this.sysInput);
             expectedStates = this.plantUnderTest.simulateForInput(stateSamples, this.sysInput);
             
-            actualStates = this.plantUnderTest.systemEquation(stateSamples, inputSamples, noiseSamples);
+            actualStates = this.plantUnderTest.systemEquation(stateSamples, noiseSamples);
             this.verifyEqual(actualStates, expectedStates);
         end
     end

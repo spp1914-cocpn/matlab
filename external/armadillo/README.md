@@ -1,10 +1,9 @@
 ### Armadillo: C++ Library for Linear Algebra & Scientific Computing  
 http://arma.sourceforge.net
 
-Copyright 2008-2020 Conrad Sanderson (http://conradsanderson.id.au)  
+Copyright 2008-2021 Conrad Sanderson (http://conradsanderson.id.au)  
 Copyright 2008-2016 National ICT Australia (NICTA)  
-Copyright 2017-2020 Arroyo Consortium  
-Copyright 2017-2020 Data61 / CSIRO  
+Copyright 2017-2021 Data61 / CSIRO  
 
 ---
 
@@ -236,7 +235,7 @@ use the following command:
 Otherwise, if you want to use Armadillo without installation
 (ie. without the Armadillo runtime library), use the following command:
   
-    g++ prog.cpp -o prog.cpp -std=c++11 -O2 -I /home/blah/armadillo-7.200.3/include -DARMA_DONT_USE_WRAPPER -lopenblas
+    g++ prog.cpp -o prog -std=c++11 -O2 -I /home/blah/armadillo-7.200.3/include -DARMA_DONT_USE_WRAPPER -lopenblas
 
 The above command assumes that the armadillo archive was unpacked into /home/blah/  
 The command needs to be adjusted if the archive was unpacked into a different directory
@@ -459,3 +458,7 @@ Octave/Matlab with C++ code that uses Armadillo matrices.
 
 * RcppArmadillo: integration of Armadillo with the R system and environment  
   http://dirk.eddelbuettel.com/code/rcpp.armadillo.html
+
+* PyArmadillo: linear algebra library for Python  
+  https://pyarma.sourceforge.io
+

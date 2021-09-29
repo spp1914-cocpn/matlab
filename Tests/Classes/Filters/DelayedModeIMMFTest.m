@@ -5,7 +5,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -196,6 +196,29 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             this.verifyEqual(filter.getMaxMeasurementDelay(), this.maxMeasDelay);
             this.verifyEqual(filter.getName(), this.filterName);
         end
+        
+        %% testSetState
+        function testSetState(this)
+            this.filterUnderTest.setState(this.stateGaussianMixture);
+            % test the side effect
+            for j=1:this.maxMeasDelay + 1
+                this.verifyEqual(this.filterUnderTest.stateHistory{j}, this.stateGaussianMixture);
+            end
+            this.verifyEqual(this.filterUnderTest.getState(), this.stateGaussianMixture);
+            
+            this.filterUnderTest.setState(this.stateGaussian);
+            % test the side effect; estimate is stored as Gaussian mixture,
+            % so check the moments
+            for j=1:this.maxMeasDelay + 1
+                [mean, cov] = this.filterUnderTest.stateHistory{j}.getMeanAndCov();
+                this.verifyEqual(mean, this.stateGaussianMean);
+                this.verifyEqual(cov, this.stateGaussianCov);
+            end
+            
+            [mean, cov] = this.filterUnderTest.getState().getMeanAndCov();
+            this.verifyEqual(mean, this.stateGaussianMean);
+            this.verifyEqual(cov, this.stateGaussianCov);
+        end
 %%
 %%
         %% testGetPreviousModeEstimateInvalidFlag
@@ -254,6 +277,9 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
 %%
        %% testSetModeTransitionMatrix
         function testSetModeTransitionMatrix(this)
+            mixinClass = ?ModeTransitionMatrixChangeable;
+            this.assertTrue(ismember(mixinClass.Name, superclasses(this.filterUnderTest)));
+            
             % override the test method from the base class
             expectedNewTransitionMatrix = this.modeTransitionMatrix';
             
@@ -276,7 +302,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             expectedErrId = 'Filter:InvalidUpdateStep';
         
             this.verifyError(@() this.filterUnderTest.update(this.measModel, this.measurement), expectedErrId);
-        end
+        end       
 %%
 %%
         %% testStepInvalidNumberOfArguments
@@ -331,7 +357,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
                 expectedErrId);
         end
         
-        %% function testStepInvalidModes(this)
+        %% testStepInvalidModes
         function testStepInvalidModes(this)
             expectedErrId = 'Filter:InvalidModeObservations';
             
@@ -410,7 +436,7 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
         
         %% testStepNoMeasurementsGaussian
         function testStepNoMeasurementsGaussian(this)
-            this.filterUnderTest.setState(this.stateGaussian);
+            this.filterUnderTest.setState(this.stateGaussian);                       
             
             % init the filter with a Gaussian, and use same plant model for
             % all modes; equivalent to simply using a KF for prediction
@@ -482,7 +508,29 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             % finally check if the update data was stored correctly
             [actualNumUsedMeas, actualNumDiscardedMeas] = this.filterUnderTest.getLastUpdateMeasurementData();
             this.verifyEqual(actualNumUsedMeas, 1);
-            this.verifyEqual(actualNumDiscardedMeas, 0);
+            this.verifyEqual(actualNumDiscardedMeas, 0);            
+            
+            % check the history
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEqual(this.filterUnderTest.measurementHistory{1}, this.measurement);
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{4});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{3});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            [a,b,c] = this.filterUnderTest.stateHistory{4}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)
+            [a,b,c] = this.filterUnderTest.stateHistory{3}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)           
+            [a,b,c] = this.filterUnderTest.stateHistory{2}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights);
+            this.verifyEqual(this.filterUnderTest.stateHistory{1}, this.filterUnderTest.getState());
         end
         
         %% testStepZeroMeasDelayGaussianMixtureMeasModelsPerMode
@@ -504,6 +552,28 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             [actualNumUsedMeas, actualNumDiscardedMeas] = this.filterUnderTest.getLastUpdateMeasurementData();
             this.verifyEqual(actualNumUsedMeas, 1);
             this.verifyEqual(actualNumDiscardedMeas, 0);
+            
+            % check the history
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEqual(this.filterUnderTest.measurementHistory{1}, this.measurement);
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{4});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{3});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            [a,b,c] = this.filterUnderTest.stateHistory{4}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)
+            [a,b,c] = this.filterUnderTest.stateHistory{3}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)           
+            [a,b,c] = this.filterUnderTest.stateHistory{2}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights);
+            this.verifyEqual(this.filterUnderTest.stateHistory{1}, this.filterUnderTest.getState());
         end
         
         %% testStepOnlyModeObservationGaussianMixture
@@ -524,6 +594,29 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             [actualNumUsedMeas, actualNumDiscardedMeas] = this.filterUnderTest.getLastUpdateMeasurementData();
             this.verifyEqual(actualNumUsedMeas, 0);
             this.verifyEqual(actualNumDiscardedMeas, 0);
+            
+            % check the history
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{1});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{4});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{3});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{1}, modeObservation);
+            
+            [a,b,c] = this.filterUnderTest.stateHistory{4}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)
+            [a,b,c] = this.filterUnderTest.stateHistory{3}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights)           
+            [a,b,c] = this.filterUnderTest.stateHistory{2}.getComponents();
+            this.verifyEqual(a, this.mixtureMeans);
+            this.verifyEqual(b, this.mixtureCovs);
+            this.verifyEqual(c, this.mixtureWeights);
+            this.verifyEqual(this.filterUnderTest.stateHistory{1}, this.filterUnderTest.getState());
         end
         
         %% testStepDelayedModeObservationsMeasurementsGaussianMixture
@@ -542,7 +635,8 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             % and measurement
             this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
                 measurements, measDelay, modeObservations, modeDelays);
-            % another measurement appears, and we now the previous mode
+                      
+            % another measurement appears, and we know the previous mode
             % also the input changes
             newMeasDelay = 2;
             newMeasurement = 2 * this.measurement;
@@ -552,37 +646,421 @@ classdef DelayedModeIMMFTest < BaseIMMFTest
             this.jumpLinearPlantModel.setSystemInput(newInput);
             this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
                 newMeasurement, newMeasDelay, newMode, newModeDelay);
+                      
+            % use an IMMF as reference
+            % check that the state history is correctly maintained
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            
+            immf.setState(this.stateGaussianMixture.copy()); % time k-5
+            plant = JumpLinearSystemModel(this.numModes, this.modePlantModels);
+            plant.setSystemInput([]);
+            
+            immf.predict(plant); % time k-4
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
+                       
+            immf.step(plant, this.measModel, measurements); % time k-3
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            
+            [a,b,c]=this.filterUnderTest.stateHistory{4}.getComponents();
+            this.verifyEqual(a, intermediateMeans);
+            this.verifyEqual(b, intermediateCovs);
+            this.verifyEqual(c, [0 1]);
+            
+            immf.step(plant, this.measModel, newMeasurement); % time k-2      
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
+            
+            [a,b,c]=this.filterUnderTest.stateHistory{3}.getComponents();
+            this.verifyEqual(a, intermediateMeans);
+            this.verifyEqual(b, intermediateCovs);
+            this.verifyEqual(c, [1 0]);
+            
+            plant.setSystemInput(this.input);
+            immf.predict(plant); % state at time k-1
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            
+            [a,b,c]=this.filterUnderTest.stateHistory{2}.getComponents();
+            this.verifyEqual(a, intermediateMeans);
+            this.verifyEqual(b, intermediateCovs);
+            this.verifyEqual(c, [0 1]);
+            
+            plant.setSystemInput(newInput);
+            immf.predict(plant); % state at time k
+            
+            [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
+            
+            this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);            
+            this.verifyEqual(this.filterUnderTest.stateHistory{1}, immf.getState());
+        end
+        
+        %% testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffSysMatrix
+        function testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffSysMatrix(this)
+            % a setup similar to TCP-like: we have the previous modes
+            % available, but not all measurements
+            % test the case that after some filter invocations, the
+            % underlying system dynamics changes
+                        
+            modeDelays = [1 3 2]; % we know the modes from the previous three time steps
+            modeObservations = [1 1 2];
+            measDelay = 2; 
+            measurements = this.measurement;            
+            
+            this.filterUnderTest.setState(this.stateGaussianMixture.copy());
+            this.jumpLinearPlantModel.setSystemInput(this.input);
+            % now perform the steps to incorporate delayed mode observations
+            % and measurement
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                measurements, measDelay, modeObservations, modeDelays);
+            % another measurement appears, and we know the previous mode
+            % also the input changes
+            % and the system matrices
+            newMeasDelay = 2;
+            newMeasurement = 2 * this.measurement;
+            newMode = 2;
+            newModeDelay = 1;
+            newInput = 2 * this.input;
+            
+            % copy the plant model before changing its properties
+            plantCopy = this.jumpLinearPlantModel.copy();
+            
+            this.jumpLinearPlantModel.setSystemInput(newInput);
+            this.jumpLinearPlantModel.setSystemMatrixForMode(this.A1 / 2, 1);
+            this.jumpLinearPlantModel.setSystemMatrixForMode(this.A2 * 4, 2);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                newMeasurement, newMeasDelay, newMode, newModeDelay);
             
             % use an IMMF as reference
             immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
                 'UniformOutput', false), this.modeTransitionMatrix);
             
             immf.setState(this.stateGaussianMixture.copy());
-            plant = JumpLinearSystemModel(this.numModes, this.modePlantModels);
-            plant.setSystemInput([]);
+            plantCopy.setSystemInput([]);
             
-            immf.predict(plant);
+            immf.predict(plantCopy);
             [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
-            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
                         
-            immf.step(plant, this.measModel, measurements); 
+            immf.step(plantCopy, this.measModel, measurements); 
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1])); % mode observation
+            
+            immf.step(plantCopy, this.measModel, newMeasurement);            
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            plantCopy.setSystemInput(this.input);
+            immf.predict(plantCopy);
             [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
             immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
-            
-            immf.step(plant, this.measModel, newMeasurement);            
-            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
-            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0]));
-            
-            plant.setSystemInput(this.input);
-            immf.predict(plant);
-            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
-            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
-            plant.setSystemInput(newInput);
-            immf.predict(plant);
+            plantCopy.setSystemMatrixForMode(this.A1 / 2, 1);
+            plantCopy.setSystemMatrixForMode(this.A2 * 4, 2);
+            plantCopy.setSystemInput(newInput);
+            immf.predict(plantCopy);
             
             [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
             
             this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);
+            % check the side effect
+            this.verifyEmpty(this.filterUnderTest.sysModelsHistory{1});
+            this.verifyEqual(this.filterUnderTest.sysModelsHistory{2}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{3}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{4}, this.jumpLinearPlantModel);
+            
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{1});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEqual(this.filterUnderTest.measurementHistory{3}, newMeasurement);            
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{2}, newMode);
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{3}, modeObservations(1));
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{4}, modeObservations(3));
+        end
+        
+        %% testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffInputMatrix
+        function testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffInputMatrix(this)
+            % a setup similar to TCP-like: we have the previous modes
+            % available, but not all measurements
+            % test the case that after some filter invocations, the
+            % underlying system dynamics (input matrix B) changes
+                        
+            modeDelays = [1 3 2]; % we know the modes from the previous three time steps
+            modeObservations = [1 1 2];
+            measDelay = 2; 
+            measurements = this.measurement;            
+            
+            this.filterUnderTest.setState(this.stateGaussianMixture.copy());
+            this.jumpLinearPlantModel.setSystemInput(this.input);
+            % now perform the steps to incorporate delayed mode observations
+            % and measurement
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                measurements, measDelay, modeObservations, modeDelays);
+            % another measurement appears, and we know the previous mode
+            % also the input changes
+            % and the system matrices
+            newMeasDelay = 2;
+            newMeasurement = 2 * this.measurement;
+            newMode = 2;
+            newModeDelay = 1;
+            newInput = 2 * this.input;
+            
+            % copy the plant model before changing its properties
+            plantCopy = this.jumpLinearPlantModel.copy();
+                        
+            this.jumpLinearPlantModel.setSystemInput(newInput);
+            this.jumpLinearPlantModel.setSystemInputMatrixForMode(ones(this.dimX, this.dimU), 1);
+            this.jumpLinearPlantModel.setSystemInputMatrixForMode(zeros(this.dimX, this.dimU), 2);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                newMeasurement, newMeasDelay, newMode, newModeDelay);
+            
+            % and finally, another prediction step (no measurements given),
+            % but with another input
+            this.jumpLinearPlantModel.setSystemInput(newInput * 1.5);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, [], []);
+            
+            % use an IMMF as reference
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            
+            immf.setState(this.stateGaussianMixture.copy());
+            plantCopy.setSystemInput([]);
+            
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            immf.step(plantCopy, this.measModel, measurements); 
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1])); % mode observation
+            
+            immf.step(plantCopy, this.measModel, newMeasurement);            
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            plantCopy.setSystemInput(this.input);
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            plantCopy.setSystemInputMatrixForMode(ones(this.dimX, this.dimU), 1);
+            plantCopy.setSystemInputMatrixForMode(zeros(this.dimX, this.dimU), 2);
+            plantCopy.setSystemInput(newInput);
+            immf.predict(plantCopy);
+            
+            plantCopy.setSystemInput(newInput * 1.5);
+            immf.predict(plantCopy);
+            
+            [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
+            
+            this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);
+            % check the side effect
+            this.verifyEmpty(this.filterUnderTest.sysModelsHistory{1});
+            this.verifyEqual(this.filterUnderTest.sysModelsHistory{2}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{3}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{4}, this.jumpLinearPlantModel);
+            
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{1});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});            
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{3}, newMode);
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{4}, modeObservations(1));
+        end
+        
+        %% testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffNoise
+        function testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffNoise(this)
+            % a setup similar to TCP-like: we have the previous modes
+            % available, but not all measurements
+            % test the case that after some filter invocations, the
+            % system noise changes
+                        
+            modeDelays = [1 3 2]; % we know the modes from the previous three time steps
+            modeObservations = [1 1 2];
+            measDelay = 2; 
+            measurements = this.measurement;            
+            
+            this.filterUnderTest.setState(this.stateGaussianMixture.copy());
+            this.jumpLinearPlantModel.setSystemInput(this.input);
+            % now perform the steps to incorporate delayed mode observations
+            % and measurement
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                measurements, measDelay, modeObservations, modeDelays);
+            % another measurement appears, and we know the previous mode
+            % also the input changes
+            % and the process noise changes
+            newMeasDelay = 2;
+            newMeasurement = 2 * this.measurement;
+            newMode = 2;
+            newModeDelay = 1;
+            newInput = 2 * this.input;
+            
+            % copy the plant model before changing its properties
+            plantCopy = this.jumpLinearPlantModel.copy();
+            
+            this.jumpLinearPlantModel.setSystemInput(newInput);
+            this.jumpLinearPlantModel.setSystemNoiseCovarianceMatrixForMode(eye(this.dimX), 1);
+            this.jumpLinearPlantModel.setSystemNoiseCovarianceMatrixForMode(this.W / 2, 2);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                newMeasurement, newMeasDelay, newMode, newModeDelay);
+            
+            % and finally, another prediction step (no measurements given),
+            % but with another input, and new noise cov
+            this.jumpLinearPlantModel.setSystemInput(newInput * 1.5);
+            % simply switch the noise covs
+            this.jumpLinearPlantModel.setSystemNoiseCovarianceMatrixForMode(eye(this.dimX), 2);
+            this.jumpLinearPlantModel.setSystemNoiseCovarianceMatrixForMode(this.W / 2, 1);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, [], []);
+            
+            % use an IMMF as reference
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            
+            immf.setState(this.stateGaussianMixture.copy());
+            plantCopy.setSystemInput([]);
+            
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            immf.step(plantCopy, this.measModel, measurements); 
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1])); % mode observation
+            
+            immf.step(plantCopy, this.measModel, newMeasurement);            
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            plantCopy.setSystemInput(this.input);
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            plantCopy.setSystemNoiseCovarianceMatrixForMode(eye(this.dimX), 1);
+            plantCopy.setSystemNoiseCovarianceMatrixForMode(this.W / 2, 2);
+            plantCopy.setSystemInput(newInput);
+            immf.predict(plantCopy);
+            
+            plantCopy.setSystemInput(newInput * 1.5);
+            plantCopy.setSystemNoiseCovarianceMatrixForMode(eye(this.dimX), 2);
+            plantCopy.setSystemNoiseCovarianceMatrixForMode(this.W / 2, 1);
+            immf.predict(plantCopy);
+            
+            [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
+            
+            this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);
+            % check the side effect
+            this.verifyEmpty(this.filterUnderTest.sysModelsHistory{1});
+            this.verifyEqual(this.filterUnderTest.sysModelsHistory{2}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{3}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{4}, this.jumpLinearPlantModel);
+            
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{1});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});            
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{3}, newMode);
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{4}, modeObservations(1));
+        end
+%%
+%%
+        %% testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffTransitionMatrices
+        function testStepDelayedModeObservationsMeasurementsGaussianMixtureDiffTransitionMatrices(this)
+            % a setup similar to TCP-like: we have the previous modes
+            % available, but not all measurements
+            % test the case that after some filter invocations, the
+            % mode transition matrix changes
+                        
+            modeDelays = [1 3 2]; % we know the modes from the previous three time steps
+            modeObservations = [1 1 2];
+            measDelay = 2; 
+            measurements = this.measurement;            
+            
+            this.filterUnderTest.setState(this.stateGaussianMixture.copy());
+            this.jumpLinearPlantModel.setSystemInput(this.input);
+            % now perform the steps to incorporate delayed mode observations
+            % and measurement
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                measurements, measDelay, modeObservations, modeDelays);
+            % another measurement appears, and we know the previous mode
+            % also the input changes
+            % and the mode transition matrix changes
+            newMeasDelay = 2;
+            newMeasurement = 2 * this.measurement;
+            newMode = 2;
+            newModeDelay = 1;
+            newInput = 2 * this.input;
+            newModeTransitionMatrix = [1/3 2/3; 3/4 1/4];
+            
+            % copy the plant model
+            plantCopy = this.jumpLinearPlantModel.copy();
+            
+            this.jumpLinearPlantModel.setSystemInput(newInput);
+            this.filterUnderTest.setModeTransitionMatrix(newModeTransitionMatrix);
+            % this step is not affected by the changed transition matrix
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, ...
+                newMeasurement, newMeasDelay, newMode, newModeDelay);
+            
+            % and finally, another two prediction steps (no measurements given),
+            % now the impact of the new transition matrix becomes visible
+            this.jumpLinearPlantModel.setSystemInput(newInput * 1.5);
+            this.filterUnderTest.setModeTransitionMatrix(fliplr(newModeTransitionMatrix));
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, [], []);
+            this.jumpLinearPlantModel.setSystemInput([]);
+            this.filterUnderTest.step(this.jumpLinearPlantModel, this.measModel, [], []);
+            
+            % use an IMMF as reference
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:this.numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            
+            immf.setState(this.stateGaussianMixture.copy());
+            plantCopy.setSystemInput([]);
+            
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            immf.step(plantCopy, this.measModel, measurements); 
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1])); % mode observation
+            
+            immf.step(plantCopy, this.measModel, newMeasurement);            
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [1 0])); % mode observation
+                        
+            plantCopy.setSystemInput(this.input);
+            immf.predict(plantCopy);
+            [intermediateMeans, intermediateCovs, ~] = immf.getState().getComponents();
+            immf.setState(GaussianMixture(intermediateMeans, intermediateCovs, [0 1]));
+            plantCopy.setSystemInput(newInput);
+            immf.predict(plantCopy);
+            
+            plantCopy.setSystemInput(newInput * 1.5);
+            immf.setModeTransitionMatrix(newModeTransitionMatrix);
+            immf.predict(plantCopy);
+            
+            plantCopy.setSystemInput([]);
+            immf.setModeTransitionMatrix(fliplr(newModeTransitionMatrix));
+            immf.predict(plantCopy);
+            
+            [expectedMixtureMeans, expectedMixtureCovs, expectedWeights] = immf.getState().getComponents();
+            
+            this.verifyGaussianMixture(expectedMixtureMeans, expectedMixtureCovs, expectedWeights);
+            % check the side effect
+            this.verifyEmpty(this.filterUnderTest.sysModelsHistory{1});
+            this.verifyEqual(this.filterUnderTest.sysModelsHistory{2}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{3}, this.jumpLinearPlantModel);
+            this.verifyNotEqual(this.filterUnderTest.sysModelsHistory{4}, this.jumpLinearPlantModel);
+            
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{1});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{2});
+            this.verifyEmpty(this.filterUnderTest.measurementHistory{3});            
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{1});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{2});
+            this.verifyEmpty(this.filterUnderTest.trueModeHistory{3});
+            this.verifyEqual(this.filterUnderTest.trueModeHistory{4}, newMode);
+            
         end
     end    
 end

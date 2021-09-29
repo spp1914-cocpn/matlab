@@ -355,6 +355,139 @@ classdef LinearlyConstrainedPredictiveControllerTest < matlab.unittest.TestCase
             this.verifyEqual(controller.horizonLength, this.sequenceLength); % horizon is by default equal to sequence length
         end
         
+         %% testChangeModelParametersInvalidSystemMatrix
+        function testChangeModelParametersInvalidSystemMatrix(this)
+            this.setupControllerUnderTest(false);
+            
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
+            
+            invalidA = this.A(1,1); % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+                        
+            invalidA = this; % not a matrix
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+            
+            invalidA = this.A(:, 1); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+            
+            invalidA = this.A; % not finite
+            invalidA(end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B), expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidInputMatrix
+        function testChangeModelParametersInvalidInputMatrix(this)
+            this.setupControllerUnderTest(false);
+            
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            
+            invalidB = this.B(1,1); % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+                        
+            invalidB = this; % not a matrix
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+                        
+            invalidB = this.B; % not finite
+            invalidB(end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB), expectedErrId);
+        end
+        
+        
+        %% testChangeModelParameters
+        function testChangeModelParameters(this)
+            this.setupControllerUnderTest(false);
+            state = Gaussian(this.initialPlantState, eye(this.dimX));
+            timestep = 1;
+            mode = 1; % not needed but has to be passed
+            % assert that the initial state is feasible
+            this.assertTrue(dot(this.stateConstraintWeightings, this.initialPlantState) <= this.stateConstraints);            
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+                                    
+            newA = this.A - 0.1 * eye(this.dimX);
+            newB = this.B + 2 * eye(this.dimU);
+                        
+            this.controllerUnderTest.changeModelParameters(newA, newB);
+            % check if computation of new sequence is affected
+            actualSequence = this.controllerUnderTest.computeControlSequence(state, mode, timestep);
+            
+            this.A = newA;
+            this.B = newB;
+            [~, newInputs] = this.computeTrajectories();            
+            
+            expectedSequence = newInputs(:);                        
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-6);
+        end
+        
+        %% testChangeModelParametersNewWIgnored
+        function testChangeModelParametersNewWIgnored(this)
+            this.setupControllerUnderTest(false);
+            state = Gaussian(this.initialPlantState, eye(this.dimX));
+            timestep = 1;
+            mode = 1; % not needed but has to be passed
+            % assert that the initial state is feasible
+            this.assertTrue(dot(this.stateConstraintWeightings, this.initialPlantState) <= this.stateConstraints);            
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
+            % pass a new noise covariance, has no effect
+            newW = eye(this.dimX);
+                        
+            this.controllerUnderTest.changeModelParameters(this.A, this.B, newW);
+            % should not change the input sequence
+            actualSequence = this.controllerUnderTest.computeControlSequence(state, mode, timestep);            
+                        
+            expectedSequence = this.inputTrajectory(:);                        
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-6);
+        end
+%%
+%%
+        %% testChangeCaDelayProbs
+        function testChangeCaDelayProbs(this)            
+            this.setupControllerUnderTest(false);
+            state = Gaussian(this.initialPlantState, eye(this.dimX));
+            timestep = 1;
+            mode = 1; % not needed but has to be passed
+            
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+             % assert that the initial state is feasible
+            this.assertTrue(dot(this.stateConstraintWeightings, this.initialPlantState) <= this.stateConstraints);
+            
+            newDelayProbs = [0 0 1 0 0]; % fixed delay of 2 time steps
+            this.controllerUnderTest.changeCaDelayProbs(newDelayProbs);                   
+            
+            % check if computation of new sequence is affected
+            actualSequence = this.controllerUnderTest.computeControlSequence(state, mode, timestep);
+            
+            % compute the expected sequence
+            % without effective constraints, problem reduces to LQR                        
+            L = dlqr(this.A, this.B, this.Q, this.R);
+            
+            newStates = zeros(this.dimX, this.horizonLength + 1);
+            newInputs = zeros(this.dimU, this.horizonLength);
+            % we have defined the delay probabilities such that every
+            % packet is delayed 2 time step
+            % so the expected inputs for the prediction of the state are: 
+            % at stage 1 and 2 to compute x_k+1|k and x_k+1|k: zero ->"from previous packet"
+            % at stage i to compute x_k+i+1|k: u_k+i|k -> "from the current packet"
+            newStates(:, 1) = this.initialPlantState;
+            newStates(:, 2) = this.A * newStates(:, 1);
+            newStates(:, 3) = this.A * newStates(:, 2);
+            % u_k|k and u_k+1|k remain zero, since delay is 2 so these entries will never become active
+            for j = 3:this.horizonLength
+                % compute new input
+                newInputs(:, j) = -L * newStates(:, j);
+                % and predict using "expected" input
+                newStates(:, j + 1) = this.A * newStates(:, j) + this.B * newInputs(:, j);
+            end      
+            expectedSequence = newInputs(:);
+                        
+            this.verifyEqual(actualSequence, expectedSequence, 'AbsTol', 1e-6);
+        end
+%%
+%%
         %% testGetStateConstraints
         function testGetStateConstraints(this)
             this.setupControllerUnderTest(false);

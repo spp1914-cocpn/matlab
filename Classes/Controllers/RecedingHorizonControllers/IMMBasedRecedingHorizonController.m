@@ -1,4 +1,4 @@
-classdef IMMBasedRecedingHorizonController < SequenceBasedController
+classdef IMMBasedRecedingHorizonController < SequenceBasedController & ModelParamsChangeable & CaDelayProbsChangeable
     % Implementation of a receding horizon linear sequence-based controller for
     % linear NCS with networks connecting the controller and actuator, 
     % and sensor and controller, respectively, where application layer ACKs
@@ -15,7 +15,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -39,15 +39,28 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     properties (SetAccess = immutable, GetAccess = private)
         horizonLength double {Validator.validateHorizonLength(horizonLength)} = 1;
                 
-        numModes;
-        % for fixed sequence length, F and G are independent of (A,B)
-        F;
-        G;
-                
+        numModes;             
+    end
+    
+    properties (SetAccess = immutable, GetAccess = ?IMMBasedRecedingHorizonControllerTest)
         immf;
         dimEta;
         measurementModel;
         mjls;
+        % for fixed sequence length, F and G are independent of (A,B)
+        F;
+        G;        
+    end
+    
+    properties (SetAccess = private, GetAccess = ?IMMBasedRecedingHorizonControllerTest)
+        % the input related part of the state, evolves according to %eta_k+1=F*eta_k + G*U_k
+        etaState; % holds eta_{k-1}
+        % the last computed input sequence
+        inputSequence;
+    end
+    
+    properties (GetAccess = private, SetAccess = ?IMMBasedRecedingHorizonControllerTest)
+        initialized = true; % flag to indicate whether intial state was set (no update required prior to computation of sequence)
     end
     
     properties (Access = private)
@@ -58,13 +71,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
         augB;
         R_tilde; % store only the one for the first mode
         Q_tilde;
-        
-        % the input related part of the state, evolves according to %eta_k+1=F*eta_k + G*U_k
-        etaState; % holds eta_{k-1}
-        % the last computed input sequence
-        inputSequence;        
-        initialized = true; % flag to indicate whether intial state was set (no update required prior to computation of sequence)
-        
+                
         transitionMatrix;
         P; % cost matrices, one for each mode
         recomputeCostate = false;
@@ -278,13 +285,26 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
         end
         
         %% changeModelParameters
-        function changeModelParameters(this, newA, newB, newW, newC)
+        function changeModelParameters(this, newA, newB, newW)
             Validator.validateSystemMatrix(newA, this.dimPlantState);
             Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);
             Validator.validateSysNoiseCovarianceMatrix(newW, this.dimPlantState);
 
-            % recompute the augmented model, F, G, H, J do not change
-            [~, ~, ~, ~, this.augA, this.augB] = Utility.createAugmentedPlantModel(this.sequenceLength, newA, newB);
+            [~, ~, H, J] = Utility.createActuatorMatrices(this.sequenceLength, this.dimPlantInput);
+            % in the the augmented model, F, G, H, J do not change
+            % so only adapt the "first block row" in augA and augB            
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1) = newA;
+            for i=2:this.sequenceLength
+                % update B*H for all but first and last mode
+                % H is empty for first and last mode
+                this.augA(1:this.dimPlantState, :, i) = [newA, newB * H(:, :, i)];                
+            end
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, this.sequenceLength + 1) = newA;            
+            % augB is only different for first mode (multiply B by J)
+            % B*J is zero for all modes but first
+            %
+            this.augB(1:this.dimPlantState, :, 1) = newB * J(:, :, 1);             
+            
             % for stability: use stabilizing solution of DARE as terminal
             % weighting -> only exists in case (A,B) stabilizable + the
             % associated symplectic matrix has no eigenvalues on the unit
@@ -301,16 +321,11 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
 
             for j=1:this.sequenceLength + 1
                 % change the affected parameters of the model
-                this.mjls.modeSystemModels{j}.setSystemMatrix(newA);
-                this.mjls.modeSystemModels{j}.setSystemInputMatrix(newB);
-                this.mjls.modeSystemModels{j}.setNoise(newW);
+                this.mjls.setSystemMatrixForMode(newA, j);
+                this.mjls.setSystemInputMatrixForMode(newB, j);
+                this.mjls.setSystemNoiseCovarianceMatrixForMode(newW, j);
             end
-
-            if nargin > 4 && ~isempty(newC)
-                dimMeas = size(this.measurementModel.measMatrix, 1);
-                Validator.validateMeasurementMatrix(newC, this.dimPlantState, dimMeas);
-                this.measurementModel.setMeasurementMatrix(newC);
-            end
+            
             % remember to recompute the costate, depends on plant
             % model/augmented model
             this.recomputeCostate = true;
@@ -397,18 +412,17 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
                 distributedInputs = zeros(this.dimPlantInput, this.numModes);
                 % default input zeros for the last mode, so last column
                 % remains zero
-                % first column is first entry from most recent sequence
+                % first column is first entry from most recent sequence U_{k-1}
                 distributedInputs(:, 1) = this.inputSequence(1:this.dimPlantInput);
                 idx = 1;
                 for i=2:this.numModes - 1 
                     distributedInputs(:, i) = this.etaState(idx:idx+this.dimPlantInput-1);
                     idx =  idx + (this.sequenceLength - (i - 1)) * this.dimPlantInput;                     
                 end                
-                % update the filter state first, i.e., obtain the posterior for
-                % the current time step
+                % update the filter state first, i.e., obtain the posterior x_k^e for
+                % the current time step k
                 this.mjls.setSystemInput(distributedInputs);
                 this.immf.step(this.mjls, this.measurementModel, measurements, measurementDelays, modeMeas, modeDelays);
-                    
                 % compute eta_k
                 newEta = this.F * this.etaState + this.G * this.inputSequence;
             end
@@ -492,15 +506,14 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController
     methods (Access = private)        
         %% computeCostate
         function P_1 = computeCostate(this)            
-            terminalP = repmat(blkdiag(this.terminalQ, zeros(this.dimEta)), 1, 1, this.numModes); % the terminal term, Y_K
             if this.useMexImplementation            
                 P_1 = mex_IMMBasedRecedingHorizonControllerCostate(this.augA, this.augB, this.transitionMatrix, ...
-                    this.Q_tilde, this.R_tilde, terminalP, this.horizonLength);
+                    this.Q_tilde, this.R_tilde, this.terminalQ, this.horizonLength);
             else
                 dimInputSeq = this.dimPlantInput * this.sequenceLength;
                 dimAugState = size(this.augA, 2);                
-                % backward iteration over the horizon            
-                P_k = terminalP;
+                % backward iteration over the horizon
+                P_k = repmat(blkdiag(this.terminalQ, zeros(this.dimEta)), 1, 1, this.numModes); % the terminal term, Y_K
                 for k=this.horizonLength-1:-1:1
                     % compute Y_k+1 using P_k+1
                     Y = reshape(cell2mat(arrayfun(@(i) sum(reshape(this.transitionMatrix(i,:), 1, 1, this.numModes) .* P_k,3), ...

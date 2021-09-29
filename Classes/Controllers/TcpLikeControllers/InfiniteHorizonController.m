@@ -1,4 +1,4 @@
-classdef InfiniteHorizonController < SequenceBasedController
+classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChangeable
     % Implementation of the optimal infinite horizon linear sequence-based LQG controller for
     % NCS with a TCP-like network connecting the controller and the actuator.
     %

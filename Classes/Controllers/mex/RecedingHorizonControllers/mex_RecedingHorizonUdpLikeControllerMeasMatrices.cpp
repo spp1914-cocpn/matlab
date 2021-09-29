@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -35,13 +35,13 @@ using namespace arma;
 
 void mexFunction(int numOutputs, mxArray* outputArrays[], 
         int numInputs, const mxArray* inputArrays[]) {    
-    // mandatory arguments: modesScBase3, measBufferLength, C, dimEta
-    const umat modesScBase3 = conv_to<umat>::from(armaGetPr(inputArrays[0]));
-    const uword measBufferLength = armaGetScalar<uword>(inputArrays[1]);
-    const dmat C = armaGetPr(inputArrays[2]);
-    const uword dimEta = armaGetScalar<uword>(inputArrays[3]);
+    // mandatory arguments: modesScBase2, C, dimEta
+    const umat modesScBase2 = conv_to<umat>::from(armaGetPr(inputArrays[0]));
+    const dmat C = armaGetPr(inputArrays[1]); // base meas matrix C
+    const uword dimEta = armaGetScalar<uword>(inputArrays[2]);
     
-    const uword numModesSc = modesScBase3.n_rows;    
+    const uword measBufferLength =  modesScBase2.n_cols;
+    const uword numModesSc = modesScBase2.n_rows;    
     const uword dimMeas = C.n_rows;
     const uword dimAugmentedMeas = dimMeas * measBufferLength;
     
@@ -53,8 +53,8 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     #ifdef _OPENMP    
     #pragma omp parallel for shared (S)
     #endif
-    for (uword j=0; j < numModesSc; ++j) {        
-        S.slice(j) = diagmat(kron(conv_to<dmat>::from(modesScBase3.row(j) == 1), mOnes)); 
+    for (uword j=0; j < numModesSc; ++j) {
+        S.slice(j) = diagmat(kron(conv_to<dmat>::from(modesScBase2.row(j) == 1), mOnes)); 
     }
     
     size_t dimsAugC[2] = {static_cast<size_t>(dimAugmentedMeas), static_cast<size_t>(measBufferLength * C.n_cols + dimEta)};

@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -86,7 +86,7 @@ namespace RecedingHorizonUdpLikeController {
                 return costToGo;
             }
             
-            void predictHorizon(const dcube& K, const dcube& L, const dcube& M) {
+            void predictHorizon(const dcube& K, const dcube& L) {
                 
                 const int numModes = this->dynamics.getNumModes();
                 
@@ -95,7 +95,9 @@ namespace RecedingHorizonUdpLikeController {
                     const dmat KS = K.slice(k) * this->dynamics.getSeAt(k);
                     const dmat KSC = KS * this->dynamics.getAugC();
                     const dmat E_tilde = symmatu(KS * this->dynamics.getAugV() * KS.t()); // E_tilde in the paper
-                    const dmat MKSC = M.slice(k) + KSC;
+                    const dmat noisePartFull = E_tilde + this->dynamics.getAugW();
+                    
+                    const dmat AexpBexpL = this->dynamics.getAexpAt(k) + this->dynamics.getBexpAt(k) * L.slice(k); //Ahat_k+Bhat_k*L_k
 
                     const dcube currXu = this->Xu.at(k);
                     const dcube currXl = this->Xl.at(k);
@@ -108,10 +110,12 @@ namespace RecedingHorizonUdpLikeController {
                     #endif
                     for (auto i = 0; i < numModes; ++i) {
                         const dmat AKSC = this->dynamics.getAugA(i) - KSC;
-                        const dmat D_tilde = AKSC - M.slice(k) + this->dynamics.getAugB(i) * L.slice(k); // D_tilde in the paper
-                        firstPart.slice(i) = symmatu(AKSC * currXu.slice(i) * AKSC.t() + D_tilde * currXl.slice(i) * D_tilde.t())
-                                        + modeCol[i] * (E_tilde + this->dynamics.getAugW());
-                        secondPart.slice(i) = symmatu(MKSC * currXl.slice(i) * MKSC.t() + KSC * currXu.slice(i) * KSC.t())
+                        const dmat diffPart = this->dynamics.getAugA(i) + this->dynamics.getAugB(i) * L.slice(k) - AexpBexpL;
+                        //const dmat diffPart = this->dynamics.getAugA(i) - this->dynamics.getAexpAt(k) + (this->dynamics.getAugB(i) - this->dynamics.getBexpAt(k)) * L.slice(k);
+                                               
+                        firstPart.slice(i) = symmatu(AKSC * currXu.slice(i) * AKSC.t() + diffPart * currXl.slice(i) * diffPart.t())
+                                        + modeCol[i] * noisePartFull;
+                        secondPart.slice(i) = symmatu(AexpBexpL * currXl.slice(i) * AexpBexpL.t() + KSC * currXu.slice(i) * KSC.t())
                                         + modeCol[i] * E_tilde;
                     }
                     this->Xu.at(k+1).zeros();

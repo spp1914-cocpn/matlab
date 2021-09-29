@@ -18,7 +18,7 @@ classdef IMMF < Filter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -206,7 +206,7 @@ classdef IMMF < Filter
             else
                 cellfun(@(filter) filter.update(measModels, measurement), this.modeFilters);
             end
-            this.updateModeProbabilities();
+            this.updateModeProbabilities(measurement);
         end
         
         %% performPrediction
@@ -281,15 +281,20 @@ classdef IMMF < Filter
         end
         
         %% updateModeProbabilities
-        function updateModeProbabilities(this)
+        function updateModeProbabilities(this, measurement)
+            % assume Gaussian likelihoods
             logLikelihoods = zeros(1, this.numModes);
-            dist = Gaussian();
-            for i=1:this.numModes
-                [measurement, measurementMean, measurementCovariance, ~] = this.modeFilters{i}.getLastUpdateData();
-                % assume Gaussian likelihood: set the moments
-                dist.set(measurementMean, measurementCovariance);
-                logLikelihoods(i) = dist.logPdf(measurement);
+            dimMeas = size(measurement, 1);
+            logNormConst = dimMeas * 0.5 * log(2 * pi);
+            I = eye(dimMeas);
+            for i=1:this.numModes                
+                [~, measurementMean, measurementCovariance, ~] = this.modeFilters{i}.getLastUpdateData();     
+                covSqrt = chol(measurementCovariance, 'lower');
+                
+                logLikelihoods(i) = -0.5 * sum((covSqrt \ (measurement - measurementMean)) .^2, 1) ...
+                    - logNormConst - sum(log(diag(covSqrt)));  % this is the log det of covSqrt
             end
+            
             this.checkLogLikelihoodEvaluations(logLikelihoods, this.numModes);
             % for numerical stability
             maxLogValue = max(logLikelihoods);
@@ -301,24 +306,12 @@ classdef IMMF < Filter
             
         %% normalizeModeProbabilities
         function normalizedModeProbs = normalizeModeProbabilities(this, modeProbs)
-            idx = find(modeProbs <= IMMF.probabilityBound);
-            normalizedModeProbs = modeProbs;
-            if ~isempty(idx)
-                %this.warning('NormalizingModeProbabilities', ...
-                %    '** %d of %d mode probablities too small. Perform normalization **', numel(idx), this.numModes); 
-                normalizedModeProbs(idx) = IMMF.probabilityBound;
-                normalizedModeProbs = normalizedModeProbs / sum(normalizedModeProbs);
-            end
+            normalizedModeProbs = Utility.normalizeProbabilities(modeProbs, IMMF.probabilityBound);
         end
         
         %% normalizeModeTransitionMatrix
         function normalizedTransitionMatrix = normalizeModeTransitionMatrix(this, modeTransitionMatrix)
-            idx = find(modeTransitionMatrix <= IMMF.probabilityBound);
-            normalizedTransitionMatrix = modeTransitionMatrix;
-            if ~isempty(idx)
-                normalizedTransitionMatrix(idx) = IMMF.probabilityBound;
-                normalizedTransitionMatrix = normalizedTransitionMatrix ./ sum(normalizedTransitionMatrix, 2);
-            end
+            normalizedTransitionMatrix = Utility.normalizeTransitionMatrix(modeTransitionMatrix, IMMF.probabilityBound);
         end        
     end
 end

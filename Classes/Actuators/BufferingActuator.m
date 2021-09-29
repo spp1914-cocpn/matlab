@@ -28,7 +28,7 @@ classdef BufferingActuator < Actuator
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2016-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2016-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -55,12 +55,7 @@ classdef BufferingActuator < Actuator
         % one sequence per received packet; (positive integer)
         controlSequenceLength(1,1) double = 1;
     end
-    
-    properties (Access = private)
-        % the history of previous true modes, used by ACKs
-        modeHistory = [];
-    end
-    
+        
     methods (Access = public)
         %% BufferingActuator
         function this = BufferingActuator(controlSequenceLength,  defaultU)
@@ -81,18 +76,11 @@ classdef BufferingActuator < Actuator
             Validator.validateSequenceLength(controlSequenceLength);
             this = this@Actuator(defaultU, controlSequenceLength - 1);
             
-            this.controlSequenceLength = controlSequenceLength;  
-            
-            % initially, the buffer is empty and thus: theta_0 = N+1
-            % where N+1 is the control sequence length
-            % initialize the mode history, but remember that we enumerate
-            % the modes from [1, N+2] instead of [0, N+1] as in the
-            % publications
-            this.modeHistory = zeros(controlSequenceLength, 1) + controlSequenceLength + 1;
+            this.controlSequenceLength = controlSequenceLength;            
         end
 
         %% step
-        function [controlInput, mode, ackPackets] = step(this, timeStep, controllerPackets)
+        function [controlInput, mode, ackPacket] = step(this, timeStep, controllerPackets)
             % Process a given set of packets received from the controller,
             % each of which containing a control input sequence and get
             % the input to be applied at the given time step.
@@ -120,15 +108,16 @@ classdef BufferingActuator < Actuator
             %      theta_k in [1,2, ...,N+2] instead of [0, 1,...,N+1]
             %      with N+1 the control sequence length.
             %
-            %   << ackPackets (Array of DataPackets, might be empty (optional))
-            %      An array of acknowledgment packets, one for each
-            %      received packet from the controller. An empty matrix is
-            %      returned in case n packets were received.
+            %   << ackPacket (Empty matrix or DataPacket)
+            %      The ACK for the DataPacket within the given set that has
+            %      become active. An empty matrix is returned in case non
+            %      became active.
 
             assert(Checks.isNonNegativeScalar(timeStep) && mod(timeStep, 1) == 0, ...
                 'BufferingActuator:Step:InvalidTimeStep', ...
                 '** Time step must be a nonnegative integer **');    
             
+            ackPacket = [];
             numSeq = numel(controllerPackets);
             if numSeq ~= 0
                 assert(Checks.isClass(controllerPackets, 'DataPacket', numSeq), ...
@@ -150,6 +139,15 @@ classdef BufferingActuator < Actuator
                 if minDelay <= this.maxPacketDelay ...
                     && (isempty(this.bufferedPacket) || controllerPackets(idx).isNewerThan(this.bufferedPacket))
                     this.bufferedPacket = controllerPackets(idx);
+                    
+                    if nargout == 3
+                        % the current time step (time of reception) is when this ACK is generated
+                        % also, for simplicity piggy-back the corresponding
+                        % mode, i.e., the value of theta_k, which equals
+                        % the packet delay (but remember to start counting at 1!)
+                        mode = timeStep - this.bufferedPacket.timeStamp + 1; % first mode has index 1!
+                        ackPacket = this.bufferedPacket.createAckForDataPacket(timeStep, mode);
+                    end
                 end
             end
             
@@ -161,25 +159,7 @@ classdef BufferingActuator < Actuator
                 % buffer is empty or content is obsolete
                 controlInput = this.defaultInput;
                 mode = this.controlSequenceLength + 1; % N+2 (last mode)
-            end
-            
-            %ackPackets
-            % prepare ACKs for all the received packets
-             if nargout == 3
-                ackPackets = [];
-                for i=1:numSeq
-                    info.timeStep = controllerPackets(i).timeStamp; % the time step the sequence was sent
-                    info.tau = min(controllerPackets(i).packetDelay, this.maxPacketDelay + 1); % delay of the packet, or considered a loss
-                    if info.timeStep == timeStep % packet delay was zero
-                        info.theta = mode; % the current mode (starting from 1)
-                    else
-                        info.theta = this.modeHistory(info.tau); % extract a mode from the past
-                    end
-                    ackPackets = [ackPackets; controllerPackets(i).createAckForDataPacket(timeStep, info)]; %#ok
-                end
-            end
-            % update the history
-            this.modeHistory = [mode; this.modeHistory(1:end-1)];
+            end            
         end
         
         

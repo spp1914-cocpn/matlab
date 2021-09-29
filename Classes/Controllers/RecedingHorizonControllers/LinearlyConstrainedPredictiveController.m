@@ -1,4 +1,5 @@
-classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingController
+classdef LinearlyConstrainedPredictiveController ...
+        < SequenceBasedTrackingController & CaDelayProbsChangeable & ModelParamsChangeable
     % Implementation of a predictive controller (based on a quadratic cost function) for linear networked
     % control systems which can deal with linear state and input
     % constraints of the form a'*x_k <= c, b'*u_k <= d.
@@ -41,20 +42,20 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
-    properties (SetAccess = immutable, GetAccess = protected)
-        A;
-        B;
+    properties (SetAccess = immutable, GetAccess = protected)        
         Q;
         R;        
   
         F; % F matrix and its powers F^2, F^3, ..., F^N, with N = sequenceLength -2
         G;
-        H;
-        alphas;
+        H;        
     end
     
     properties (Access = private)
+        A;
+        B;
         etaState;
+        alphas;
     end
     
     properties (SetAccess = private, GetAccess = protected)
@@ -165,8 +166,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             this.horizonLength = this.sequenceLength;
             
             Validator.validateDiscreteProbabilityDistribution(caDelayProbs);
-            probs = Utility.truncateDiscreteProbabilityDistribution(caDelayProbs, sequenceLength + 1);
-            
+                        
             dimEta = this.dimPlantInput * (sequenceLength * (sequenceLength - 1) / 2);
             this.F = zeros(dimEta, dimEta, sequenceLength - 2);
             % we need F, G, H
@@ -179,29 +179,7 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             
             this.etaState = zeros(dimEta, 1);
             
-            % we can compute the weighting factors alpha_k in advance for
-            % the whole horizon
-            % for x_k+1 we have numModes possible inputs (incl. default
-            % input) -> expected u_k based on alpha_k|k
-            % for x_k+2 we have numModes-1 possible inputs (incl. default
-            % input) -> expected u_k+1|k based on alpha_k+1|k
-            % for x_k+3 we have numModes-2 possible inputs (incl. default
-            % input) -> expected u_k+2
-            % and so forth            
-            P = Utility.calculateDelayTransitionMatrix(probs);
-            sums = cumsum(probs);
-            this.alphas = cell(1, sequenceLength);            
-            this.alphas{1} = zeros(sequenceLength+1, 1);
-            
-            this.alphas{1}(1) = probs(1);
-            for j=2:sequenceLength+1
-                this.alphas{1}(j) = prod(1-sums(1:j-1)) * sums(j);
-            end
-            %this.alphas{1}(sequenceLength) = 1 - sum(this.alphas{1}(1:sequenceLength-1));
-            for k=1:sequenceLength-1
-                this.alphas{k+1} = (P')^k*this.alphas{1};
-                this.alphas{k+1} = this.alphas{k+1}(k+1:end) / sum(this.alphas{k+1}(k+1:end));
-            end
+            this.computeAndSetInputWeights(caDelayProbs);
 
             % constraints
             if ~isempty(stateConstraints)
@@ -215,11 +193,35 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             this.stateConstraints = stateConstraints;
             this.inputConstraints = inputConstraints;          
             
-            this.solver = this.createConstrainedOptimizationProblem();            
+            this.solver = this.createConstrainedOptimizationProblem();           
         end
         
         %% reset
         function reset(this)
+        end
+        
+        %% changeModelParameters
+        function changeModelParameters(this, newA, newB, ~)
+            Validator.validateSystemMatrix(newA, this.dimPlantState);
+            Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);                         
+            
+            this.A = newA;
+            this.B = newB;
+            
+            % the optimization problem to solve changes
+            this.solver = this.createConstrainedOptimizationProblem();
+        end
+        
+        %% changeCaDelayProbs
+        function changeCaDelayProbs(this, newCaDelayProbs)
+            % Change the distribution of the control packet delays to be assumed by the controller.
+            %
+            % Parameters:
+            %  >> newCaDelayProbs (Nonnegative vector)
+            %     Vector specifiying the new delay distribution.
+            %
+                        
+            this.computeAndSetInputWeights(newCaDelayProbs);
         end
         
         %% getStateConstraints
@@ -361,9 +363,9 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
                 else
                     zRef = this.refTrajectory(:, timestep:timestep + this.horizonLength);
                 end
-                solverVars = {this.etaState, stateMean, zRef};
+                solverVars = [this.alphas, {this.etaState}, {stateMean}, {zRef}];
             else
-                solverVars = {this.etaState, stateMean};
+                solverVars = [this.alphas, {this.etaState}, {stateMean}];                
             end
             % return as column vector
             [inputs, flag] = this.solver(solverVars);            
@@ -440,20 +442,27 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
             eta = sdpvar(dimEta, 1); % changes at runtime, so not fixed
             expectedInputs = sdpvar(this.dimPlantInput, this.horizonLength, 'full');
             
+            weights = cell(1, this.sequenceLength); % input weights (alphas), can change at runtime in case delay probs change
+            sizes = [this.sequenceLength + 1:-1:2];
+            for j=1:this.sequenceLength
+                % initialize with correct sizes
+                weights{j} = sdpvar(sizes(j), 1);
+            end
+                        
             if ~isempty(this.Z)
                 % reference tracking
                 zRef = sdpvar(this.dimRef, this.horizonLength + 1);
                 % construct for driving differences to the origin
                 performance = this.Z * states - zRef;
                 
-                solverVars = {eta, states(:, 1), zRef};
+                solverVars = [weights, {eta}, {states(:, 1)}, {zRef}];                
                 
                 [K, P, ~] = dlqr(this.A, this.B, this.Z'*this.Q*this.Z, this.R);              
                 P = this.Z * P *this.Z'; % terminal weighting 
             else
                 % construct for driving states to the origin
                 performance = states;
-                solverVars = {eta, states(:, 1)};
+                solverVars = [weights, {eta}, {states(:, 1)}];
                 
                 [K, P, ~] = dlqr(this.A, this.B, this.Q, this.R);
             end           
@@ -469,36 +478,70 @@ classdef LinearlyConstrainedPredictiveController < SequenceBasedTrackingControll
                     else
                         oldInputs = this.F(:, :, stage-1) * eta;
                     end
-                    expectedInputs(:, stage) = inputs(:, stage) * this.alphas{stage}(1);
+                    expectedInputs(:, stage) = inputs(:, stage) * weights{stage}(1);
                     i = 2;
                     for j = stage+1:this.sequenceLength
-                        expectedInputs(:, stage) = expectedInputs(:, stage) + this.H(:, :, j) * oldInputs * this.alphas{stage}(i);
+                        expectedInputs(:, stage) = expectedInputs(:, stage) + this.H(:, :, j) * oldInputs * weights{stage}(i);
                         i = i + 1;
                     end                    
                 elseif stage== this.sequenceLength
                     % either the input to be computed or the zero default input
-                    expectedInputs(:, this.sequenceLength) = inputs(:, this.sequenceLength) * this.alphas{this.sequenceLength}(1);
+                    expectedInputs(:, this.sequenceLength) = inputs(:, this.sequenceLength) * weights{this.sequenceLength}(1);
                 else
                     % switch to unconstrained LQR
                     inputs(:, stage) = -K * states(:, stage);                 
                     expectedInputs(:, stage) = inputs(:, stage); % use computed input directly for prediction 
                 end                                
                 % constraints due to nominal system equation
-                constraints = [constraints, states(:, stage + 1) == this.A * states(:, stage) + this.B * expectedInputs(:, stage)]; 
+                constraints = [constraints, states(:, stage + 1) == this.A * states(:, stage) + this.B * expectedInputs(:, stage)];                
                 costs = costs + sum((Rsqrt * inputs(:, stage)) .^2) + performance(:, stage)' * this.Q * performance(:, stage);
             end
             % add the constraints
             for j=1:numel(this.stateConstraints)
-                constraints = [constraints, this.stateConstraintWeightings(:, j)' * states(:, 1:this.sequenceLength+1) <= this.stateConstraints(j)];
+                constraints = [constraints, this.stateConstraintWeightings(:, j)' * states(:, 1:this.sequenceLength+1) <= this.stateConstraints(j)];                
             end
             for j=1:numel(this.inputConstraints)
-                constraints = [constraints, this.inputConstraintWeightings(:, j)' * inputs(:, 1:this.sequenceLength) <= this.inputConstraints(j)]; 
+                constraints = [constraints, this.inputConstraintWeightings(:, j)' * inputs(:, 1:this.sequenceLength) <= this.inputConstraints(j)];                
             end      
             options = sdpsettings;
             options.solver = 'quadprog';
             solver = optimizer(constraints, costs, options, solverVars, inputs);            
-        end
-                        
+        end        
+            
+        %% computeAndSetInputWeights
+        function computeAndSetInputWeights(this, caDelayProbs)
+             % we can compute the weighting factors alpha_k in advance for
+            % the whole horizon
+            % for x_k+1 we have numModes possible inputs (incl. default
+            % input) -> expected u_k based on alpha_k|k
+            % for x_k+2 we have numModes-1 possible inputs (incl. default
+            % input) -> expected u_k+1|k based on alpha_k+1|k
+            % for x_k+3 we have numModes-2 possible inputs (incl. default
+            % input) -> expected u_k+2
+            % and so forth
+            % the number of factors thus decreases over the horizon
+            
+            probs = Utility.truncateDiscreteProbabilityDistribution(caDelayProbs, this.sequenceLength + 1);
+            % use the transition probabilities for convenience, not needed
+            % a straightforward approach directly computes the alphas based
+            % on the delay probabilities
+            P = Utility.calculateDelayTransitionMatrix(probs);
+            sums = cumsum(probs);
+            q = cumprod(1 - sums);
+            this.alphas = cell(1, this.sequenceLength);            
+            this.alphas{1} = zeros(this.sequenceLength + 1, 1);
+            
+            this.alphas{1}(1) = probs(1); % this is alpha_0,0=p0
+            for j=2:this.sequenceLength + 1
+                this.alphas{1}(j) = q(j-1) * sums(j); % alpha_j,0, e.g. alpha_1,0=(1-p0)*(p0+p1) and alpha_2,0=(1-p0)(1-p0-p1)*(p0+p1+p2)
+            end
+            
+            for k=1:this.sequenceLength - 1
+                this.alphas{k+1} = (P')^k*this.alphas{1};
+                this.alphas{k+1} = this.alphas{k+1}(k+1:end) / sum(this.alphas{k+1}(k+1:end));
+            end
+        end    
+        
         %% validateStateConstraints
         function validateStateConstraints(this, stateWeightings, stateConstraints)
             assert(Checks.isFixedRowMat(stateWeightings, this.dimPlantState), ...

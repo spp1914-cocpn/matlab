@@ -65,7 +65,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     
     methods (Access = private)
         %% computeExpectedInputs
-        function inputs = computeExpectedInputs(this)
+        function inputs = computeExpectedInputs(this, transitionMat)
             % in this setup, the current input must arrive without delay,
             % or plant evolves open-loop
             % hence, in this setup, G and F are not existent
@@ -73,7 +73,9 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % due to the structure of the transition matrix,
             % the mode-dependent inputs should not
             % differ
-                        
+            if nargin == 1
+               transitionMat = this.transitionMatrix;
+            end            
             
             % first mode
             R_1 = this.R;
@@ -133,10 +135,10 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
                 BPB = B_1' * previousP * B_1;
                 B2PB2 = B_2' * previousP * B_2;
                 P1 = Q_1 + (APA + APA') / 2;
-                P2 = this.transitionMatrix(1,1) * A_1' * previousP * B_1 ...
-                    + this.transitionMatrix(1,2) * A_2' * previousP * B_2;
-                P3 = this.transitionMatrix(1,1) * (R_1 + (BPB + BPB') / 2) ...
-                    + this.transitionMatrix(1,2) * (R_2 + (B2PB2 + B2PB2') / 2);
+                P2 = transitionMat(1,1) * A_1' * previousP * B_1 ...
+                    + transitionMat(1,2) * A_2' * previousP * B_2;
+                P3 = transitionMat(1,1) * (R_1 + (BPB + BPB') / 2) ...
+                    + transitionMat(1,2) * (R_2 + (B2PB2 + B2PB2') / 2);
                 P4 = P2 * pinv(P3) * P2';
                 P = P1 - (P4 + P4') / 2; % should also be symmetric                        
             end
@@ -144,10 +146,10 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % ensure that matrices are symmetric
             BPB = B_1' * P * B_1;
             B2PB2 = B_2' * P * B_2;
-            firstPart = pinv(this.transitionMatrix(1,1) * (R_1 + (BPB + BPB') / 2) ... 
-                + this.transitionMatrix(1,2) * (R_2 + (B2PB2 + B2PB2') / 2));
-            secondPart = this.transitionMatrix(1,1) * B_1' * P * A_1 + ...
-                this.transitionMatrix(1,2) * B_2' * P * A_2;
+            firstPart = pinv(transitionMat(1,1) * (R_1 + (BPB + BPB') / 2) ... 
+                + transitionMat(1,2) * (R_2 + (B2PB2 + B2PB2') / 2));
+            secondPart = transitionMat(1,1) * B_1' * P * A_1 + ...
+                transitionMat(1,2) * B_2' * P * A_2;
             
             inputs = -firstPart * secondPart * this.state;
         end
@@ -304,6 +306,48 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % status should be integer value and 1 (convergence)
             this.verifyTrue(mod(controller.status, 1) == 0);
             this.verifyEqual(controller.status, 1);
+        end
+        
+        %% testChangeCaDelayProbs
+        function testChangeCaDelayProbs(this)
+            useMexImplementation = false;
+            controller = InfiniteHorizonController(this.A_ctrb, this.B_ctrb, this.Q, this.R, ...
+                this.transitionMatrix, this.sequenceLength, useMexImplementation);
+            
+            this.assertFalse(controller.useMexImplementation);            
+            this.assertTrue(isa(controller, 'CaDelayProbsChangeable'));
+            
+            % sanity check: use the same distribution as before
+            controller.changeCaDelayProbs(this.delayProbs);
+            
+            expectedInputs = this.computeExpectedInputs();
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % now use a different one
+            newDelayProbs = ones(1, 42) / 42;
+            controller.changeCaDelayProbs(newDelayProbs);
+            
+            % this is the resulting transition matrix
+            newTranstionMatrix = Utility.calculateDelayTransitionMatrix(...
+                    Utility.truncateDiscreteProbabilityDistribution(newDelayProbs, this.sequenceLength + 1));
+                
+            expectedInputs = this.computeExpectedInputs(newTranstionMatrix);
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = controller.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
         end
 %%
 %%

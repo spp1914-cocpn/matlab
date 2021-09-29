@@ -1,11 +1,16 @@
-function result = executeControllersTests()
+function results = executeControllersTests(runInParallel)
     % Function to run all test cases in matlab/Tests/Classes/Controllers.
+    %
+    % Parameters:
+    %   >> runInParallel (Flag, (i.e., a logical scalar), Optional)
+    %      A flag to indicate whether the test cases shall be ran in
+    %      parallel. If left out, the default value <true> is used.
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -26,6 +31,10 @@ function result = executeControllersTests()
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
+    arguments
+        runInParallel(1,1) logical = true;
+    end
+    
     import matlab.unittest.TestSuite;
     import matlab.unittest.TestRunner;
     
@@ -38,12 +47,17 @@ function result = executeControllersTests()
         TestSuite.fromClass(?InfiniteHorizonUdpLikeControllerTest) ...
         TestSuite.fromClass(?RecedingHorizonUdpLikeControllerTest) ...
         TestSuite.fromClass(?IMMBasedRecedingHorizonControllerTest) ...
+        TestSuite.fromClass(?ResourceAwareRecedingHorizonControllerTest) ...
         TestSuite.fromClass(?LinearlyConstrainedPredictiveControllerTest) ...
         TestSuite.fromClass(?ExpectedInputPredictiveControllerTest) ...
         TestSuite.fromClass(?NominalPredictiveControllerTest) ...
         TestSuite.fromClass(?PolePlacementPredictiveControllerTest) ...
         TestSuite.fromClass(?MSSControllerTest)];
 
-    result = TestRunner.withTextOutput.runInParallel(tests);
+    if runInParallel
+        results = TestRunner.withTextOutput.runInParallel(tests);
+    else
+        results = TestRunner.withTextOutput.run(tests);
+    end
 end
 

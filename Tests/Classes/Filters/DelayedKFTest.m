@@ -5,7 +5,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -51,13 +51,13 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         C; % meas matrix
         W; % sys noise cov
         V; % meas noise cov
+        W_red; % subspace noise
+        G; % the corresponding sys noise matrix
         
         uncertainInputs;
         inputMean;
         inputCov;
         
-        sysNoiseMean;
-        sysNoise;
         stateGaussianMean;
         stateGaussianCov;
         stateGaussian;
@@ -102,39 +102,36 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.A = 2 * eye(this.dimX);
             this.B = ones(this.dimX, this.dimU);
             this.C = ones(this.dimY, this.dimX) * 3;
-            this.W = gallery('moler', this.dimX); 
-            this.sysNoiseMean = ones(this.dimX, 1) * 0.75; % sys noise is not zero-mean
-            this.sysNoise = Gaussian(this.sysNoiseMean, this.W);
-            
+            this.W = gallery('moler', this.dimX);
+            this.W_red = gallery('moler', this.dimX -1); 
+            this.G = ones(this.dimX, this.dimX - 1);            
             this.V = gallery('minij', this.dimY); 
                             
             this.measModel = LinearMeasurementModel(this.C);
             this.measNoise = Gaussian(zeros(this.dimY, 1), this.V);
             this.measModel.setNoise(this.measNoise);
                    
-            this.delayFilterModel = DelayedKFSystemModel(this.A, this.B, this.sysNoise, ...
-                this.numPossibleInputs, this.maxMeasDelay, this.inputProbs);
-            this.zeroDelayFilterModel = DelayedKFSystemModel(this.A, this.B, this.sysNoise, ...
-                this.numPossibleInputs, DelayedKFTest.zeroMeasDelay, this.inputProbs);
-            
-            this.delayFilterModel.setSystemInput(this.uncertainInputs);
-            this.zeroDelayFilterModel.setSystemInput(this.uncertainInputs);
-            
+            this.delayFilterModel = LinearPlant(this.A, this.B, this.W);
+            this.zeroDelayFilterModel = LinearPlant(this.A, this.B, this.W_red, this.G);
+                                   
             this.delayFilter = DelayedKF(this.maxMeasDelay, this.modeTransitionProbabilities, this.filtername);
             this.zeroDelayFilter = DelayedKF(DelayedKFTest.zeroMeasDelay, this.modeTransitionProbabilities, this.zeroDelayFiltername);
+            
+            this.delayFilter.setPossibleInputs(this.uncertainInputs);
+            this.zeroDelayFilter.setPossibleInputs(this.uncertainInputs);
         end
     end
     
     methods (Access = private)
         %% initMeasurements
         function initMeasurements(this)
-            this.numMeas = 3;
+            this.numMeas = 4;
             this.delayedMeasurements = ones(this.dimY, this.numMeas);
-            this.delays = [0 1 5];
+            this.delays = [0 1 5 3];
             % extract the expected measurements, i.e, those with delay <= maxMeasDelay
-            this.applicableDelays = this.delays([1 2]);
-            this.applicableMeasurements = this.delayedMeasurements(:, [1 2]);
-            
+            this.applicableDelays = this.delays([1 2 4]);
+            this.applicableMeasurements = this.delayedMeasurements(:, [1 2 4]);
+              
             this.notApplicableMeasurements = this.delayedMeasurements(:, 3);
             this.notApplicableDelays = this.delays(3);
             
@@ -177,7 +174,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
                 Utils.blockDiag(eye(this.dimX), this.maxMeasDelay), zeroMatrix'];
             augCov = repmat(this.stateGaussianCov, this.maxMeasDelay + 1, this.maxMeasDelay + 1);
             
-            predictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            predictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
             predictedCov = augA * augCov * augA' + augG * (this.W + this.B * this.inputCov * this.B') * augG';
             
             % Use straightforward implementation of the filter algorithm given
@@ -354,6 +351,9 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         function testSetModeTransitionMatrixInvalidMatrix(this)
             expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
+            mixinClass = ?ModeTransitionMatrixChangeable;
+            this.assertTrue(ismember(mixinClass.Name, superclasses(this.delayFilter)));
+            
             % transition matrix must be square
             invalidTransitionMatrix = [0.7 0.2 0.1; 0.2 0.7 0.1];
             this.verifyError(@() this.delayFilter.setModeTransitionMatrix(invalidTransitionMatrix), expectedErrId);
@@ -374,6 +374,9 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         
         %% testSetModeTransitionMatrix
         function testSetModeTransitionMatrix(this)
+            mixinClass = ?ModeTransitionMatrixChangeable;
+            this.assertTrue(ismember(mixinClass.Name, superclasses(this.delayFilter)));
+            
             % first assert, that the previous mode estimate is correct
             % (we assume that initially we are in last mode)
             [mode, probability] = this.delayFilter.getPreviousModeEstimate();            
@@ -391,6 +394,33 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             [currentMode, currentModeProbability] = this.delayFilter.getModeEstimate();            
             this.verifyEqual(currentMode, 1);
             this.verifyEqual(currentModeProbability, this.inputProbs(1));
+        end
+%%
+%%
+        %% testSetPossibleInputsInvalidInputs
+        function testSetPossibleInputsInvalidInputs(this)
+            expectedErrorId = 'DelayedKF:SetPossibleInputs:InvalidInputs';
+            
+            invalidInputs = this; % not a matrix
+            this.verifyError(@() this.delayFilter.setPossibleInputs(invalidInputs), expectedErrorId);
+                        
+            invalidInputs = ones(this.dimU, this.numPossibleInputs + 1); % wrong number of cols
+            this.verifyError(@() this.delayFilter.setPossibleInputs(invalidInputs), expectedErrorId);
+            
+            invalidInputs = ones(this.dimU, this.numPossibleInputs); % not finite
+            invalidInputs(1) = nan;
+            this.verifyError(@() this.delayFilter.setPossibleInputs(invalidInputs), expectedErrorId);
+        end
+        
+        %% testSetPossibleInputs
+        function testSetPossibleInputs(this)
+            newInputs = ones(this.dimU, this.numPossibleInputs);
+            
+            this.delayFilter.setPossibleInputs(newInputs);
+            this.verifyEqual(this.delayFilter.possibleInputs, newInputs);
+            
+            this.delayFilter.setPossibleInputs([]); % empty matrix is allowed
+            this.verifyEmpty(this.delayFilter.possibleInputs);
         end
 %%
 %%
@@ -503,7 +533,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
                 [], modeObservation, modeDelay), expectedWarningId);
             
             % should reduce to a normal prediction of a Kalman filter
-            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
                 + this.B * this.inputCov * this.B';
             
@@ -545,7 +575,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.delayFilter.step(this.delayFilterModel, this.measModel, this.notApplicableMeasurements, this.notApplicableDelays);
             
             % should reduce to a normal prediction of a Kalman filter
-            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
                 + this.B * this.inputCov * this.B';
             
@@ -581,8 +611,8 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             this.zeroDelayFilter.step(this.zeroDelayFilterModel, this.measModel, this.delayedMeasurements, this.delays);
             
             % prediction
-            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
-            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.G * this.W_red * this.G' ...
                 + this.B * this.inputCov * this.B';
             
             % update should be a usual Kalman filter update step
@@ -610,7 +640,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             % finally check if the update data was stored correctly
             [actualNumUsedMeas, actualNumDiscardedMeas] = this.zeroDelayFilter.getLastUpdateMeasurementData();
             this.verifyEqual(actualNumUsedMeas, 1);
-            this.verifyEqual(actualNumDiscardedMeas, 2);
+            this.verifyEqual(actualNumDiscardedMeas, this.numMeas - 1);
         end
         
         %% testPerformUpdate
@@ -638,8 +668,8 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             
             % finally check if the update data was stored correctly
             [actualNumUsedMeas, actualNumDiscardedMeas] = this.delayFilter.getLastUpdateMeasurementData();
-            this.verifyEqual(actualNumUsedMeas, 2);
-            this.verifyEqual(actualNumDiscardedMeas, 1);
+            this.verifyEqual(actualNumUsedMeas, numel(this.applicableDelays));
+            this.verifyEqual(actualNumDiscardedMeas, numel(this.notApplicableDelays));
         end        
 %%
 %%        
@@ -648,15 +678,15 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             expectedErrId = 'Filter:UnsupportedSystemModel';
             
             this.delayFilter.setState(this.stateGaussian);
-            % not a DelayedKFSystemModel
-            invalidSysModel = LinearPlant(this.A, this.B, this.W);
+            % not a LinearPlant
+            invalidSysModel = InvertedPendulum(1, 1, 1, 1, 1);
             this.verifyError(@() this.delayFilter.step(invalidSysModel, this.measModel, this.delayedMeasurements, this.delays), expectedErrId);
         end
         
         %% testPerformPrediction
         function testPerformPrediction(this)
             % should reduce to a normal prediction of a Kalman filter
-            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
                 + this.B * this.inputCov * this.B';
             
@@ -705,7 +735,7 @@ classdef DelayedKFTest < matlab.unittest.TestCase
             % should reduce to a normal prediction of a Kalman filter
             % (without input uncertainty)
             expectedPredictedMean = this.A  * this.stateGaussianMean ...
-                + this.B * this.uncertainInputs(:, expectedPreviousTrueMode) + this.sysNoiseMean;
+                + this.B * this.uncertainInputs(:, expectedPreviousTrueMode);
             expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W;                
             
             actualPredictedState = this.delayFilter.getState();
@@ -742,8 +772,8 @@ classdef DelayedKFTest < matlab.unittest.TestCase
         %% testPerformPredictionZeroMaxMeasDelay
         function testPerformPredictionZeroMaxMeasDelay(this)
             % should reduce to a normal prediction of a Kalman filter
-            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean + this.sysNoiseMean;
-            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.W ...
+            expectedPredictedMean = this.A  * this.stateGaussianMean + this.B * this.inputMean;
+            expectedPredictedCov = this.A * this.stateGaussianCov * this.A' + this.G * this.W_red * this.G' ...
                 + this.B * this.inputCov * this.B';
             
             this.zeroDelayFilter.setState(this.stateGaussian);

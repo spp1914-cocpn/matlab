@@ -1,4 +1,4 @@
-classdef DelayedModeIMMF < DelayedMeasurementsFilter
+classdef DelayedModeIMMF < DelayedMeasurementsFilter & ModeTransitionMatrixChangeable
     % Implementation of an Interacting Multiple Model (IMM) Filter which can handle delayed and out-of-sequence 
     % measurements and mode observations to estimate the plant state of an NCS given
     % in terms of a Markov Jump Linear System (MJLS).
@@ -19,7 +19,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -45,7 +45,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         immf;
     end
         
-    properties (Access = private)
+    properties (SetAccess = private, GetAccess = ?DelayedModeIMMFTest)
         % cell array (row vector like) to store the last filter states
         % (cell array of Gaussian mixtures)
         % i-th element indicates the posterior at time k-i, where k is
@@ -59,15 +59,20 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         % i-th element indicates the true mode at time k-i for estimation
         % at k-i, where k is the current time
         trueModeHistory;
-        % cell array where each entry is a matrix of inputs applied to the system in each
-        % mode (might be empty)
-        % inputHistory{i} contains the inputs used at time k-i, where k is
-        % the current time
-        inputHistory;
         % 3D matrix, where each slice is a mode transition matrix
         % i-th slice indicates the mode transition matrix of the MJLS at
         % time k-i, where k is the current time
+        % so the first entry is T_{k-1} and so forth
         modeTransitionMatrixHistory;
+        modeTransitionMatrix;  % stores T_k
+        % cell array (row vector like) to store the models used for the
+        % previous predictions
+        % (cell array of JumpLinearSystems)
+        % i-th element indicates the model at time k-i, where k is
+        % the current time
+        % hence, the i-th element was used to propagate the state from k-i
+        % to k-i+1
+        sysModelsHistory;
     end
     
     methods (Access = public)
@@ -109,21 +114,23 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             this.immf = IMMF(modeFilters, modeTransitionMatrix);
             
             this.stateHistory = cell(1, maxMeasDelay + 1);
-            this.measurementHistory = cell(1, maxMeasDelay);
-            this.inputHistory = cell(1, maxMeasDelay + 1);
+            this.measurementHistory = cell(1, maxMeasDelay); 
             this.trueModeHistory = cell(1, maxMeasDelay + 1);
             
-            this.modeTransitionMatrixHistory = repmat(modeTransitionMatrix, 1, 1, maxMeasDelay + 1);            
+            this.modeTransitionMatrix = modeTransitionMatrix;
+            this.modeTransitionMatrixHistory = repmat(modeTransitionMatrix, 1, 1, maxMeasDelay + 1);
+            
+            this.sysModelsHistory = cell(1, maxMeasDelay + 1);
         end
         
         %% reset
         function reset(this)
             %  Reset the filter by clearing the maintained state,
-            %  measurement, input and system mode histories.
+            %  measurement, model and system mode histories.
             %
             this.stateHistory = cell(1, this.maxMeasurementDelay + 1);
             this.measurementHistory = cell(1, this.maxMeasurementDelay);
-            this.inputHistory = cell(1, this.maxMeasurementDelay + 1);
+            this.sysModelsHistory = cell(1, this.maxMeasurementDelay + 1);
             this.trueModeHistory = cell(1, this.maxMeasurementDelay + 1); 
         end
                 
@@ -136,7 +143,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             %      The current system state.
             state = this.immf.getState();
         end
-        
+                
         %% getStateMeanAndCov
         function [stateMean, stateCov, stateCovSqrt] = getStateMeanAndCov(this)
             % Get mean and covariance matrix of the system state.
@@ -210,28 +217,36 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             [~, ~, modeProbs] = mixture.getComponents();
             [probability, mode] = max(modeProbs);
         end
-        
+                
         %% setModeTransitionMatrix
         function setModeTransitionMatrix(this, modeTransitionMatrix)
-            % Set the mode transition matrix.
+            % Set the mode transition matrix used to be used for the prediction from k to k+1,
+            % where k is the current time step, and for all future predictions until
+            % this method is called again.
+            % If called at time step k prior to a call of step() (which is
+            % used to compute the state estimate x^e_{k}),
+            % this matrix will NOT be used for the prediction of the
+            % estimate from k-1 to k.
             %
             % Parameters:
             %   >> modeTransitionMatrix (Matrix)
             %      A stochastic matrix whose (i,j)-th entry defines the probability of switching from mode i to j.
             %      In particular, the matrix must be square with all
             %      elements in [0,1] and rows summing up to 1.
-            this.immf.setModeTransitionMatrix(modeTransitionMatrix);
+            
+            Validator.validateTransitionMatrix(modeTransitionMatrix, this.immf.numModes);
+            this.modeTransitionMatrix = modeTransitionMatrix;
         end
         
         %% getModeTransitionMatrix
         function modeTransitionMatrix = getModeTransitionMatrix(this)
-            % Get the mode transition matrix.
+            % Get the current mode transition matrix.
             %
             % Parameters:
             %   >> modeTransitionMatrix (Matrix)
             %      A stochastic matrix whose (i,j)-th entry defines the probability of switching from mode i to j.
             
-            modeTransitionMatrix = this.immf.modeTransitionProbs;
+            modeTransitionMatrix = this.modeTransitionMatrix;
         end
         
         %% predict
@@ -248,7 +263,8 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         
         %% step
         function runtime = step(this, sysModel, measModel, measurements, delays, modeMeas, modeDelays)
-            % Perform a combined time and measurement update.
+            % Perform a combined time and measurement update, i.e., when
+            % called at time k, the estimate is propagated from x^e_{k-1} to x^e_{k}.
             %
             % Parameters:
             %   >> sysModel (JumpLinearSystemModel)
@@ -354,7 +370,15 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             if ~Checks.isClass(sysModel, 'JumpLinearSystemModel')
                 this.errorSysModel('JumpLinearSystemModel');
             end
-            
+            this.sysModelsHistory{1} = sysModel.copy(); % the model used for the prediction from k-1 to k (i.e., from the previous to the current time step)
+            if isempty(this.sysModelsHistory{2})
+                % first call to step, so use a copy of the model
+                % but there were no inputs in the past
+                cpy = sysModel.copy();
+                cpy.setSystemInput([]);
+                [this.sysModelsHistory{2:end}] = deal(cpy);
+            end
+ 
             maxDelay = max([applicableDelays applicableModeDelays]);
             if isempty(maxDelay)
                 % this should only happen in case both
@@ -362,11 +386,10 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 % empty
                 maxDelay = 0;
             end
-            currentModeTransitionMatrix = this.immf.modeTransitionProbs; % we have to memorize the current matrix
+            
             currentMeasurements = this.incorporateDelayedMeasurements(applicableMeasurements, applicableDelays);
             currentMode = this.incorporateDelayedModeMeasurements(applicableModes, applicableModeDelays);
-            
-            this.inputHistory{1} = this.getSystemInputs(sysModel);            
+                    
             % handle border case that maxDelay is this.maxMeasurementDelay + 1 
             % (maximum allowed delay for a mode observation)
             delays = min(maxDelay, this.maxMeasurementDelay):-1:0;
@@ -385,11 +408,10 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
                 else
                     measurements = currentMeasurements;
                 end
+                
                 this.immf.setState(this.stateHistory{i + 1});
-                this.immf.setModeTransitionMatrix(this.modeTransitionMatrixHistory(:, :, i + 1));
-                               
-                DelayedModeIMMF.applyInputs(sysModel, this.inputHistory{i + 1}); % inputs for prediction
-                this.immf.performPrediction(sysModel);
+                this.immf.setModeTransitionMatrix(this.modeTransitionMatrixHistory(:, :, i + 1));                
+                this.immf.performPrediction(this.sysModelsHistory{i+1});
                 if ~isempty(measurements)
                     this.immf.performUpdate(measModel, measurements);
                 end
@@ -400,7 +422,7 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
             end  
 
             % update history for the next step (i.e., proceed to k+1)
-            this.updateHistory(currentMeasurements, currentMode, currentModeTransitionMatrix);            
+            this.updateHistory(currentMeasurements, currentMode);            
         end
     end
     
@@ -515,44 +537,28 @@ classdef DelayedModeIMMF < DelayedMeasurementsFilter
         end      
         
         %% updateHistory
-        function updateHistory(this, currentMeasurements, currentTrueMode, currentModeTransitionMatrix)
+        function updateHistory(this, currentMeasurements, currentTrueMode)
             % update state, input and measurement history for the next step
             this.stateHistory = circshift(this.stateHistory, 1, 2);
             this.stateHistory{1} = this.immf.getState();
             
             this.measurementHistory = circshift(this.measurementHistory, 1, 2);
             this.measurementHistory{1} = currentMeasurements;
-            
-            this.inputHistory = circshift(this.inputHistory, 1, 2);
-            this.inputHistory{1} = []; % not known, as we need estimate for computation of inputs
-           
+        
             this.trueModeHistory = circshift(this.trueModeHistory, 1, 2);
             this.trueModeHistory{1} = currentTrueMode;
-      
-            this.modeTransitionMatrixHistory = cat(3, currentModeTransitionMatrix, ...
-                this.modeTransitionMatrixHistory(:, :, 1:this.maxMeasurementDelay));
             
+            % the current mode transition matrix is used until a new one is
+            % set by means of a call of setModeTransitionMatrix
+            this.modeTransitionMatrixHistory = cat(3, this.modeTransitionMatrix, ...
+                this.modeTransitionMatrixHistory(:, :, 1:end-1));
+            
+            this.sysModelsHistory = circshift(this.sysModelsHistory, 1, 2);
+            this.sysModelsHistory{1} = []; % not known, yet, passed as argument to step()
+       
             % if called at time k, the history is prepared for k+1
-        end
+        end       
         
-        %% getSystemInputs
-        function usedInputs = getSystemInputs(this, sysModel)
-            % assume that sysModel is a JumpLinearSystemModel
-            modeSpecificInputs = sysModel.getSystemInput();
-            usedInputs{this.immf.numModes} = [];
-            if ~isempty(modeSpecificInputs)
-                 usedInputs = modeSpecificInputs;
-            end
-        end
     end
-    
-    methods (Access = private, Static)
-        %% applyInputs
-        function applyInputs(sysModel, inputs)
-            % assume that sysModel is a JumpLinearSystemModel and inputs is
-            % an array of inputs
-            % so i-th input to be applied to i-th system model
-            sysModel.setSystemInput(inputs);
-        end
-    end
+ 
 end

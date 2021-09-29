@@ -36,22 +36,23 @@ using namespace arma;
 void mexFunction(int numOutputs, mxArray* outputArrays[], 
         int numInputs, const mxArray* inputArrays[]) {
     
-    // for computation of the costate, we need: terminalP, augA, augB, transitionMatrix, horizonLength, augR, augQ
+    // for computation of the costate, we need: terminalQ, augA, augB, transitionMatrix, horizonLength, augR, augQ
     const dcube augA = armaGetCubePr(inputArrays[0]);
     const dcube augB = armaGetCubePr(inputArrays[1]);
     const dmat transitionMatrix = armaGetPr(inputArrays[2]);
     const dcube augQ = armaGetCubePr(inputArrays[3]);
-    const dmat augR = armaGetPr(inputArrays[4]); // only for first mode
-    const dcube terminalP = armaGetCubePr(inputArrays[5]);   
+    const dmat augR = armaGetPr(inputArrays[4]); // only for first mode    
+    const dmat terminalQ = armaGetPr(inputArrays[5]);
     const int horizonLength = armaGetScalar<int>(inputArrays[6]);
     
     const uword numModes = augA.n_slices;    
     const uword dimAugState = augA.n_rows;
      
     size_t dims[3] = {static_cast<size_t>(dimAugState), static_cast<size_t>(dimAugState), static_cast<size_t>(numModes)};
-    outputArrays[0] = mxCreateUninitNumericArray(3, dims, mxDOUBLE_CLASS, mxREAL); // the costate    
-    dcube P(mxGetPr(outputArrays[0]), dimAugState, dimAugState, numModes, false, true);    
-    P = terminalP;
+    outputArrays[0] = mxCreateNumericArray(3, dims, mxDOUBLE_CLASS, mxREAL); // the costate    
+    dcube P(mxGetPr(outputArrays[0]), dimAugState, dimAugState, numModes, false, true);
+    
+    P.each_slice([&terminalQ](mat& p) {p.submat(0, 0, terminalQ.n_rows-1, terminalQ.n_cols-1) = terminalQ;});    
     const dmat eyeM = eye<dmat>(augB.n_cols, augB.n_cols);
     
     for (auto k = horizonLength - 1; k >=1; --k) {
@@ -73,7 +74,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
             const dmat BY = augB.slice(i).t() * Y;
             // this is the expression for M in the paper                 
             const dmat M = (i== 0) ? conv_to<dmat>::from(BY * augB.slice(i) + augR) : conv_to<dmat>::from(BY * augB.slice(i)); // symmetric
-            const dmat YBMBY = symmatu(Y - BY.t() * solve(M, eyeM) * BY);                        
+            const dmat YBMBY = symmatu(Y - BY.t() * pinv(M) * BY);                        
             P.slice(i) = symmatu(augQ.slice(i) + augA.slice(i).t() * YBMBY * augA.slice(i)); // symmetric            
         }           
     }    

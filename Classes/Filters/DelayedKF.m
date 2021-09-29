@@ -1,4 +1,4 @@
-classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
+classdef (Sealed) DelayedKF < DelayedMeasurementsFilter & ModeTransitionMatrixChangeable
     % This class represents a Kalman filter that can operate with time delayed control inputs 
     % and/or time delayed measurements. The filter calculates the linear minimum
     % mean square state estimate of a system based on a model of that system,
@@ -17,7 +17,7 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -55,7 +55,11 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
         % i-th slice indicates the mode transition matrix of the MJLS at
         % time k-i, where k is the current time
         % so the first entry is T_{k-1} and so forth
-        modeTransitionMatrixHistory;
+        modeTransitionMatrixHistory;        
+    end
+    
+    properties (GetAccess = public, SetAccess = private)
+        possibleInputs;
     end
     
     properties (GetAccess = private, SetAccess = immutable)
@@ -184,6 +188,28 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             this.modeTransitionMatrix = modeTransitionMatrix;
         end
         
+        %% setPossibleInputs
+        function setPossibleInputs(this, possibleInputs)
+            % Set the system inputs that might be currently applied to the
+            % plant, adding additional uncertainty to the system.
+            %
+            % By default, the system input is an empty matrix.
+            %
+            % Parameters:
+            %   >> sysInput (Matrix)
+            %      A matrix with column-wise arranged inputs that might be
+            %      currently applied at the plant. 
+            %      An empty matrix means no input vector, and, hence, no
+            %      addtional uncertainty.
+            
+            assert((Checks.isFixedColMat(possibleInputs, this.numModes) && all(isfinite(possibleInputs(:)))) || isempty(possibleInputs), ...
+                'DelayedKF:SetPossibleInputs:InvalidInputs', ...
+                '** <possibleInputs> must be given as a real-valued matrix with %d columns (i.e., the possibly active inputs must be column-wise arranged) **',  ...
+                this.numModes);
+            
+            this.possibleInputs = possibleInputs;
+        end
+        
         %% predict
         function runtime = predict(this, ~)
              this.error('InvalidPredictionStep', ...
@@ -203,7 +229,7 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             % to x^e_{k}.
             %
             % Parameters:
-            %   >> sysModel (DelayedKFSystemModel)
+            %   >> sysModel (LinearPlant)
             %      Augmented system model that provides the mapping between the prior system
             %      state and the predicted state (i.e., the system state's temporal evolution).
             %
@@ -315,8 +341,8 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
     
         %% performPrediction
         function performPrediction(this, sysModel, mostRecentMode, mostRecentModeDelay)
-            if ~Checks.isClass(sysModel, 'DelayedKFSystemModel')
-                this.errorSysModel('DelayedKFSystemModel');
+            if ~Checks.isClass(sysModel, 'LinearPlant')
+                this.errorSysModel('LinearPlant');
             end
             % integrate the mode observation to update the mode distribution theta_{k-1}, if present
             if ~isempty(mostRecentMode) && mostRecentModeDelay < this.lastModeObservationDelay
@@ -336,15 +362,40 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
                 this.previousModeEstimate = this.modeTransitionMatrixHistory(:, :, 2)' * this.previousModeEstimate;
                 %this.previousModeEstimate = this.modeTransitionMatrix' * this.previousModeEstimate;
             end
-            % these are the new delay weights used for the prediction from x_{k-1} to x_{k}
-            sysModel.setDelayWeights(this.previousModeEstimate);
-            
-            % do not compute square root of state cov as it is not
-            % neccessarily positive-definite
-            [predictedAugmentedStateMean, ...
-                predictedAugmentedStateCov] = sysModel.analyticMoments(this.augmentedStateMean, ...
-                    this.augmentedStateCov);
-            
+            % this.previousModeEstimate are the new delay weights used for the prediction from x_{k-1} to x_{k}
+                        
+            [~, W] = sysModel.noise.getMeanAndCov(); % maybe of lower dimension, but zero mean (cf. LinearPlant)
+            if ~isempty(sysModel.sysNoiseMatrix)
+               W = sysModel.sysNoiseMatrix * W * sysModel.sysNoiseMatrix';
+             end
+            % prediction of mean: simply shift states down and predict
+            % first one
+            predictedAugmentedStateMean = circshift(this.augmentedStateMean, this.dimState);
+            predictedAugmentedStateMean(1:this.dimState) = sysModel.sysMatrix * this.augmentedStateMean(1:this.dimState);
+                    
+            % predicted cov: include correlation of current state
+%             corrPart = sysModel.sysMatrix * this.augmentedStateCov(1:this.dimState, 1:end-this.dimState);
+%             predictedAugmentedStateCov ...
+%                 = [sysModel.sysMatrix * this.augmentedStateCov(1:this.dimState, 1:this.dimState) * sysModel.sysMatrix' + W, corrPart;
+%                    corrPart', this.augmentedStateCov(1:end-this.dimState, 1:end-this.dimState)];                         
+%                predictedAugmentedStateCov
+               
+            augA = [sysModel.sysMatrix, zeros(this.dimState, this.dimState * this.maxMeasurementDelay); 
+                Utils.blockDiag(eye(this.dimState), this.maxMeasurementDelay), zeros(this.dimState, this.dimState * this.maxMeasurementDelay)'];
+            predictedAugmentedStateCov = augA * this.augmentedStateCov * augA';
+              
+            predictedAugmentedStateCov(1:this.dimState, 1:this.dimState) ...
+                = predictedAugmentedStateCov(1:this.dimState, 1:this.dimState) + W;
+                        
+            if ~isempty(this.possibleInputs)
+                % last element is considered the default input (e.g., zero) applied by actuator in case of packet loss
+                % compute expected, but uncertain input
+                [inputMean, inputCov] = Utils.getMeanAndCov(sysModel.inputMatrix * this.possibleInputs, this.previousModeEstimate');
+                predictedAugmentedStateMean(1:this.dimState) ...
+                    = predictedAugmentedStateMean(1:this.dimState) + inputMean;
+                predictedAugmentedStateCov(1:this.dimState, 1:this.dimState) ...
+                    = predictedAugmentedStateCov(1:this.dimState, 1:this.dimState) + inputCov;
+            end
             % check if predicted state covariance is valid
             this.checkCovPrediction(predictedAugmentedStateCov(1:this.dimState, 1:this.dimState), ...
                    'Predicted state');
@@ -363,32 +414,24 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
            
             [noiseMean, noiseCov] = measModel.noise.getMeanAndCov();
             dimStackedMeas = size(baseMeasMatrix, 1) * numMeas; % what is expected according to the original model
-                       
-            augmentedMeasMatrix = [zeros(dimMeas, this.dimState * delay), ...
-                    baseMeasMatrix, zeros(dimMeas, this.dimState * (this.maxMeasurementDelay - delay))];
-            
-            % compute required moments
-            measMean = repmat(augmentedMeasMatrix * this.augmentedStateMean + noiseMean, numMeas, 1);
-            measCov = Utils.blockDiag(noiseCov, numMeas) ...
-                + repmat(augmentedMeasMatrix * this.augmentedStateCov * augmentedMeasMatrix', numMeas, numMeas);
-            % cross-covariance of original (non-augmented) state and
-            % measurements
-            stateMeasCrossCov = repmat(this.augmentedStateCov(1:this.dimState, :) * augmentedMeasMatrix', 1, numMeas);
+                      
+            % compute required moments (extract components from augState that are affected)
+            idx = delay * this.dimState;
+            measMean = repmat(baseMeasMatrix * this.augmentedStateMean(idx + 1:idx + this.dimState) + noiseMean, numMeas, 1);
+            measCov = repmat(noiseCov + baseMeasMatrix * this.augmentedStateCov(idx + 1:idx + this.dimState, idx + 1:idx + this.dimState) * baseMeasMatrix', ...
+                numMeas, numMeas);
+            % cross-covariance of original (non-augmented) state and measurements
+            stateMeasCrossCov = repmat(this.augmentedStateCov(1:this.dimState, idx + 1: idx + this.dimState) * baseMeasMatrix', ...
+                1, numMeas);
                   
             % Check measurement moments
-            if ~Checks.isColVec(measMean, dimStackedMeas) || any(~isfinite(measMean))
+            if any(~isfinite(measMean))
                 this.error('InvalidMeasurementMean', ...
                           ['** Measurement mean must be a ' ...
                            'real-valued column vector of dimension %d **'], ...
                           dimStackedMeas);
             end
-            if ~Checks.isSquareMat(measCov, dimStackedMeas) || any(~isfinite(measCov(:)))
-                this.error('InvalidMeasurementCovariance', ...
-                          ['** Measurement covariance must be a ' ...
-                           'positive definite matrix of dimension %dx%d **'], ...
-                          dimStackedMeas, dimStackedMeas);
-            end
-            if ~Checks.isMat(stateMeasCrossCov, this.dimState, dimStackedMeas) || any(~isfinite(stateMeasCrossCov(:)))
+            if any(~isfinite(stateMeasCrossCov(:)))
                 this.error('InvalidStateMeasurementCrossCovariance', ...
                           ['** State measurement cross-covariance must be a ' ...
                            'matrix of dimension %dx%d **'], ...
@@ -396,9 +439,11 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             end
             [sqrtMeasCov, isNonPos] = chol(measCov);
             
-            if isNonPos
+            if any(~isfinite(measCov(:))) || isNonPos
                 this.error('InvalidMeasurementCovariance', ...
-                      'Measurement covariance matrix is not positive definite.');
+                          ['** Measurement covariance must be a ' ...
+                           'positive definite matrix of dimension %dx%d **'], ...
+                          dimStackedMeas, dimStackedMeas);
             end
                       
             meanGain = (stateMeasCrossCov / sqrtMeasCov) / sqrtMeasCov'; % L
@@ -409,6 +454,8 @@ classdef (Sealed) DelayedKF < DelayedMeasurementsFilter
             postMean = this.augmentedStateMean(1:this.dimState) + meanGain * (measurements(:) - measMean);
                         
             % not necessarily positive definite posterior cov of augmented state
+            augmentedMeasMatrix = [zeros(dimMeas, this.dimState * delay), ...
+                    baseMeasMatrix, zeros(dimMeas, this.dimState * (this.maxMeasurementDelay - delay))];
             factor = speye(this.dimState * (this.maxMeasurementDelay + 1)) ...
                 - covGain * repmat(augmentedMeasMatrix, numMeas, 1);
             augmentedPostCov = factor * this.augmentedStateCov * factor' ...

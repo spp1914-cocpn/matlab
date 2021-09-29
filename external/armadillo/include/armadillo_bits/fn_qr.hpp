@@ -34,7 +34,7 @@ qr
   arma_extra_debug_sigprint();
   arma_ignore(junk);
   
-  arma_debug_check( (&Q == &R), "qr(): Q and R are the same object");
+  arma_debug_check( (&Q == &R), "qr(): Q and R are the same object" );
   
   const bool status = auxlib::qr(Q, R, X);
   
@@ -42,7 +42,7 @@ qr
     {
     Q.soft_reset();
     R.soft_reset();
-    arma_debug_warn("qr(): decomposition failed");
+    arma_debug_warn_level(3, "qr(): decomposition failed");
     }
   
   return status;
@@ -65,7 +65,7 @@ qr_econ
   arma_extra_debug_sigprint();
   arma_ignore(junk);
   
-  arma_debug_check( (&Q == &R), "qr_econ(): Q and R are the same object");
+  arma_debug_check( (&Q == &R), "qr_econ(): Q and R are the same object" );
   
   const bool status = auxlib::qr_econ(Q, R, X);
   
@@ -73,7 +73,7 @@ qr_econ
     {
     Q.soft_reset();
     R.soft_reset();
-    arma_debug_warn("qr_econ(): decomposition failed");
+    arma_debug_warn_level(3, "qr_econ(): decomposition failed");
     }
   
   return status;
@@ -96,7 +96,7 @@ qr
   {
   arma_extra_debug_sigprint();
   
-  arma_debug_check( (&Q == &R), "qr(): Q and R are the same object");
+  arma_debug_check( (&Q == &R), "qr(): Q and R are the same object" );
   
   const char sig = (P_mode != nullptr) ? P_mode[0] : char(0);
   
@@ -132,7 +132,7 @@ qr
     Q.soft_reset();
     R.soft_reset();
     P.soft_reset();
-    arma_debug_warn("qr(): decomposition failed");
+    arma_debug_warn_level(3, "qr(): decomposition failed");
     }
   
   return status;

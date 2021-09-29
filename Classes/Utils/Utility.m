@@ -5,7 +5,8 @@ classdef Utility < handle
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %                             Fabio Broghammer <fabio.broghammer@student.kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -32,8 +33,33 @@ classdef Utility < handle
         end
     end
     
-    methods (Static, Access = public)
-    
+    methods (Static, Access = public)    
+        %% createBlockdiagonalMatrix
+        function diagMatrix = createBlockdiagonalMatrix(matrix)
+            % Creates a block diagonal matrix out of a 3D-Matrix.
+            %
+            % Parameters:
+            %   >> matrix (3D-Matrix, m-by-n-by-k)
+            %      The 3D-Matrix.
+            %
+            % Returns:
+            %   << diagMatrix (Matrix of shape m*k-by-n*k)
+            %      A block diagonal matrix with <matrix> (M) on the diagonal:
+            %      |M(:, :, 1)      0           0       ...     0     |
+            %      |    0       M(:,:, 2)               ...     0     |
+            %      |    0           0       M(:, :, 3)  ...     0     |
+            %      |    .           .           .        .      0     |
+            %      |    0           0           0       ... M(:, :, k)|
+
+            [rows, columns, numberOfMatrices] = size(matrix);            
+
+            diagMatrix = zeros(rows * numberOfMatrices, columns * numberOfMatrices);
+
+            for i = 1:numberOfMatrices
+                diagMatrix((i - 1) * rows + 1: i * rows, (i - 1) * columns + 1:i * columns) = matrix(:, :, i);
+            end
+        end
+        
         %% computeStageCosts
         function stageCosts = computeStageCosts(state, appliedInput, Q, R)
             % Compute the stage-costs of a quadratic cost function,
@@ -508,6 +534,76 @@ classdef Utility < handle
             end
         end
         
+        %% normalizeProbabilities
+        function normalizedProbs = normalizeProbabilities(probs, lowerBound)
+            % Convenience function to normalize a stochastic vector or column-stochastic matrix.            
+            % Here, normlization means that a lower bound on the
+            % probabilities is imposed, thus avoiding zero entries.
+            %
+            % Parameters:
+            %   >> probs (Vector or matrix)
+            %      Either a stochastic vector, i.e., a vector with nonnegative
+            %      entries where each row sums to 1, or a not necessarily
+            %      square matrix with nonnegative entries whose columns
+            %      sum to 1.
+            %      
+            %   >> lowerBound (Nonnegative scalar, optional)
+            %      The lower bound for the entries of the given vector or matrix. 
+            %      If 0 is passed here, this function has no effect.
+            %      If no value is passed, the dafult value 1e-12 is used.
+            %
+            % Returns:
+            %   << normalizedProbs (Vector with nonnegative entries)
+            %      The given stochastic vector or column-stochastic matrix after normalization,
+            %      such that no entries is less than the given lower bound.            
+            %
+            if nargin < 2
+                lowerBound = 1e-12;
+            end           
+            
+            idx = find(probs <= lowerBound);
+            normalizedProbs = probs;
+            if ~isempty(idx)
+                normalizedProbs(idx) = lowerBound;                
+            end
+            normalizedProbs = normalizedProbs ./ sum(normalizedProbs);
+        end
+        
+        %% normalizeTransitionMatrix
+        function normalizedTransMat = normalizeTransitionMatrix(transMat, lowerBound)
+            % Convenience function to normalize a row-stochastic matrix,
+            % such as as transition matrix of a Markov chain.
+            % Here, normlization means that a lower bound on the
+            % probabilities is imposed, thus avoiding zero entries.
+            %
+            % Parameters:
+            %   >> transMat (Matrix)
+            %      A row-stochastic matrix, i.e., a matrix with nonnegative
+            %      entries where each row sums to 1, but not necessarily
+            %      square.
+            %      
+            %   >> lowerBound (Nonnegative scalar, optional)
+            %      The lower bound for the entries of the given matrix. 
+            %      If 0 is passed here, this function has no effect.
+            %      If no value is passed, the dafult value 1e-12 is used.
+            %
+            % Returns:
+            %   << normalizedTransMat (Vector with nonnegative entries)
+            %      The given row-stochastic matrix after normalization,
+            %      such that no entries is less than the given lower bound.            
+            %
+            if nargin < 2
+                lowerBound = 1e-12;
+            end           
+            
+            idx = find(transMat <= lowerBound);
+            normalizedTransMat = transMat;
+            if ~isempty(idx)
+                normalizedTransMat(idx) = lowerBound;                
+            end
+            normalizedTransMat = normalizedTransMat ./ sum(normalizedTransMat, 2);
+        end
+        
         %% calculateDelayTransitionMatrix
         function transitionMatrix = calculateDelayTransitionMatrix(delayProbs)
             % Compute the (possibly time-varying) transition matrix of the Markov chain that occurs in the combined stochastic model 
@@ -563,13 +659,7 @@ classdef Utility < handle
             %      elements of the given delay distribution.
             %      Note that this matrix is always lower Hessenberg.
                        
-            probabilityBound = 1e-12;
-            idx = find(delayProbs <= probabilityBound);
-            normalizedDelayProbs = delayProbs;
-            if ~isempty(idx)
-                normalizedDelayProbs(idx) = probabilityBound;
-                normalizedDelayProbs = normalizedDelayProbs ./ sum(normalizedDelayProbs);
-            end
+            normalizedDelayProbs = Utility.normalizeProbabilities(delayProbs);
             sums = cumsum(normalizedDelayProbs);
             if isvector(normalizedDelayProbs)
                 % probability vector given -> time-invariant transition matrix
@@ -596,7 +686,182 @@ classdef Utility < handle
                 end
                 transitionMatrix(numModes, :) = transitionMatrix(seqLength, :);
             end
-        end      
+        end        
+        
+        %% calculateTransitionMatrixCorrelatedDelays
+        function transitionMatrix = calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, controlSeqLength, useMex, useStatDist)
+            % Compute the transition matrix of the Markov chain that occurs in the combined stochastic model of communication network and actuator
+            % for the case of correlated packet delays and losses, modeled
+            % in the form of a Markov chain tau_k.
+            % The computation is based on a lumping of the aggregated Markov
+            % chain tau_k, tau_{k-1}, tau_{k-(N-1)}, which is easily
+            % created given the transition matrix of tau_k and where N is
+            % the desired control sequence length.
+            % Note that, however, this aggregated chain is generally not
+            % exactly lumpable with respect to the clusters theta_k (which are the modes of
+            % the augmented dynamics).
+            % Note also that no parameter checks are carried out.
+            %
+            % Literature: 
+            %   John G. Kemeny and J. Laurie Snell,
+            %   Finite Markov Chains,
+            %   Sections 6.3-6.4,
+            %   Van Nostrand, Princeton, NJ, USA, 1960.
+            %
+            % Parameters:
+            %   >>  delayTransitionMatrix (Stochastic matrix)
+            %       The transition matrix of the Markov chain governing the
+            %       packet delays and losses (tau_k) in the communication
+            %       between controller and actuator. The dimension of this
+            %       matrix must be at least (N+1)-by-(N+1), where N is the
+            %       passed length of the control sequences.
+            %
+            %   >> controlSeqLength (Positive integer)
+            %      The length of a control sequence (without default input)
+            %      generated by the controller.
+            %
+            %   >> useMex (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the transition matrix. 
+            %      If left out, the default value false is used.
+            %
+            %   >> useStatDist (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether stationary distribution of the
+            %      augmented delay Markov chain shall be used for
+            %      constructing the distribution matrix U, which ensures
+            %      that the resulting lumped chain has the same convergence
+            %      properties.
+            %      If false is passed here, the distribution matrix is a
+            %      constructed such that each entry is 1/d_l, with d_l the
+            %      number of elements in the cluster corresponding to that
+            %      entry, resulting in a transition matrix for theta that
+            %      has the same properties as if the delays were a white
+            %      process.
+            %      If left out, the default value true is used.
+            %
+            % Returns:
+            %   << transitionMatrix (Square matrix)
+            %      The transition matrix of the resulting Markov chain,
+            %      which is of dimension (N+1)-by-(N+1) where N is the given sequence length.
+            %      Note that this matrix is always lower Hessenberg.
+            
+            if nargin < 3
+                useMex = false;
+                useStatDist = true;
+            elseif nargin < 4
+                useStatDist = true;  
+            end
+            
+            if ~useMex
+                numDelays = size(delayTransitionMatrix, 1); % last state also comprises packet losses
+                numCaModes = controlSeqLength + 1;
+                assert(Checks.isSquareMat(delayTransitionMatrix, numDelays) && numDelays >= numCaModes, ...
+                    'Utility:CalculateTransitionMatrixCorrelatedDelays:InvalidTransitionMatrix', ...
+                    '** Transition matrix of the delay Markov chain must be at least %d-by-%d **', numCaModes, numCaModes);
+
+                numAggregations = controlSeqLength;
+                numAggregatedStates = numDelays^numAggregations;
+                % the aggregated chain is not regular
+                aggregatedStatesDecimal = 0:numAggregatedStates-1; % decimal numbers
+                statesBaseN = zeros(numAggregatedStates, numAggregations);
+                for l = 0:numAggregations-1
+                    statesBaseN(:, l+1) = mod(floor(aggregatedStatesDecimal ./ (numDelays ^ l)), numDelays);
+                end
+                % use a sparse matrix for the transitions of the aggregated
+                % chain
+                % matrix has repetitive structure (regarding the rows)
+                numRows = numAggregatedStates / numDelays;
+                numNonzeroEntries = numDelays ^ numAggregations; % maximum number of nonzero transition probs of the aggregated chain
+                % first column indicates rows
+                % second column indicates cols
+                % third column contains nonzero values
+                sparseEntries(:, 3) = repmat(reshape(delayTransitionMatrix', numDelays * numDelays, 1), ...
+                    numNonzeroEntries / (numDelays * numDelays), 1);
+                sparseEntries(:, 2) = 1:numNonzeroEntries;
+                sparseEntries(:, 1) = kron(1:numRows, ones(1, numDelays));
+
+                aggT = sparse(sparseEntries(:, 1), sparseEntries(:, 2), sparseEntries(:, 3), numRows, numAggregatedStates);
+                
+                % compute the indices of the clusters
+                % states of aggregated chain are lumped into clusters-> mode of
+                % augmented system
+                numClusters = numCaModes; % equals the number of modes
+                clusterIdx = cell(1, numClusters);
+                % first cluster is easy: tau_k = 0
+                clusterIdx{1} = find(~(statesBaseN(:, 1)));
+                % i-th cluster: tau_k > 0, tau_{k-1} > 1, ... tau_{k-(i-1)} > i-1, tau_{k-i} <= i
+                lastIdx = 1:numAggregatedStates;
+                usedIdx = clusterIdx{1};
+                for j=2:numClusters-1
+                    % create the next cluster by concatenating function handles
+                    fun = @() statesBaseN(:, 1) > 0; % tau_k > 0
+                    for k=2:j-1
+                        fun = @() fun() & statesBaseN(:, k) > k-1;
+                    end
+                    % finally the last one
+                    fun = @() fun() & statesBaseN(:, j) <= j-1;
+
+                    clusterIdx{j} = find(fun());
+                    usedIdx = union(usedIdx, clusterIdx{j});
+                end
+                %last cluster: all indices not yet assigned
+                clusterIdx{end} = find(~ismember(lastIdx, usedIdx));
+                % construct matrices U, V required for clustering into modes
+                                
+                U = zeros(numClusters, numAggregatedStates);
+                V = zeros(numAggregatedStates, numClusters);
+                if useStatDist
+                    % use the fact that stationary distribution can be computed
+                    % by means of stationary distribution of delayTransitionMatrix
+
+                    % (theta_k) (MC lumping)                
+                    %[eigVec, ~] = eigs(repmat(aggT, numDelays, 1)', 1); % compute Perron eigenvalue (1) and corresponding left eigenvector
+                    %statDist = eigVec ./ sum(eigVec);
+                    % generalization of Theorem 6.5.2 in Kemeny and
+                    % Small's book to obtain stationary distribution of
+                    % aggT based stationary distribution of delayTransitionMatrix
+                    % stat (i,j,l) = statP(l) * t(l,j)*t(j,i) and so forth
+                    % where statP is stationary distribution of delay MC
+                    % and t are the entries of delayTransitionMatrix
+                    tmp = delayTransitionMatrix;
+                    for n=1:numAggregations-2
+                        tmp = delayTransitionMatrix .* permute(tmp, [3 1 2]);                        
+                        tmp = reshape(permute(tmp, [1 3 2]), numDelays, []);                        
+                    end
+                    statDist = reshape(transpose(Utility.computeStationaryDistribution(delayTransitionMatrix) .* tmp), numAggregatedStates, 1);
+                
+                    %                     a = Utility.computeStationaryDistribution(delayTransitionMatrix);
+                    %                     for i=1:numDelays
+                    %                         for j=1:numDelays                            
+                    %                             for l=1:numDelays
+                    %                                 %res(l,j,i) = [a(i)*delayTransitionMatrix(i,j) * delayTransitionMatrix(j,l)];
+                    %                                 for m=1:numDelays
+                    %                                 %res2 = [res2; delayTransitionMatrix(i, :) .* delayTransitionMatrix(:,l)];
+                    %                                     res(i, j, l, m) = [a(m)*delayTransitionMatrix(m,l) * delayTransitionMatrix(l,j) * delayTransitionMatrix(j,i)];
+                    %                                 end
+                    %                             end
+                    %                         end
+                    %                     end
+
+                    for j=1:numClusters                        
+                        U(j, clusterIdx{j}) = statDist(clusterIdx{j}) ./ sum(statDist(clusterIdx{j}));
+                        V(clusterIdx{j}, j) = 1;
+                    end
+                else
+                    % yields a transition matrix for theta that has the familiar structure: 
+                    % last 2 rows equal, also entries below main diagonal the same per column 
+                    % (including diagonal entrystarting from column 2)
+                    % also, requirement about delay chain and its properties (irreducible etc) not needed)
+                    for j=1:numClusters
+                        U(j, clusterIdx{j}) = 1/ numel(clusterIdx{j});
+                        V(clusterIdx{j}, j) = 1; 
+                    end
+                end       
+                transitionMatrix = U * repmat(aggT, numDelays, 1) * V;
+            else
+                transitionMatrix = mex_CalculateTransitionMatrixCorrDelays(delayTransitionMatrix, controlSeqLength, useStatDist);
+            end
+        end
         
         %% computeStationaryDistribution
         function stationaryDist = computeStationaryDistribution(transitionMatrix, useEig)
@@ -725,6 +990,6 @@ classdef Utility < handle
                 rmse = [];
             end
         end
-    end
+    end    
 end
 

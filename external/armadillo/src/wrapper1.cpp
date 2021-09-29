@@ -34,8 +34,13 @@
   
   namespace arma
     {
+    // NOTE: arma_rng_cxx11_instance is kept only for compatibility with earlier versions of armadillo
+    // TODO: remove arma_rng_cxx11_instance when the major version is bumped
+    
     #include "armadillo_bits/arma_rng_cxx11.hpp"
     thread_local arma_rng_cxx11 arma_rng_cxx11_instance;
+    
+    thread_local std::mt19937_64 mt19937_64_instance;
     }
 #endif
 
@@ -1602,10 +1607,10 @@ extern "C"
       {
       zgstrf(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
       }
-
-
-
-
+    
+    
+    
+    
     void wrapper_sgstrs(superlu::trans_t a, superlu::SuperMatrix* b, superlu::SuperMatrix* c, int* d, int* e, superlu::SuperMatrix* f, superlu::SuperLUStat_t* g, int* h)
       {
       sgstrs(a, b, c, d, e, f, g, h);
@@ -1625,10 +1630,54 @@ extern "C"
       {
       zgstrs(a, b, c, d, e, f, g, h);
       }
-
-
-
-
+    
+    
+    
+    
+    float  wrapper_slangs(char* norm, superlu::SuperMatrix* A)
+      {
+      return slangs(norm, A);
+      }
+    
+    double wrapper_dlangs(char* norm, superlu::SuperMatrix* A)
+      {
+      return dlangs(norm, A);
+      }
+    
+    float  wrapper_clangs(char* norm, superlu::SuperMatrix* A)
+      {
+      return clangs(norm, A);
+      }
+    
+    double wrapper_zlangs(char* norm, superlu::SuperMatrix* A)
+      {
+      return zlangs(norm, A);
+      }
+    
+    
+    
+    void wrapper_sgscon(char* norm, superlu::SuperMatrix* L, superlu::SuperMatrix* U,  float anorm,  float* rcond, superlu::SuperLUStat_t* stat, int* info)
+      {
+      sgscon(norm, L, U, anorm, rcond, stat, info);
+      }
+    
+    void wrapper_dgscon(char* norm, superlu::SuperMatrix* L, superlu::SuperMatrix* U, double anorm, double* rcond, superlu::SuperLUStat_t* stat, int* info)
+      {
+      dgscon(norm, L, U, anorm, rcond, stat, info);
+      }
+    
+    void wrapper_cgscon(char* norm, superlu::SuperMatrix* L, superlu::SuperMatrix* U,  float anorm,  float* rcond, superlu::SuperLUStat_t* stat, int* info)
+      {
+      cgscon(norm, L, U, anorm, rcond, stat, info);
+      }
+    
+    void wrapper_zgscon(char* norm, superlu::SuperMatrix* L, superlu::SuperMatrix* U, double anorm, double* rcond, superlu::SuperLUStat_t* stat, int* info)
+      {
+      zgscon(norm, L, U, anorm, rcond, stat, info);
+      }
+    
+    
+    
     void wrapper_StatInit(superlu::SuperLUStat_t* a)
       {
       StatInit(a);

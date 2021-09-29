@@ -5,7 +5,7 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -189,7 +189,60 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
             actualNewSysMatrix = this.modelUnderTest.modeSystemModels{mode}.sysMatrix;
             this.verifyEqual(actualNewSysMatrix, expectedNewSysMatrix);
         end
+%%
+%%
+        %% testSetSystemInputMatrixForModeInvalidMode
+        function testSetSystemInputMatrixForModeInvalidMode(this)
+            newSysInputMatrix = this.B1 + this.B2;
+            
+            expectedErrId = 'JumpLinearSystemModel:InvalidMode';
+            
+            % first, mode is negative
+            this.verifyError(@() this.modelUnderTest.setSystemInputMatrixForMode(newSysInputMatrix, this.negativeNumModes), expectedErrId);
+            % now mode is fractional
+            this.verifyError(@() this.modelUnderTest.setSystemInputMatrixForMode(newSysInputMatrix, this.fractionaNumModes), expectedErrId);
+            % now mode is out of bounds
+            this.verifyError(@() this.modelUnderTest.setSystemInputMatrixForMode(newSysInputMatrix, this.numModes + 1), expectedErrId);
+        end
         
+        %% testSetSystemInputMatrixForMode
+        function testSetSystemInputMatrixForMode(this)
+            expectedNewSysInputMatrix = this.B1 + this.B2;
+            mode = 1;
+            
+            this.modelUnderTest.setSystemInputMatrixForMode(expectedNewSysInputMatrix, mode);
+            
+            actualNewSysInputMatrix = this.modelUnderTest.modeSystemModels{mode}.inputMatrix;
+            this.verifyEqual(actualNewSysInputMatrix, expectedNewSysInputMatrix);
+        end
+%%
+%%
+        %% testSetSystemInputMatrixForModeInvalidMode
+        function testSetSystemNoiseCovarianceMatrixForModeInvalidMode(this)
+            newSysNoiseCov = this.W1 + this.W2;
+            
+            expectedErrId = 'JumpLinearSystemModel:InvalidMode';
+            
+            % first, mode is negative
+            this.verifyError(@() this.modelUnderTest.setSystemNoiseCovarianceMatrixForMode(newSysNoiseCov, this.negativeNumModes), expectedErrId);
+            % now mode is fractional
+            this.verifyError(@() this.modelUnderTest.setSystemNoiseCovarianceMatrixForMode(newSysNoiseCov, this.fractionaNumModes), expectedErrId);
+            % now mode is out of bounds
+            this.verifyError(@() this.modelUnderTest.setSystemNoiseCovarianceMatrixForMode(newSysNoiseCov, this.numModes + 1), expectedErrId);
+        end
+        
+        %% testSetSystemNoiseCovarianceMatrixForMode
+        function testSetSystemNoiseCovarianceMatrixForMode(this)
+            expectedNewSysNoiseCov = this.W1 + this.W2;
+            mode = 1;
+            
+            this.modelUnderTest.setSystemNoiseCovarianceMatrixForMode(expectedNewSysNoiseCov, mode);
+            
+            [~,actualNewSysNoiseCov] = this.modelUnderTest.modeSystemModels{mode}.noise.getMeanAndCov();
+            this.verifyEqual(actualNewSysNoiseCov, expectedNewSysNoiseCov);
+        end
+%%
+%%
         %% testSetActiveModeInvalidMode
         function testSetActiveModeInvalidMode(this)
             expectedErrId = 'JumpLinearSystemModel:InvalidMode';
@@ -260,6 +313,25 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
             % now change the transition matrix
             newTransitionMatrix = [0.7 0.3; 0.2 0.8];
             this.verifyFalse(this.modelUnderTest.isMeanSquareStable(newTransitionMatrix));
+        end
+        
+        %% testCopy
+        function testCopy(this)
+            modelCopy = this.modelUnderTest.copy();
+            
+            this.verifyEqual(modelCopy.modeSystemModels, this.modelUnderTest.modeSystemModels);
+            this.verifyEqual(modelCopy.modeSystemModels{1}, this.modelUnderTest.modeSystemModels{1});
+            this.verifyEmpty(modelCopy.getSystemInput());
+            
+            this.modelUnderTest.setSystemInput([1 2]);
+            this.verifyEmpty(modelCopy.getSystemInput());
+            
+            modelCopy.setSystemInput(3);
+            this.verifyNotEqual(modelCopy.getSystemInput(), this.modelUnderTest.getSystemInput());
+            
+            modelCopy.setSystemInput([]);
+            this.verifyEmpty(modelCopy.getSystemInput());
+            this.verifyNotEqual(modelCopy.getSystemInput(), this.modelUnderTest.getSystemInput());
         end
     end
 end

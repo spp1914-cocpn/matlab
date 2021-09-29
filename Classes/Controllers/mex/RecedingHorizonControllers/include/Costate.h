@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -87,7 +87,7 @@ namespace RecedingHorizonUdpLikeController {
                         this->dynamics.getTransitionMatrix() * this->omega, this->stage, this->dynamics);
                 
                 #ifdef _OPENMP        
-                #pragma omp parallel for
+                #pragma omp parallel for shared (result)
                 #endif
                 for (auto i=0; i < this->dynamics.getNumModes(); ++i) {
                     mat::const_row_iterator row = this->dynamics.getTransitionMatrix().begin_row(i);
@@ -99,7 +99,7 @@ namespace RecedingHorizonUdpLikeController {
                 return result;
             }           
             
-            Costate computeNew(const dmat& K, const dmat& L, const dmat& M, const dcube& augQ, const dmat& JRJ) const {
+            Costate computeNew(const dmat& K, const dmat& L, const dcube& augQ, const dmat& JRJ) const {
                 
                 Costate result(augQ, zeros<dcube>(size(augQ)), this->dynamics.getTransitionMatrix() * this->omega,
                         this->stage - 1, this->dynamics);
@@ -110,6 +110,8 @@ namespace RecedingHorizonUdpLikeController {
                 const dmat KS = K * this->dynamics.getSeAt(result.stage);
                 const dmat KSC = KS * this->dynamics.getAugC();
                 const dmat E_tilde = symmatu(KS * this->dynamics.getAugV() * KS.t()); // E_tilde in the paper            
+                const dmat AexpBexpL = this->dynamics.getAexpAt(result.stage) +this->dynamics.getBexpAt(result.stage)  * L;
+                const dmat AexpBexpLKSC = AexpBexpL - KSC; //Aexp+Bexp*L-K*S*C
                 
                 #ifdef _OPENMP
                 #pragma omp parallel for shared(result)
@@ -118,12 +120,12 @@ namespace RecedingHorizonUdpLikeController {
                     const dmat currentPlEpsilon = this->Pl.slice(i);
                     const dmat currentPuEpsilon = this->Pu.slice(i);
                     const dmat BL = this->dynamics.getAugB(i) * L;
-                    const dmat U_tilde = this->dynamics.getAugA(i) + BL; // U_tilde in the paper
-                    const dmat O_tilde = M - BL; // O_tilde in the paper
-                    const dmat D_tilde = U_tilde - M - KSC; //D_tilde in the paper
+                    const dmat ABL = this->dynamics.getAugA(i) + BL; // U_tilde in the paper
+                    const dmat diffPart = ABL - AexpBexpL;   
+                    const dmat O_tilde = AexpBexpLKSC - BL; //Aexp+Bexp*L-K*S*C-B(i)*L
 
                     result.omega(i) += trace(currentPlEpsilon * E_tilde + (currentPlEpsilon + currentPuEpsilon) * this->dynamics.getAugW());
-                    result.Pu.slice(i) += symmatu(U_tilde.t() * currentPuEpsilon * U_tilde + D_tilde.t() * currentPlEpsilon * D_tilde);
+                    result.Pu.slice(i) += symmatu(ABL.t() * currentPuEpsilon * ABL + diffPart.t() * currentPlEpsilon * diffPart);
                     result.Pl.slice(i) += symmatu(BL.t() * currentPuEpsilon * BL + O_tilde.t() * currentPlEpsilon * O_tilde);        
                 }
                 

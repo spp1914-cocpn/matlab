@@ -5,7 +5,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -628,21 +628,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             invalidW = zeros(this.dimX); % matrix is square, but not positive definite
             this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
                 expectedErrId);
-        end
-        
-        %% testChangeModelParametersInvalidCMatrix
-        function testChangeModelParametersInvalidCMatrix(this)
-            expectedErrId = 'Validator:ValidateMeasurementMatrix:InvalidMeasMatrixDims';
-            
-            invalidC = eye(this.dimY + 1, this.dimX); % invalid dims
-            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, this.W, invalidC), ...
-                expectedErrId);            
-             
-            invalidC = eye(this.dimY, this.dimX); % correct dims, but inf
-            invalidC(end, end) = inf;
-            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, this.W, invalidC), ...
-                expectedErrId);
-        end
+        end        
         
         %% testChangeModelParametersNewA
         function testChangeModelParametersNewA(this)
@@ -682,6 +668,72 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
         end
         
+        %% testChangeModelParametersNewAWithMeasDelay
+        function testChangeModelParametersNewAWithMeasDelay(this)
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+                        
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % ensure that immf has been called at least once so that model
+            % history is initialized
+            this.controllerUnderTest.computeControlSequence();
+            % assert that eta_{k-1} and U_{k-1} are both zero
+            this.controllerUnderTest.setControllerPlantState(Gaussian(this.x0, this.x0Cov));
+            this.controllerUnderTest.initialized = false; % override flag
+            this.controllerUnderTest.setEtaState(eta(:), zeros(this.dimU * this.sequenceLength, 1));
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertEqual(this.controllerUnderTest.etaState, eta(:));
+            this.assertEqual(this.controllerUnderTest.inputSequence, zeros(this.dimU * this.sequenceLength, 1))
+            
+            
+            plantCopy = this.controllerUnderTest.mjls.copy();
+            stateCopy = this.controllerUnderTest.immf.getState().copy();
+                        
+            measDelay = 1;
+            measurement = ones(this.dimY, 1); % one measurement
+            % now change A
+            newA = this.A + eye(this.dimX);            
+            [~, ~, ~, ~, newAugA, ~] = Utility.createAugmentedPlantModel(this.sequenceLength, newA, this.B);
+            this.controllerUnderTest.changeModelParameters(newA, this.B, this.W)
+                        
+            % use an IMMF as reference to obtain the expected controller state
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            immf.setState(stateCopy);
+            inputs = zeros(this.dimU, numModes); % at the beginning, buffer is empty           
+            plantCopy.setSystemInput(inputs);
+            
+            immf.step(plantCopy, this.controllerUnderTest.measurementModel, measurement);
+            plantCopy.setSystemInput(inputs);
+            for j=1:numModes
+                plantCopy.setSystemMatrixForMode(newA, j);
+            end
+            immf.predict(plantCopy);
+                       
+            [means, ~, probs]= immf.getState().getComponents();
+            for j=1:numModes
+                modeStates(:, j) = [means(:, j); eta];
+                modeProbs(j) = probs(j);
+            end
+            
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                newAugA, this.augB, this.augQ, this.augR, this.Q, this.R);
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(measurement, measDelay);            
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), sum(means .* probs, 2),  'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+        end
+        
         %% testChangeModelParametersNewB
         function testChangeModelParametersNewB(this)
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
@@ -713,10 +765,75 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
                 this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
                 newAugA, newAugB, this.augQ, this.augR, this.Q, this.R);
             
-            this.controllerUnderTest.changeModelParameters(this.A, newB, this.W)     
+            this.controllerUnderTest.changeModelParameters(this.A, newB, this.W);    
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
+        end
+        
+        %% testChangeModelParametersNewBWithMeasDelay
+        function testChangeModelParametersNewBWithMeasDelay(this)
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+                        
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % ensure that immf has been called at least once so that model
+            % history is initialized
+            this.controllerUnderTest.computeControlSequence();
+            % assert that eta_{k-1} and U_{k-1} are both zero
+            this.controllerUnderTest.setControllerPlantState(Gaussian(this.x0, this.x0Cov));
+            this.controllerUnderTest.initialized = false; % override flag
+            this.controllerUnderTest.setEtaState(eta(:), zeros(this.dimU * this.sequenceLength, 1));
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertEqual(this.controllerUnderTest.etaState, eta(:));
+            this.assertEqual(this.controllerUnderTest.inputSequence, zeros(this.dimU * this.sequenceLength, 1))
+            
+            
+            plantCopy = this.controllerUnderTest.mjls.copy();
+            stateCopy = this.controllerUnderTest.immf.getState().copy();
+                        
+            measDelay = 1;
+            measurement = ones(this.dimY, 1); % one measurement
+            % now change B, affects both augA and augB
+            newB = -this.B;
+            [~, ~, ~, ~, newAugA, newAugB] = Utility.createAugmentedPlantModel(this.sequenceLength, this.A, newB); 
+            this.controllerUnderTest.changeModelParameters(this.A, newB, this.W);
+                        
+            % use an IMMF as reference to obtain the expected controller state
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            immf.setState(stateCopy);
+            inputs = zeros(this.dimU, numModes); % at the beginning, buffer is empty           
+            plantCopy.setSystemInput(inputs);
+            
+            immf.step(plantCopy, this.controllerUnderTest.measurementModel, measurement);
+            plantCopy.setSystemInput(inputs);
+            for j=1:numModes
+                plantCopy.setSystemInputMatrixForMode(newB, j);
+            end
+            immf.predict(plantCopy);
+                       
+            [means, ~, probs]= immf.getState().getComponents();
+            for j=1:numModes
+                modeStates(:, j) = [means(:, j); eta];
+                modeProbs(j) = probs(j);
+            end
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                newAugA, newAugB, this.augQ, this.augR, this.Q, this.R);
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(measurement, measDelay);            
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), sum(means .* probs, 2),  'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
         end
         
         %% testChangeModelParametersNewW
@@ -756,6 +873,71 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);             
         end
+        
+        %% testChangeModelParametersNewBWithMeasDelay
+        function testChangeModelParametersNewWWithMeasDelay(this)
+            numModes = this.sequenceLength + 1;
+            % expected input sequence, buffer is initially empty
+            eta = zeros(size(this.F, 1), 1);
+            modeStates = repmat([this.x0; eta], 1, numModes);
+            modeProbs = zeros(1, numModes);
+            modeProbs(end) = 1;            
+                        
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, modeProbs, this.modeTransitionMatrix, ...
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+
+            % ensure that immf has been called at least once so that model
+            % history is initialized
+            this.controllerUnderTest.computeControlSequence();
+            % assert that eta_{k-1} and U_{k-1} are both zero
+            this.controllerUnderTest.setControllerPlantState(Gaussian(this.x0, this.x0Cov));
+            this.controllerUnderTest.initialized = false; % override flag
+            this.controllerUnderTest.setEtaState(eta(:), zeros(this.dimU * this.sequenceLength, 1));
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            this.assertEqual(this.controllerUnderTest.etaState, eta(:));
+            this.assertEqual(this.controllerUnderTest.inputSequence, zeros(this.dimU * this.sequenceLength, 1))
+            
+            
+            plantCopy = this.controllerUnderTest.mjls.copy();
+            stateCopy = this.controllerUnderTest.immf.getState().copy();
+                        
+            measDelay = 1;
+            measurement = ones(this.dimY, 1); % one measurement
+            % now change W, does not result in a new costate
+            newW = 0.5 * this.W; 
+            this.controllerUnderTest.changeModelParameters(this.A, this.B, newW);
+                        
+            % use an IMMF as reference to obtain the expected controller state
+            immf = IMMF(arrayfun(@(mode) EKF(sprintf('KF for mode %d', mode)), 1:numModes, ...
+                'UniformOutput', false), this.modeTransitionMatrix);
+            immf.setState(stateCopy);
+            inputs = zeros(this.dimU, numModes); % at the beginning, buffer is empty           
+            plantCopy.setSystemInput(inputs);
+            
+            immf.step(plantCopy, this.controllerUnderTest.measurementModel, measurement);
+            plantCopy.setSystemInput(inputs);
+            for j=1:numModes
+                plantCopy.setSystemNoiseCovarianceMatrixForMode(newW, j);
+            end
+            immf.predict(plantCopy);
+                       
+            [means, ~, probs]= immf.getState().getComponents();
+            for j=1:numModes
+                modeStates(:, j) = [means(:, j); eta];
+                modeProbs(j) = probs(j);
+            end
+            expectedInputSequence = this.computeExpectedInputForState(modeStates, ...
+                this.modeTransitionMatrix' * modeProbs(:), this.modeTransitionMatrix, ...            
+                this.augA, this.augB, this.augQ, this.augR, this.Q, this.R);
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(measurement, measDelay);            
+            this.assertEqual(actualInputSequence, expectedInputSequence, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), sum(means .* probs, 2),  'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
+        end
+        
 %%
 %%
         %% testSetEtaStateInvalidEta
@@ -1141,7 +1323,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
             actualStageCosts = this.controllerUnderTest.computeStageCosts(state, input, timestep);
             
             this.verifyEqual(actualStageCosts, expectedStageCosts, ...
-                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+                'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
         end
 %%
 %%
@@ -1175,7 +1357,7 @@ classdef IMMBasedRecedingHorizonControllerTest < matlab.unittest.TestCase
                         
             actualCosts = this.controllerUnderTest.computeCosts(states, inputs);
             
-            this.verifyEqual(actualCosts, expectedCosts, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            this.verifyEqual(actualCosts, expectedCosts, 'AbsTol', IMMBasedRecedingHorizonControllerTest.absTol);
         end
     end
 end

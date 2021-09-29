@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -27,6 +27,9 @@
 #ifndef _RECEDING_HORIZON_UDPLIKE_CONTROLLER_DYNAMICS_H
 #define _RECEDING_HORIZON_UDPLIKE_CONTROLLER_DYNAMICS_H
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <armadillo>
 
 using namespace arma;
@@ -43,22 +46,47 @@ namespace RecedingHorizonUdpLikeController {
         dmat& W;
         dmat& V;
 
-        dmat& transitionMatrix;
-        dmat& modeProbs;
-        dcube& Se; 
+        dmat& transitionMatrix;                        
+        dcube& Se;  
+           
+        dmat modeProbs;
+        dcube Aexp;
+        dcube Bexp;
         
     public:
         Dynamics(dcube& augA, dcube& augB, sp_dmat& augC, dmat& augW, dmat& augV,
-                dmat& transitionMatrixCa, dmat& modeProbsCa, dcube& Se) 
-         : A(augA), B(augB), C(augC), W(augW), V(augV), transitionMatrix(transitionMatrixCa),
-            modeProbs(modeProbsCa), Se(Se) {
+                dmat& transitionMatrixCa, dcolvec& modeProbsCa, dcube& Se) 
+         : A(augA), B(augB), C(augC), W(augW), V(augV), transitionMatrix(transitionMatrixCa), Se(Se){
+                        
+            // compute Aexp and Bexp for the horizon
+            // also the mode probs
+            this->Aexp = zeros<dcube>(this->A.n_rows, this->A.n_rows, this->getHorizonLength());
+            this->Bexp = zeros<dcube>(this->A.n_rows, this->B.n_cols, this->getHorizonLength());           
+            
+            this->modeProbs = join_rows(modeProbsCa, zeros<dmat>(this->getNumModes(), this->getHorizonLength()));
+            
+            // compute Aexp and Bexp for the horizon            
+            for (auto k=0; k < this->getHorizonLength(); ++k) {                
+                const dcolvec probs = this->getModeProbsAtCol(k);        
+                for (auto i=0; i < this->getNumModes(); ++i) {
+                    this->Aexp.slice(k) += probs[i] * this->A.slice(i);
+                    this->Bexp.slice(k) += probs[i] * this->B.slice(i);
+                }
+                // predict the mode (theta) probabilities
+                this->modeProbs.col(k+1) = this->transitionMatrix.t() * probs;
+            }
          }  
          
          ~Dynamics() {}
          
          Dynamics(const Dynamics& other) 
-            : A(other.A), B(other.B), C(other.C), W(other.W), V(other.V), transitionMatrix(other.transitionMatrix),
-            modeProbs(other.modeProbs), Se(other.Se) {}
+            : A(other.A), B(other.B), C(other.C), W(other.W), V(other.V), transitionMatrix(other.transitionMatrix), 
+                    Se(other.Se) {        
+            
+            this->modeProbs = other.modeProbs;
+            this->Aexp = other.Aexp;
+            this->Bexp = other.Bexp;            
+        }
 //          
          Dynamics& operator=(const Dynamics& other) {
             if (this == &other) {
@@ -69,9 +97,12 @@ namespace RecedingHorizonUdpLikeController {
             this->C = other.C;
             this->W = other.W;
             this->V = other.V;
-            this->transitionMatrix = other.transitionMatrix;
-            this->modeProbs = other.modeProbs;
+            this->transitionMatrix = other.transitionMatrix;            
             this->Se = other.Se;
+            
+            this->modeProbs = other.modeProbs;
+            this->Aexp = other.Aexp;
+            this->Bexp = other.Bexp;
 
             return *this;
          }
@@ -122,6 +153,14 @@ namespace RecedingHorizonUdpLikeController {
          
          const dmat& getSeAt(int k) const {
              return this->Se.slice(k);
+         }
+         
+         const dmat& getAexpAt(int k) const {
+             return this->Aexp.slice(k);
+         }
+         
+         const dmat& getBexpAt(int k) const {
+             return this->Bexp.slice(k);
          }
          
          const int getNumModes() const {

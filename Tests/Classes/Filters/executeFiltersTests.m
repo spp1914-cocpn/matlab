@@ -1,5 +1,10 @@
-function result = executeFiltersTests()
+function results = executeFiltersTests(runInParallel)
     % Function to run all test cases in matlab/Tests/Classes/Filters.
+    %
+    % Parameters:
+    %   >> runInParallel (Flag, (i.e., a logical scalar), Optional)
+    %      A flag to indicate whether the test cases shall be ran in
+    %      parallel. If left out, the default value <true> is used.
     
     % >> This function/class is part of CoCPN-Sim
     %
@@ -26,6 +31,10 @@ function result = executeFiltersTests()
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+    arguments
+        runInParallel(1,1) logical = true;
+    end
+    
     import matlab.unittest.TestSuite;
     import matlab.unittest.TestRunner;
     
@@ -36,6 +45,10 @@ function result = executeFiltersTests()
         TestSuite.fromClass(?DelayedKFTest) ...
     ];
 
-    result = TestRunner.withTextOutput.runInParallel(tests);
+    if runInParallel
+        results = TestRunner.withTextOutput.runInParallel(tests);
+    else
+        results = TestRunner.withTextOutput.run(tests);
+    end
 end
 

@@ -6,7 +6,7 @@ classdef TestPlantModel < NonlinearPlant
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -33,6 +33,7 @@ classdef TestPlantModel < NonlinearPlant
     end
     
     methods (Access = public)
+        %% TestPlantModel
         function this = TestPlantModel(dimX, dimU)
             if nargin == 0
                 dimX = TestPlantModel.dimX;
@@ -41,17 +42,20 @@ classdef TestPlantModel < NonlinearPlant
             this@NonlinearPlant(dimX, dimU);
         end
         
+        %% simulateForInput
         function states = simulateForInput(this, stateSamples, input)
             states = this.nonlinearDynamics(stateSamples, repmat(input, 1, size(stateSamples, 2)), []);
         end
         
-        function isValid = isValidState(this, state)
+        %% isValidState
+        function isValid = isValidState(~, ~)
             isValid = true;
         end
     end
     
     methods (Access = protected)
-        function predictedStates = nonlinearDynamics(this, stateSamples, inputSamples, noiseSamples)
+        %% nonlinearDynamics
+        function predictedStates = nonlinearDynamics(~, stateSamples, inputSamples, ~)            
             % deterministic system equation
             if isempty(inputSamples)
                 predictedStates = stateSamples .^ 2;

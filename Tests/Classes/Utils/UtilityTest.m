@@ -5,7 +5,8 @@ classdef UtilityTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %                             Fabio Broghammer <fabio.broghammer@student.kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -269,6 +270,77 @@ classdef UtilityTest < matlab.unittest.TestCase
     end
     
     methods (Test)
+    %% testCreateBlockDiagonalMatrix
+        function testCreateBlockDiagonalMatrix(this)
+            matA = rand(3, 4);
+            matB = rand(3, 4);
+            matC = rand(3, 4);
+
+            matrix = [];
+            matrix = cat(3, matrix, matA);
+            matrix = cat(3, matrix, matB);
+            matrix = cat(3, matrix, matC);
+
+            expectedDiagMatrix = blkdiag(matA, matB, matC);
+            actualDiagMatrix = Utility.createBlockdiagonalMatrix(matrix);
+
+            this.verifyEqual(actualDiagMatrix, expectedDiagMatrix);
+
+            matA = rand(1, 1);
+            matB = rand(1, 1);
+            matC = rand(1, 1);
+
+            matrix = [];
+            matrix = cat(3, matrix, matA);
+            matrix = cat(3, matrix, matB);
+            matrix = cat(3, matrix, matC);
+
+            expectedDiagMatrix = blkdiag(matA, matB, matC);
+            actualDiagMatrix = Utility.createBlockdiagonalMatrix(matrix);
+
+            this.verifyEqual(actualDiagMatrix, expectedDiagMatrix);
+
+            matA = rand(1, 10);
+            matB = rand(1, 10);
+            matC = rand(1, 10);
+
+            matrix = [];
+            matrix = cat(3, matrix, matA);
+            matrix = cat(3, matrix, matB);
+            matrix = cat(3, matrix, matC);
+
+            expectedDiagMatrix = blkdiag(matA, matB, matC);
+            actualDiagMatrix = Utility.createBlockdiagonalMatrix(matrix);
+
+            this.verifyEqual(actualDiagMatrix, expectedDiagMatrix);
+
+            matA = rand(0, 0);
+            matB = rand(0, 0);
+            matC = rand(0, 0);
+
+            matrix = [];
+            matrix = cat(3, matrix, matA);
+            matrix = cat(3, matrix, matB);
+            matrix = cat(3, matrix, matC);
+
+            expectedDiagMatrix = blkdiag(matA, matB, matC);
+            actualDiagMatrix = Utility.createBlockdiagonalMatrix(matrix);
+
+            this.verifyEqual(actualDiagMatrix, expectedDiagMatrix);
+
+            matA = rand(3, 3);
+            matB = rand(3, 3);
+            matC = rand(3, 3);
+
+            matrix = [];
+            matrix = cat(3, matrix, matA);
+            matrix = cat(3, matrix, matC);
+
+            expectedDiagMatrix = blkdiag(matA, matC);
+            actualDiagMatrix = Utility.createBlockdiagonalMatrix(matrix);
+
+            this.verifyEqual(actualDiagMatrix, expectedDiagMatrix);
+        end        
 %%
 %%      
         %% testComputeStageCosts
@@ -521,6 +593,46 @@ classdef UtilityTest < matlab.unittest.TestCase
             this.verifyEqualAugmentedLinearIntegralConstraints(...
                 augmentedStateWeightings, augmentedInputWeightings, controlSequenceLength, stateWeights, inputWeights);
         end
+%%
+%%
+        %% testNormalizeProbabilities
+        function testNormalizeProbabilities(this)
+            probs = [1-2*1e-10, 0, 1e-10, 1e-10];
+            
+            normalizedProbs = [1-2*1e-10, 1e-12, 1e-10, 1e-10];
+            normalizedProbs = normalizedProbs ./ sum(normalizedProbs);
+            
+            this.verifyEqual(Utility.normalizeProbabilities(probs), normalizedProbs);
+            
+            probs = [1-2*1e-10, 0, 1e-10, 1e-10];
+            bound = 1e-5;
+            
+            normalizedProbs = [1-2*1e-10, bound, bound, bound];
+            normalizedProbs = normalizedProbs ./ sum(normalizedProbs);
+            
+            this.verifyEqual(Utility.normalizeProbabilities(probs, bound), normalizedProbs);
+            
+            % here, function should not do anything
+            probs = [0.5; 0.5];
+            this.verifyEqual(Utility.normalizeProbabilities(probs), probs);
+            
+            % now test a matrix, with probs col-wise arranged
+            probs = [1-2*1e-10, 0, 1e-10, 1e-10]';
+            normalizedProbs = [1-2*1e-10, 1e-12, 1e-10, 1e-10]';
+            normalizedProbs = normalizedProbs ./ sum(normalizedProbs);
+            
+            this.verifyEqual(Utility.normalizeProbabilities([probs,probs, probs]), [normalizedProbs,normalizedProbs,normalizedProbs]);
+        end
+        
+        %% testNormalizeTransitionMatrix
+        function testNormalizeTransitionMatrix(this)
+            % probs are row-wise arranged
+            probs = [1-2*1e-10, 0, 1e-10, 1e-10];
+            normalizedProbs = [1-2*1e-10, 1e-12, 1e-10, 1e-10];
+            normalizedProbs = normalizedProbs ./ sum(normalizedProbs);
+            
+            this.verifyEqual(Utility.normalizeTransitionMatrix([probs;probs; probs]), [normalizedProbs; normalizedProbs; normalizedProbs]);
+        end
 %%        
 %%      
         %% testCalculateDelayTransitionMatrix
@@ -583,7 +695,7 @@ classdef UtilityTest < matlab.unittest.TestCase
             % compute transition matrix straightforwardly (we compute P_{k-1} with entries p_{k-1,ij}) as described in
             %
             % Florian Rosenthal and Uwe D. Hanebeck,
-            % Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks,
+            % Stability Analysis of Polytopic Markov Jump Linear Systems with Applications to Sequence-Based Control over Networks (to appear),
             % Proceedings of the 21th IFAC World Congress (IFAC 2020),
             % Berlin, Germany, July 2020
             %            
@@ -618,7 +730,317 @@ classdef UtilityTest < matlab.unittest.TestCase
             actualTransitionMatrix = Utility.calculateDelayTransitionMatrix(delayProbMatrix);
             this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
         end
+
+%%
+%%
+        %% testCalculateTransitionMatrixCorrelatedDelaysInvalidDelayTransitionMatrix
+        function testCalculateTransitionMatrixCorrelatedDelaysInvalidDelayTransitionMatrix(this)
+            expectedErrId = 'Utility:CalculateTransitionMatrixCorrelatedDelays:InvalidTransitionMatrix';
+            
+            sequenceLength = 4;
+            invalidMatrix = ones(5, 6); % not square
+            this.verifyError(@() Utility.calculateTransitionMatrixCorrelatedDelays(invalidMatrix, sequenceLength), expectedErrId);
+            
+            invalidMatrix = ones(sequenceLength, sequenceLength); % too small compared to sequence length
+            this.verifyError(@() Utility.calculateTransitionMatrixCorrelatedDelays(invalidMatrix, sequenceLength), expectedErrId);
+            
+            % error should also be triggered if mex implementation is used
+            expectedErrId = 'Utility:mex_CalculateTransitionMatrixCorrDelays:InvalidTransitionMatrix';
+            
+            sequenceLength = 4;
+            invalidMatrix = ones(5, 6); % not square
+            this.verifyError(@() Utility.calculateTransitionMatrixCorrelatedDelays(invalidMatrix, sequenceLength, true), expectedErrId);
+            
+            invalidMatrix = ones(sequenceLength, sequenceLength); % too small compared to sequence length
+            this.verifyError(@() Utility.calculateTransitionMatrixCorrelatedDelays(invalidMatrix, sequenceLength, true), expectedErrId);
+        end
         
+        %% testCalculateTransitionMatrixCorrelatedDelaysNoMex
+        function testCalculateTransitionMatrixCorrelatedDelaysNoMex(this)
+            % corner case where delay transition probs are all 1/3
+            % -> tau_k+1 is independent of tau_k
+            delayTransitionMatrix = 1/3 * ones(3,3); % delays from 0 to 2
+            sequenceLength = 2; % results in 3 clusters
+            numAggregatedStates = 9;
+            % tau_k | tau_k-1 | state#
+            % 0 0 1
+            % 1 0 2
+            % 2 0 3
+            % 0 1 4
+            % 1 1 5
+            % 2 1 6
+            % 0 2 7
+            % 1 2 8
+            % 2 2 9
+            
+            U = zeros(3, numAggregatedStates);
+            V = zeros(numAggregatedStates, 3);
+            U(1, [1 4 7]) = 1/3;
+            U(2, [2 3 5 6]) = 1/4;
+            U(3, [8 9]) = 1/2;
+            V([1 4 7], 1) = 1;
+            V([2 3 5 6], 2) = 1;
+            V([8 9], 3) = 1;
+            
+            aggT = zeros(numAggregatedStates, numAggregatedStates);
+            aggT([1 4 7], [1 2 3]) = 1/3;            
+            aggT([2 5 8], [4 5 6]) = 1/3;
+            aggT([3 6 9], [7 8 9]) = 1/3;
+            
+            expectedTransitionMatrix = U * aggT * V;
+            [~,eigVals, leftEigVecs] = eig(aggT, 'vector');
+            [~, idx] = max(eigVals);
+            expectedStatDist = transpose(leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx))) * V;
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, false);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % also check with 2 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % finally, check with 4 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, false, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % sanity check: equal result if independent delays were assumed
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, Utility.calculateDelayTransitionMatrix([1/3 1/3 1/3]));
+        end
+        
+        %% testCalculateTransitionMatrixCorrelatedDelaysNoMexDiffDelays
+        function testCalculateTransitionMatrixCorrelatedDelaysNoMexDiffDelays(this)
+            delayTransitionMatrix = [1/2 1/6 1/3;
+                                     1/4 1/8 5/8;
+                                     4/7 2/7 1/7]; %delays from 0 to 2             
+            sequenceLength = 2; % results in 3 clusters
+            numAggregatedStates = 9;
+            % tau_k | tau_k-1 | state#
+            % 0 0 1
+            % 1 0 2
+            % 2 0 3
+            % 0 1 4
+            % 1 1 5
+            % 2 1 6
+            % 0 2 7
+            % 1 2 8
+            % 2 2 9
+      
+            aggT = zeros(numAggregatedStates, numAggregatedStates);                        
+            aggT([1 4 7], [1 2 3]) = repmat(delayTransitionMatrix(1, :), 3, 1);            
+            aggT([2 5 8], [4 5 6]) = repmat(delayTransitionMatrix(2, :), 3, 1);
+            aggT([3 6 9], [7 8 9]) = repmat(delayTransitionMatrix(3, :), 3, 1);
+            
+            [~,eigVals, leftEigVecs] = eig(aggT, 'vector');
+            [~, idx] = max(eigVals);
+            statDistAggT = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+            
+            U = zeros(3, numAggregatedStates);
+            V = zeros(numAggregatedStates, 3);
+            U(1, [1 4 7]) = statDistAggT([1 4 7]) ./ sum(statDistAggT([1 4 7]));
+            U(2, [2 3 5 6]) = statDistAggT([2 3 5 6]) ./ sum(statDistAggT([2 3 5 6]));
+            U(3, [8 9]) = statDistAggT([8 9]) ./ sum(statDistAggT([8 9]));
+            V([1 4 7], 1) = 1;
+            V([2 3 5 6], 2) = 1;
+            V([8 9], 3) = 1;
+ 
+            expectedTransitionMatrix = U * aggT * V;
+            expectedStatDist = statDistAggT' * V;
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, false);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % also check with 2 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % finally, check with 4 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, false, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+        end
+        
+        %% testCalculateTransitionMatrixCorrelatedDelaysMex
+        function testCalculateTransitionMatrixCorrelatedDelaysMex(this)
+            % corner case where delay transition probs are all 1/3
+            % -> tau_k+1 is independent of tau_k
+            delayTransitionMatrix = 1/3 * ones(3,3); % delays from 0 to 2
+            sequenceLength = 2; % results in 3 clusters
+            numAggregatedStates = 9;
+            % tau_k | tau_k-1 | state#
+            % 0 0 1
+            % 1 0 2
+            % 2 0 3
+            % 0 1 4
+            % 1 1 5
+            % 2 1 6
+            % 0 2 7
+            % 1 2 8
+            % 2 2 9
+            U = zeros(3, numAggregatedStates);
+            V = zeros(numAggregatedStates, 3);
+            U(1, [1 4 7]) = 1/3;
+            U(2, [2 3 5 6]) = 1/4;
+            U(3, [8 9]) = 1/2;
+            V([1 4 7], 1) = 1;
+            V([2 3 5 6], 2) = 1;
+            V([8 9], 3) = 1;
+            
+            aggT = zeros(numAggregatedStates, numAggregatedStates);
+            aggT([1 4 7], [1 2 3]) = 1/3;            
+            aggT([2 5 8], [4 5 6]) = 1/3;
+            aggT([3 6 9], [7 8 9]) = 1/3;
+            
+            expectedTransitionMatrix = U * aggT * V;
+            [~,eigVals, leftEigVecs] = eig(aggT, 'vector');
+            [~, idx] = max(eigVals);
+            expectedStatDist = transpose(leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx))) * V;
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));             
+            
+            % finally, check with 4 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, true, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % sanity check: equal result if independent delays were assumed
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, Utility.calculateDelayTransitionMatrix([1/3 1/3 1/3]));
+        end
+        
+        %% testCalculateTransitionMatrixCorrelatedDelaysMexDiffDelays
+        function testCalculateTransitionMatrixCorrelatedDelaysMexDiffDelays(this)
+            delayTransitionMatrix = [1/2 1/6 1/3;
+                                     1/4 1/8 5/8;
+                                     4/7 2/7 1/7]; %delays from 0 to 2             
+            sequenceLength = 2; % results in 3 clusters
+            numAggregatedStates = 9;
+            % tau_k | tau_k-1 | state#
+            % 0 0 1
+            % 1 0 2
+            % 2 0 3
+            % 0 1 4
+            % 1 1 5
+            % 2 1 6
+            % 0 2 7
+            % 1 2 8
+            % 2 2 9
+      
+            aggT = zeros(numAggregatedStates, numAggregatedStates);                        
+            aggT([1 4 7], [1 2 3]) = repmat(delayTransitionMatrix(1, :), 3, 1);            
+            aggT([2 5 8], [4 5 6]) = repmat(delayTransitionMatrix(2, :), 3, 1);
+            aggT([3 6 9], [7 8 9]) = repmat(delayTransitionMatrix(3, :), 3, 1);
+            
+            [~,eigVals, leftEigVecs] = eig(aggT, 'vector');
+            [~, idx] = max(eigVals);
+            statDistAggT = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+            
+            U = zeros(3, numAggregatedStates);
+            V = zeros(numAggregatedStates, 3);
+            U(1, [1 4 7]) = statDistAggT([1 4 7]) ./ sum(statDistAggT([1 4 7]));
+            U(2, [2 3 5 6]) = statDistAggT([2 3 5 6]) ./ sum(statDistAggT([2 3 5 6]));
+            U(3, [8 9]) = statDistAggT([8 9]) ./ sum(statDistAggT([8 9]));
+            V([1 4 7], 1) = 1;
+            V([2 3 5 6], 2) = 1;
+            V([8 9], 3) = 1;
+ 
+            expectedTransitionMatrix = U * aggT * V;
+            expectedStatDist = statDistAggT' * V;
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % also check with 2 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+            
+            % finally, check with 4 arguments passed
+            actualTransitionMatrix = Utility.calculateTransitionMatrixCorrelatedDelays(delayTransitionMatrix, sequenceLength, true, true);
+            
+            this.verifyEqualWithAbsTol(actualTransitionMatrix, expectedTransitionMatrix);
+            
+            % also verify the stationary distribution
+            [~,eigVals, leftEigVecs] = eig(actualTransitionMatrix, 'vector');
+            [~, idx] = max(eigVals);
+            actualStatDist = leftEigVecs(:, idx) ./ sum(leftEigVecs(:, idx));
+                        
+            this.verifyEqualWithAbsTol(actualStatDist(:), expectedStatDist(:));
+        end
+%%
+%%
         %% testComputeStationaryDistribution
         function testComputeStationaryDistributionInvalidTransitionMatrix(this)
             expectedErrId = 'Utility:ComputeStationaryDistribution:InvalidTransitionMatrix';

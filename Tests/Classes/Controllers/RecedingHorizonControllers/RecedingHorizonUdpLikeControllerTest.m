@@ -5,7 +5,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -27,7 +27,8 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
     properties (Constant)
-        absTol = 5 * 1e-7;
+        absTol = 5 * 1e-3;
+        numIterations = 100;
     end
     
      properties (Access = private)
@@ -52,7 +53,10 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         
         caDelayProbs;
         scDelayProbs;
+        scDelayTransMat;
         maxMeasDelay;
+        truncatedScDelayProbs;
+        truncatedScDelayTransMat;
         
         horizonLength;
         
@@ -70,10 +74,8 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         
         controllerUnderTest;
         
-        S;
-        Z;
-        
-        initialM;
+        S; 
+
         initialL;
         initialK;
     end
@@ -90,13 +92,17 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             this.dimX = 2;
             this.dimU = 2;
-            this.dimY = 2;
-            
+            this.dimY = 2;                             
+            this.maxMeasDelay = 1;            
             this.horizonLength = 3;
             
             this.sequenceLength = 2; % so we have three modes
             this.caDelayProbs = ones(1, 5) / 5;
             this.scDelayProbs = ones(1, 6) / 6;
+            this.scDelayTransMat = repmat(reshape(this.scDelayProbs, 1, []), numel(this.scDelayProbs), 1);
+            
+            this.truncatedScDelayProbs = Utility.truncateDiscreteProbabilityDistribution(this.scDelayProbs, this.maxMeasDelay + 2);
+            this.truncatedScDelayTransMat = repmat(reshape(this.truncatedScDelayProbs, 1, []), numel(this.truncatedScDelayProbs), 1);
             
             % from the delay probs and the 3 modes we get the following
             % transition matrix
@@ -108,9 +114,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             this.Q = diag([0.01, 1]) * diag([50 0.02]) * diag([0.01, 1]); % R_3 in the book
             this.R = diag([1/3, 3]); % R_2 in the book
-                          
-            this.maxMeasDelay = 1;
-            
+         
             this.W = eye(this.dimX) * 0.01;
             this.V = eye(this.dimY) * 0.001;
             
@@ -122,6 +126,8 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
                 this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, ...
                 this.horizonLength, this.x0, this.x0Cov);
+            
+            this.controllerUnderTest.maxNumIterations = RecedingHorizonUdpLikeControllerTest.numIterations;
         end
     end
     
@@ -131,61 +137,33 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             numModes = this.sequenceLength + 1;
             dimEta = 2;
             dimAugState = 2 * this.dimX + dimEta;
-            numSMatrices = 9; 
-            dimAugmentedMeas = 2 * this.dimY;
-            
-            % we have two Z matrices (Lemma 1 in paper)
-            a_0 = this.scDelayProbs(2) / (1-this.scDelayProbs(1));
-            a_1 = this.scDelayProbs(3) / (1-this.scDelayProbs(1) + this.scDelayProbs(2));
-            
-            Z_0 = [1-a_0 a_0 0; 0 0 1; 0 0 1];
-            Z_1 = [1-a_1 a_1 0; 0 0 1; 0 0 1];
-            
-            this.Z = zeros(numSMatrices, numSMatrices);
-            % j_0 = 0 -> indices 0, 3, 6 (columns)
-            % j_0 = 1 -> indices 1, 4, 7 (columns)
-            
-            this.Z(1,1) = (1-this.scDelayProbs(1)) * Z_0(1,1);
-            this.Z(4,1) = (1-this.scDelayProbs(1)) * Z_0(1,1);
-            this.Z(7,1) = (1-this.scDelayProbs(1)) * Z_0(1,1);
-            this.Z(1,2) = this.scDelayProbs(1) * Z_0(1,1);
-            this.Z(4,2) = this.scDelayProbs(1) * Z_0(1,1);
-            this.Z(7,2) = this.scDelayProbs(1) * Z_0(1,1);
-            this.Z(1,4) = (1-this.scDelayProbs(1)) * Z_0(1,2);
-            this.Z(4,4) = (1-this.scDelayProbs(1)) * Z_0(1,2);
-            this.Z(7,4) = (1-this.scDelayProbs(1)) * Z_0(1,2);
-            this.Z(1,5) = this.scDelayProbs(1) * Z_0(1,2);
-            this.Z(4,5) = this.scDelayProbs(1) * Z_0(1,2);
-            this.Z(7,5) = this.scDelayProbs(1) * Z_0(1,2);
-            this.Z(2,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(3,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(5,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(6,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(8,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(9,7) = (1-this.scDelayProbs(1)) * Z_0(2,3);
-            this.Z(2,8) = this.scDelayProbs(1) * Z_0(2,3);
-            this.Z(3,8) = this.scDelayProbs(1) * Z_0(2,3);
-            this.Z(5,8) = this.scDelayProbs(1) * Z_0(2,3);
-            this.Z(6,8) = this.scDelayProbs(1) * Z_0(2,3);
-            this.Z(8,8) = this.scDelayProbs(1) * Z_0(2,3);
-            this.Z(9,8) = this.scDelayProbs(1) * Z_0(2,3);            
+            numSMatrices = 4; %2^M, where M is max meas delay + 1 
+            dimAugmentedMeas = 2 * this.dimY;         
             
             this.augC = [kron(eye(2), this.C),...
                 zeros(dimAugmentedMeas, dimEta)];
 
             this.S = zeros(dimAugmentedMeas, dimAugmentedMeas, numSMatrices);
-            this.S(:, :, 2) = kron([1 0; 0 0], eye(this.dimY));
-            this.S(:, :, 4) = kron([0 0; 0 1], eye(this.dimY));
-            this.S(:, :, 5) = kron([1 0; 0 1], eye(this.dimY));
-            this.S(:, :, 6) = kron([0 0; 0 1], eye(this.dimY));
-            this.S(:, :, 8) = kron([1 0; 0 0], eye(this.dimY));           
+            % ordered according to de2bi([0 1 2 3])
+            % 0 0
+            % 1 0
+            % 0 1
+            % 1 1
+            % here 1 indicates that measurement is available for processing
+            this.S(:, :, 2) = blkdiag(eye(this.dimY), zeros(this.dimY));
+            this.S(:, :, 3) = blkdiag(zeros(this.dimY), eye(this.dimY));
+            this.S(:, :, 4) = blkdiag(eye(this.dimY), eye(this.dimY));
 
             [F, G, H, this.J] = Utility.createAugmentedPlantModel(this.sequenceLength, this.A, this.B);           
-            D = eye(this.dimX);
-            E = zeros(this.dimX);
+            D = eye(this.dimX);            
             
-            this.augA = repmat(blkdiag([this.A zeros(this.dimX); D E], F), 1,1, numModes);
-            this.augA(1:this.dimX, end - dimEta + 1:end, :) = mtimesx(this.B, H);                  
+            this.augA = zeros(dimAugState, dimAugState, numModes);
+            Abar = zeros(dimAugState - dimEta);
+            Abar(:, 1:this.dimX) = [this.A; D];
+            for j=1:numModes
+                this.augA(:, :, j) = blkdiag(Abar, F);
+                this.augA(1:this.dimX, end-dimEta+1:end, j) = this.B * H(:, :, j);
+            end        
             this.augB = repmat([zeros(dimAugState - size(G, 1), size(G, 2)); G], 1, 1, numModes);
             this.augB(1:this.dimX, :, :) = mtimesx(this.B, this.J);
                
@@ -206,42 +184,50 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.xUpperbar = zeros(dimAugState, dimAugState, numModes);
             this.xUpperbar(:, :, 2) = this.augX0Cov;
             this.xUnderbar = zeros(dimAugState, dimAugState, numModes);
-            this.xUnderbar(:, :, 2) = this.augX0Cov + this.augX0 * this.augX0';
+            this.xUnderbar(:, :, 2) = this.augX0 * this.augX0' + this.augX0Cov;
             
-            % pick some initial gains
-            this.initialM = ones(dimAugState, dimAugState, this.horizonLength);
+            % pick some initial gains        
             this.initialK = ones(dimAugState, 2 * this.dimY, this.horizonLength);
             this.initialL = ones(this.dimU * this.sequenceLength, dimAugState, this.horizonLength);
         end
         
         %% computeGains
-        function [M, K, L] = computeGains(this, caModeProbs, S_tilde)
+        function [K, L, Aexp, Bexp] = computeGains(this, caModeProbs, S_tilde)
             dimEta = 2;
             dimAugState = 2 * this.dimX + dimEta;
             numCaModes = this.sequenceLength + 1;
             
             K = this.initialK;
             L = this.initialL;
-            M = this.initialM;
             
-            for iter=1:1000            
+            % first compute Aexp and Bexp for the whole horizon
+            Aexp = zeros(dimAugState, dimAugState, this.horizonLength);
+            Bexp = zeros(dimAugState, this.dimU * this.sequenceLength, this.horizonLength);
+            for k=1:this.horizonLength
+                for i=1:numCaModes
+                    Aexp(:, :, k) = Aexp(:, :, k) + caModeProbs(i, k) * this.augA(:, :, i);
+                    Bexp(:, :, k) = Bexp(:, :, k) + caModeProbs(i, k) * this.augB(:, :, i);
+                end
+            end
+   
+            for iter=1:RecedingHorizonUdpLikeControllerTest.numIterations            
                 XUpper = zeros(dimAugState, dimAugState, numCaModes, this.horizonLength + 1);
                 XUpper(:, :, :, 1) = this.xUpperbar;
                 XUnder = zeros(dimAugState, dimAugState, numCaModes, this.horizonLength + 1);
                 XUnder(:, :, :, 1) = this.xUnderbar;            
 
                 % predict XUpper and Xunder over the complete horizon            
-                for k=1:this.horizonLength
+                for k=1:this.horizonLength                   
                     for j=1:numCaModes
                         X_temp = zeros(dimAugState, dimAugState);
                         X_temp2 = zeros(dimAugState, dimAugState);
                         for i=1:numCaModes
                             X_temp = X_temp + this.modeTransitionMatrix(i, j) * ((this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC) * XUpper(:, :, i, k) * (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC)' ...
-                                + (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, i) * L(:, :, k)) * XUnder(:, :, i, k) * (this.augA(:, :, i) - K(:, :, k)* S_tilde(:, :, k)*this.augC- M(:, :, k) + this.augB(:, :, i) * L(:, :, k))' ...
+                                + (this.augA(:, :, i) -Aexp(:, :, k) + this.augB(:, :, i) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k)) * XUnder(:, :, i, k) * (this.augA(:, :, i) -Aexp(:, :, k) + this.augB(:, :, i) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k))' ...
                                 + caModeProbs(i, k) * (this.augW + (K(:, :, k)* S_tilde(:, :, k)) * this.augV * (K(:, :, k)* S_tilde(:, :, k))'));
 
                             X_temp2 = X_temp2 + this.modeTransitionMatrix(i, j) * ((K(:, :, k)* S_tilde(:, :, k)*this.augC) * XUpper(:, :, i, k) * (K(:, :, k)* S_tilde(:, :, k)*this.augC)' ...
-                                + (M(:, :, k) + K(:, :, k)* S_tilde(:, :, k)* this.augC) * XUnder(:, :, i, k) * (M(:, :, k) + K(:, :, k)* S_tilde(:, :, k)* this.augC)' ...
+                                + (Aexp(:, :, k) + Bexp(:, :, k)* L(:, :, k)) * XUnder(:, :, i, k) * (Aexp(:, :, k) + Bexp(:, :, k)* L(:, :, k))' ...
                                 + caModeProbs(i, k) * K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
                         end
                         XUpper(:, :, j, k+1) = X_temp; 
@@ -274,129 +260,142 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                     P_sum31 = this.modeTransitionMatrix(3, 1) * PUnder(:, :, 1) + this.modeTransitionMatrix(3, 2) * PUnder(:, :, 2) ...
                         + this.modeTransitionMatrix(3, 3) * PUnder(:, :, 3);
                     P_sum32 = this.modeTransitionMatrix(3, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(3, 2) * PUpper(:, :, 2)...
-                        + this.modeTransitionMatrix(3, 3) * PUpper(:, :, 3);
-                    Xsum1 = XUpper(:, :, 1, k) + XUnder(:, :, 1, k);
-                    Xsum2 = XUpper(:, :, 2, k) + XUnder(:, :, 2, k);
-                    Xsum3 = XUpper(:, :, 3, k) + XUnder(:, :, 3, k);
+                        + this.modeTransitionMatrix(3, 3) * PUpper(:, :, 3);                 
+                    
                     % psi matrix
-                    Psi = kron(S_tilde(:, :, k) * (caModeProbs(1, k) * this.augV + this.augC * Xsum1 * this.augC') * S_tilde(:, :, k)', P_sum11) ...
-                        + kron(S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * Xsum2 * this.augC') * S_tilde(:, :, k)', P_sum21) ...
-                        + kron(S_tilde(:, :, k) * (caModeProbs(3, k) * this.augV + this.augC * Xsum3 * this.augC') * S_tilde(:, :, k)', P_sum31);
-                    % lambda matrix
-                    Lambda = kron(XUnder(:, :, 1, k), P_sum11) + kron(XUnder(:, :, 2, k), P_sum21) + kron(XUnder(:, :, 3, k), P_sum31);
+                    Psi = kron(S_tilde(:, :, k) * (caModeProbs(1, k) * this.augV + this.augC * XUpper(:, :, 1, k) * this.augC') * S_tilde(:, :, k)', P_sum11) ...
+                        + kron(S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * XUpper(:, :, 2, k) * this.augC') * S_tilde(:, :, k)', P_sum21) ...
+                        + kron(S_tilde(:, :, k) * (caModeProbs(3, k) * this.augV + this.augC * XUpper(:, :, 3, k) * this.augC') * S_tilde(:, :, k)', P_sum31);
+                    
                     % phi matrix
-                    Phi = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augB(:, :, 1) + this.J(:, :, 1)' * this.R * this.J(:, :, 1)) ...
-                        + kron(XUnder(:, :, 2, k), this.augB(:, :, 2)' * (P_sum21 + P_sum22) * this.augB(:, :, 2) + this.J(:, :, 2)' * this.R * this.J(:, :, 2)) ...
-                        + kron(XUnder(:, :, 3, k), this.augB(:, :, 3)' * (P_sum31 + P_sum32) * this.augB(:, :, 3) + this.J(:, :, 3)' * this.R * this.J(:, :, 3));
-
-                    % ypsilon matrix
-                    Ypsilon = kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 1, k), P_sum11' * this.augB(:, :, 1)) ...
-                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 2, k), P_sum21' * this.augB(:, :, 2)) ...
-                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 3, k), P_sum31' * this.augB(:, :, 3));
-                    % sigma matrix
-                    Sigma = kron(XUnder(:, :, 1, k), this.augB(:, :, 1)' * P_sum11) ...
-                        + kron(XUnder(:, :, 2, k), this.augB(:, :, 2)' * P_sum21) ...
-                        + kron(XUnder(:, :, 3, k), this.augB(:, :, 3)' * P_sum31);
-                    % pi matrix
-                    Pi = kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 1, k), P_sum11) ...
-                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 2, k), P_sum21)...
-                        + kron(S_tilde(:, :, k) * this.augC * XUnder(:, :, 3, k), P_sum31);
+                    Phi = kron(XUnder(:, :, 1, k), ...
+                            this.augB(:, :, 1)' * P_sum12 * this.augB(:, :, 1) + this.J(:, :, 1)' * this.R * this.J(:, :, 1) ...
+                            + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * (this.augB(:, :, 1)-Bexp(:, :, k)));
+                    Phi = Phi + kron(XUnder(:, :, 2, k), ...
+                            this.augB(:, :, 2)' * P_sum22 * this.augB(:, :, 2) + this.J(:, :, 2)' * this.R * this.J(:, :, 2) ...
+                            + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * (this.augB(:, :, 2)-Bexp(:, :, k)));
+                    Phi = Phi + kron(XUnder(:, :, 3, k), ...
+                            this.augB(:, :, 3)' * P_sum32 * this.augB(:, :, 3) + this.J(:, :, 3)' * this.R * this.J(:, :, 3) ...
+                            + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * (this.augB(:, :, 3)-Bexp(:, :, k)));                   
                     
                     % rho vector
-                    rho = reshape(P_sum11' * this.augA(:, :, 1) * Xsum1 * this.augC' * S_tilde(:, :, k)' ...
-                        + P_sum21' * this.augA(:, :, 2) * Xsum2 * this.augC' * S_tilde(:, :, k)' ...
-                        + P_sum31' * this.augA(:, :, 3) * Xsum3 * this.augC' * S_tilde(:, :, k)', ...
-                        [], 1);
-                    % gamma vector, augB is zero for second mode, so just one term
-                    gamma = reshape(this.augB(:, :, 1)' * (P_sum11 + P_sum12) * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
-                        + this.augB(:, :, 2)' * (P_sum21 + P_sum22) * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
-                        + this.augB(:, :, 3)' * (P_sum31 + P_sum32) * this.augA(:, :, 3) * XUnder(:, :, 3, k), ...
-                        [], 1);
-                    % phi vector
-                    phi = reshape(P_sum11' * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
-                        + P_sum21' * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
-                        + P_sum31' * this.augA(:, :, 3) * XUnder(:, :, 3, k), ...
-                        [], 1); 
+                    rho = P_sum11 * this.augA(:, :, 1) * XUpper(:, :, 1, k) * this.augC' * S_tilde(:, :, k)' ...
+                        + P_sum21 * this.augA(:, :, 2) * XUpper(:, :, 2, k) * this.augC' * S_tilde(:, :, k)' ...
+                        + P_sum31 * this.augA(:, :, 3) * XUpper(:, :, 3, k) * this.augC' * S_tilde(:, :, k)';
+                    % gamma vector
+                    gamma = this.augB(:, :, 1)' * P_sum12 * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
+                        + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * (this.augA(:, :, 1) - Aexp(:, :, k)) * XUnder(:, :, 1, k) ...
+                        + this.augB(:, :, 2)' * P_sum22 * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
+                        + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * (this.augA(:, :, 2) - Aexp(:, :, k)) * XUnder(:, :, 2, k) ...
+                        + this.augB(:, :, 3)' * P_sum32 * this.augA(:, :, 3) * XUnder(:, :, 3, k) ...
+                        + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * (this.augA(:, :, 3) - Aexp(:, :, k)) * XUnder(:, :, 3, k);           
                     
-                    % construct system of linear equations to solve (Amat *x = b)
-                    Amat = [Psi -Ypsilon Pi; -Ypsilon' Phi -Sigma; Pi' -Sigma' Lambda];
-                    b = [rho; -gamma; phi];
-                    % use pinv to solve for x
-                    x = pinv(Amat) * b;
-                    % extract the gains
-                    startIdx = 1;
-                    endIdx = dimAugState * 2 * this.dimY;
-                    K(:, :, k) = reshape(x(startIdx:endIdx), dimAugState, []);
-                    startIdx = endIdx + 1;
-                    endIdx = endIdx + (2* this.dimU * dimAugState);
-                    L(:, :, k) = reshape(x(startIdx:endIdx), 2* this.dimU, []);
-                    startIdx = endIdx + 1;
-                    M(:, :, k) = reshape(x(startIdx:end), dimAugState, []);
+                    % construct system of linear equations to solve (Amat *x = b)                    
+                    xk = lsqminnorm(Psi, rho(:));                    
+                    K(:, :, k) = reshape(xk, dimAugState, []);                    
+                  
+                    xl = lsqminnorm(Phi, -gamma(:));                    
+                    L(:, :, k) = reshape(xl, 2* this.dimU, []);                    
                     
                     % now we can update the costate with the computed gains
                     PUpper(:, :, 1) = L(:, :, k)' * this.J(:, :, 1)' * this.R * this.J(:, :, 1) * L(:, :, k) + this.augQ(:, :, 1) ...
-                        + (this.augA(:, :, 1) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (this.augA(:, :, 1) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 1) * L(:, :, k)) ...
-                        + (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k));
-                    PUnder(:, :, 1) = (M(:, :, k) - this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (M(:, :, k) - this.augB(:, :, 1) * L(:, :, k)) ...
+                        + (this.augA(:, :, 1) -Aexp(:, :, k) + this.augB(:, :, 1) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k))' * P_sum11 * (this.augA(:, :, 1) -Aexp(:, :, k) + this.augB(:, :, 1) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k)) ...
+                        + (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augA(:, :, 1) + this.augB(:, :, 1) * L(:, :, k));                    
+                    PUnder(:, :, 1) = (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 1) * L(:, :, k))' * P_sum11 * (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 1) * L(:, :, k)) ...
                         + (this.augB(:, :, 1) * L(:, :, k))' * P_sum12 * (this.augB(:, :, 1) * L(:, :, k)) ...
                         + L(:, :, k)' * this.J(:, :, 1)' * this.R * this.J(:, :, 1) * L(:, :, k);
                     omega(1) = omega_sum1 + trace((P_sum11 + P_sum12) * this.augW) ...
-                    + trace(P_sum11 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
+                        + trace(P_sum11 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
                     % mode 2
                     PUpper(:, :, 2) = L(:, :, k)' * this.J(:, :, 2)' * this.R * this.J(:, :, 2) * L(:, :, k) + this.augQ(:, :, 2) ...
-                        + (this.augA(:, :, 2) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 2) * L(:, :, k))' * P_sum21 * (this.augA(:, :, 2) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 2) * L(:, :, k)) ...
+                        + (this.augA(:, :, 2) -Aexp(:, :, k) + this.augB(:, :, 2) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k))' * P_sum21 * (this.augA(:, :, 2) -Aexp(:, :, k) + this.augB(:, :, 2) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k)) ...
                         + (this.augA(:, :, 2) + this.augB(:, :, 2) * L(:, :, k))' * P_sum22 * (this.augA(:, :, 2) + this.augB(:, :, 2) * L(:, :, k));
-                    PUnder(:, :, 2) = (M(:, :, k) - this.augB(:, :, 2) * L(:, :, k))' * P_sum21 * (M(:, :, k) - this.augB(:, :, 2) * L(:, :, k)) ...
+                    PUnder(:, :, 2) = (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 2) * L(:, :, k))' * P_sum21 * (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 2) * L(:, :, k)) ...
                         + (this.augB(:, :, 2) * L(:, :, k))' * P_sum22 * (this.augB(:, :, 2) * L(:, :, k)) ...
                         + L(:, :, k)' * this.J(:, :, 2)' * this.R * this.J(:, :, 2) * L(:, :, k);
                     omega(2) = omega_sum2 + trace((P_sum21 + P_sum22) * this.augW) ...
-                    + trace(P_sum21 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
+                        + trace(P_sum21 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
                     % mode 3
                     PUpper(:, :, 3) = L(:, :, k)' * this.J(:, :, 3)' * this.R * this.J(:, :, 3) * L(:, :, k) + this.augQ(:, :, 3) ...
-                        + (this.augA(:, :, 3) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 3) * L(:, :, k))' * P_sum31 * (this.augA(:, :, 3) - K(:, :, k)* S_tilde(:, :, k)* this.augC - M(:, :, k) + this.augB(:, :, 3) * L(:, :, k)) ...
+                        + (this.augA(:, :, 3) -Aexp(:, :, k) + this.augB(:, :, 3) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k))' * P_sum31 * (this.augA(:, :, 3) -Aexp(:, :, k) + this.augB(:, :, 3) * L(:, :, k) - Bexp(:, :, k) * L(:, :, k)) ...
                         + (this.augA(:, :, 3) + this.augB(:, :, 3) * L(:, :, k))' * P_sum32 * (this.augA(:, :, 3) + this.augB(:, :, 3) * L(:, :, k));
-                    PUnder(:, :, 3) = (M(:, :, k) - this.augB(:, :, 3) * L(:, :, k))' * P_sum31 * (M(:, :, k) - this.augB(:, :, 3) * L(:, :, k)) ...
+                    PUnder(:, :, 3) = (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 3) * L(:, :, k))' * P_sum31 * (Aexp(:, :, k) + Bexp(:, :, k) * L(:, :, k) - K(:, :, k) * S_tilde(:, :, k) * this.augC - this.augB(:, :, 3) * L(:, :, k)) ...
                         + (this.augB(:, :, 3) * L(:, :, k))' * P_sum32 * (this.augB(:, :, 3) * L(:, :, k)) ...
                         + L(:, :, k)' * this.J(:, :, 3)' * this.R * this.J(:, :, 3) * L(:, :, k);
                     omega(3) = omega_sum3 + trace((P_sum31 + P_sum32) * this.augW) ...
-                    + trace(P_sum31 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
+                        + trace(P_sum31 *  K(:, :, k)* S_tilde(:, :, k) * this.augV * (K(:, :, k)* S_tilde(:, :, k))');
                 end
-                % now check for convergence
+                
                 costs = trace(PUpper(:, :, 1) * (XUpper(:, :, 1, 1) + XUnder(:, :, 1, 1)) + PUnder(:, :, 1) * XUpper(:, :, 1, 1)) ...
                     + trace(PUpper(:, :, 2) * (XUpper(:, :, 2, 1) + XUnder(:, :, 2, 1)) + PUnder(:, :, 2) * XUpper(:, :, 2, 1)) ...
                     + trace(PUpper(:, :, 3) * (XUpper(:, :, 3, 1) + XUnder(:, :, 3, 1)) + PUnder(:, :, 3) * XUpper(:, :, 3, 1)) ...
-                    + caModeProbs(1, 1) * omega(1) + caModeProbs(2, 1) * omega(2) + caModeProbs(3, 1) * omega(3);
-                if abs(oldCosts - costs) < 1e-10
-                    break
-                else
-                    oldCosts = costs;
-                end
+                    + caModeProbs(1, 1) * omega(1) + caModeProbs(2, 1) * omega(2) + caModeProbs(3, 1) * omega(3);               
+                oldCosts = costs;  
             end
         end
         
         %% computeGainsMeasurementAndMode
-        function [M, K, L] = computeGainsMeasurementAndMode(this)
-             numMeasModes = 9; 
-            % both measurements are avilable, so mode is 1+3=4
-            measModeProbs = zeros(numMeasModes, this.horizonLength + 1);
-            measModeProbs(:, 1) = [0 0 0 0 1 0 0 0 0]';
-            measModeProbs(:, 2) = this.Z' * measModeProbs(:, 1);
-            measModeProbs(:, 3) = this.Z' * measModeProbs(:, 2);
-            measModeProbs(:, 4) = this.Z' * measModeProbs(:, 3);
+        function [K, L, Aexp, Bexp] = computeGainsMeasurementAndMode(this)            
+            T = this.scDelayTransMat;
+            % both measurements are available, so mode is 1 1 -> 3
+            % horizon is three            
             
             S_tilde = zeros(2 * this.dimY,2 * this.dimY, this.horizonLength);
-            S_tilde(:, :, 1) = this.S(:, :, 5); % initially, mode is 4
-            S_tilde(:, :, 2) = this.S(:, :, 1) * measModeProbs(1, 2) + this.S(:, :, 2) * measModeProbs(2, 2) ...
-                + this.S(:, :, 3) * measModeProbs(3, 2) + this.S(:, :, 4) * measModeProbs(4, 2) ...
-                + this.S(:, :, 5) * measModeProbs(5, 2) + this.S(:, :, 6) * measModeProbs(6, 2) ...
-                + this.S(:, :, 7) * measModeProbs(7, 2) + this.S(:, :, 8) * measModeProbs(8, 2) ...
-                + this.S(:, :, 9) * measModeProbs(9, 2);
-            S_tilde(:, :, 3) = this.S(:, :, 1) * measModeProbs(1, 3) + this.S(:, :, 2) * measModeProbs(2, 3) ...
-                + this.S(:, :, 3) * measModeProbs(3, 3) + this.S(:, :, 4) * measModeProbs(4, 3) ...
-                + this.S(:, :, 5) * measModeProbs(5, 3) + this.S(:, :, 6) * measModeProbs(6, 3) ...
-                + this.S(:, :, 7) * measModeProbs(7, 3) + this.S(:, :, 8) * measModeProbs(8, 3) ...
-                + this.S(:, :, 9) * measModeProbs(9, 3);
+            S_tilde(:, :, 1) = this.S(:, :, 4); % initially, mode is 3
+            % k+1
+            availProbs = zeros(1, 4);
+            % we need delay probs at time k (packet arrived at time k, so
+            % delay is 0)
+            measDelayProbs = [1 0 0 0 0 0];
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);            
+            S_tilde(:, :, 2) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3);
+             
+            % k+2
+            availProbs = zeros(1, 4);
+            % we need delay probs at time k+1 
+            measDelayProbs = measDelayProbs * T;
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);
             
+            S_tilde(:, :, 3) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3);            
+               
             % ca Mode: we have observed the previous mode to be the first
             numCaModes = 3; % sequence length + 1
             caModeProbs = zeros(numCaModes, this.horizonLength + 1);
@@ -405,32 +404,68 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
             
-            [M, K, L] = this.computeGains(caModeProbs, S_tilde);
+            [K, L, Aexp, Bexp] = this.computeGains(caModeProbs, S_tilde);
         end
         
         %% computeGainsNoModes
-        function [M, K, L] = computeGainsNoModes(this)
-            numMeasModes = 9; 
-            % the current measurement is available, so mode is 1
-            measModeProbs = zeros(numMeasModes, this.horizonLength + 1);
-            measModeProbs(:, 1) = [0 1 0 0 0 0 0 0 0]';
-            measModeProbs(:, 2) = this.Z' * measModeProbs(:, 1);
-            measModeProbs(:, 3) = this.Z' * measModeProbs(:, 2);
-            measModeProbs(:, 4) = this.Z' * measModeProbs(:, 3);
+        function [K, L, Aexp, Bexp] = computeGainsNoModes(this)
+            T = this.scDelayTransMat;            
+            % the current measurement is available, so mode is 1 0 -> 1 as per de2bi
+            % horizon is three            
             
             S_tilde = zeros(2 * this.dimY,2 * this.dimY, this.horizonLength);
-            S_tilde(:, :, 1) = this.S(:, :, 2); % initially, mode is 1
-            S_tilde(:, :, 2) = this.S(:, :, 1) * measModeProbs(1, 2) + this.S(:, :, 2) * measModeProbs(2, 2) ...
-                + this.S(:, :, 3) * measModeProbs(3, 2) + this.S(:, :, 4) * measModeProbs(4, 2) ...
-                + this.S(:, :, 5) * measModeProbs(5, 2) + this.S(:, :, 6) * measModeProbs(6, 2) ...
-                + this.S(:, :, 7) * measModeProbs(7, 2) + this.S(:, :, 8) * measModeProbs(8, 2) ...
-                + this.S(:, :, 9) * measModeProbs(9, 2);
-            S_tilde(:, :, 3) = this.S(:, :, 1) * measModeProbs(1, 3) + this.S(:, :, 2) * measModeProbs(2, 3) ...
-                + this.S(:, :, 3) * measModeProbs(3, 3) + this.S(:, :, 4) * measModeProbs(4, 3) ...
-                + this.S(:, :, 5) * measModeProbs(5, 3) + this.S(:, :, 6) * measModeProbs(6, 3) ...
-                + this.S(:, :, 7) * measModeProbs(7, 3) + this.S(:, :, 8) * measModeProbs(8, 3) ...
-                + this.S(:, :, 9) * measModeProbs(9, 3);
-
+            S_tilde(:, :, 1) = this.S(:, :, 2); % initially, mode is 1 (1 0)
+            % k+1
+            availProbs = zeros(1, 4);
+            measDelayProbs = [1 0 0 0 0 0];
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);            
+            S_tilde(:, :, 2) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3);
+                        
+            % k+2
+            availProbs = zeros(1, 4);
+            % we need delay probs at time k+1 
+            measDelayProbs = measDelayProbs * T;
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);            
+            S_tilde(:, :, 3) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3); 
+            
             % ca Mode: initially we are in last mode, as we have none
             % observed
             numCaModes = 3;
@@ -440,32 +475,69 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
             
-            [M, K, L] = this.computeGains(caModeProbs, S_tilde);
+            [K, L, Aexp, Bexp] = this.computeGains(caModeProbs, S_tilde);
         end
         
         %% computeGainsNoMeasurementsNoModes
-        function [M, K, L] = computeGainsNoMeasurementsNoModes(this)
-            numMeasModes = 9; 
+        function [K, L, Aexp, Bexp] = computeGainsNoMeasurementsNoModes(this)
+            T = this.scDelayTransMat;            
+            % no measurements available, so mode is 0 0 -> 0 as per de2bi
+            % horizon is three    
             
-            % no measurements available, so mode is 0
-            measModeProbs = zeros(numMeasModes, this.horizonLength + 1);
-            measModeProbs(:, 1) = [1 0 0 0 0 0 0 0 0]';
-            measModeProbs(:, 2) = this.Z' * measModeProbs(:, 1);
-            measModeProbs(:, 3) = this.Z' * measModeProbs(:, 2);
-            measModeProbs(:, 4) = this.Z' * measModeProbs(:, 3);
-      
             S_tilde = zeros(2 * this.dimY,2 * this.dimY, this.horizonLength);
-            S_tilde(:, :, 1) = this.S(:, :, 1);
-            S_tilde(:, :, 2) = this.S(:, :, 1) * measModeProbs(1, 2) + this.S(:, :, 2) * measModeProbs(2, 2) ...
-                + this.S(:, :, 3) * measModeProbs(3, 2) + this.S(:, :, 4) * measModeProbs(4, 2) ...
-                + this.S(:, :, 5) * measModeProbs(5, 2) + this.S(:, :, 6) * measModeProbs(6, 2) ...
-                + this.S(:, :, 7) * measModeProbs(7, 2) + this.S(:, :, 8) * measModeProbs(8, 2) ...
-                + this.S(:, :, 9) * measModeProbs(9, 2);
-            S_tilde(:, :, 3) = this.S(:, :, 1) * measModeProbs(1, 3) + this.S(:, :, 2) * measModeProbs(2, 3) ...
-                + this.S(:, :, 3) * measModeProbs(3, 3) + this.S(:, :, 4) * measModeProbs(4, 3) ...
-                + this.S(:, :, 5) * measModeProbs(5, 3) + this.S(:, :, 6) * measModeProbs(6, 3) ...
-                + this.S(:, :, 7) * measModeProbs(7, 3) + this.S(:, :, 8) * measModeProbs(8, 3) ...
-                + this.S(:, :, 9) * measModeProbs(9, 3);
+            S_tilde(:, :, 1) = this.S(:, :, 1); % initially, mode is 0 (0 0)
+            % k+1
+            availProbs = zeros(1, 4);
+            % we need delay probs at time k (packet did not arrive, so
+            % delay is not known, we only know it's larger than 0)
+            measDelayProbs = 1/5 * [0 1 1 1 1 1]; % at time k
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);            
+            S_tilde(:, :, 2) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3);
+                        
+            % k+2
+            availProbs = zeros(1, 4);
+            % we need delay probs at time k+1 
+            measDelayProbs = measDelayProbs * T;
+            % for mode 0 0 (y_k and y_k+1 not available)
+            % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
+            for j=[2:6]                
+                for m=[1 3:6]            
+                    availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
+                end
+            end
+            % for mode 1 0 (y_k+1 available and y_k not available)
+            % delay of y_k ~= 1 and delay of y_k+1 == 0
+            for m=[1 3:6]                       
+                availProbs(2) = availProbs(2) + T(m, 1)* measDelayProbs(m);
+            end
+            % for mode 0 1 (y_k+1 not available and y_k available)
+            % delay of y_k == 1 and delay of y_k+1 ~= 0
+            for j=[2:6]                           
+                availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
+            end
+            % for mode 1 1 (y_k available and y_k+1 available)
+            % delay of y_k == 1 and delay of y_k+1 == 0
+            availProbs(4) =  T(2,1)* measDelayProbs(2);            
+            S_tilde(:, :, 3) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3); 
             
             % ca Mode: initially we are in last mode, as we have none
             % observed
@@ -476,7 +548,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             caModeProbs(:, 3) = this.modeTransitionMatrix' * caModeProbs(:, 2);
             caModeProbs(:, 4) = this.modeTransitionMatrix' * caModeProbs(:, 3);
             
-            [M, K, L] = this.computeGains(caModeProbs, S_tilde);
+            [K, L, Aexp, Bexp] = this.computeGains(caModeProbs, S_tilde);
         end
     end
     
@@ -754,21 +826,6 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                 this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, invalidX0Cov), ...
                 expectedErrId);
         end
-        
-        %% testRecedingHorizonUdpLikeControllerInvalidFlag
-        function testRecedingHorizonUdpLikeControllerInvalidFlag(this)
-            if verLessThan('matlab', '9.8')
-                % Matlab R2018 or R2019
-                expectedErrId = 'MATLAB:type:InvalidInputSize';
-            else
-                expectedErrId = 'MATLAB:validation:IncompatibleSize';
-            end
-            invalidUseMexFlag = 'invalid'; % not a flag
-            
-            this.verifyError(@() RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov, invalidUseMexFlag), ...
-                expectedErrId);
-        end
 %%
 %%
         %% RecedingHorizonUdpLikeController
@@ -786,40 +843,105 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             %by default, we use the mex implementation to obtain the
             %controller gains
             this.verifyTrue(controller.useMexImplementation);
+            
+            % check if augmented dynamics is properly initialized
+            this.verifyEqual(controller.augA, this.augA);
+            this.verifyEqual(controller.augB, this.augB);
+            this.verifyEqual(controller.augW, this.augW);
+            this.verifyEqual(controller.augQ, this.augQ);
+            this.verifyEqual(controller.S, this.S);
+            this.verifyTrue(issparse(controller.augmentedMeasMatrix));
+            this.verifyEqual(full(controller.augmentedMeasMatrix), this.augC);
+            
+            newMaxMeasDelay = 2;
+            controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, newMaxMeasDelay, this.W, this.V, this.horizonLength, this.x0, this.x0Cov);
+            % sc delay probs stored by controller have M+2 =4 elements
+            
+            % check if history of mode transition matrices is created
+            % correctly (maxMeasHistory is 2)
+            expectedHistory = cat(3, this.modeTransitionMatrix, this.modeTransitionMatrix);
+            this.verifyEqual(controller.transitionMatrixCaHistory, expectedHistory);
+            
+            % check the measurement availability
+            expectedStates = [0 0 0; 1 0 0; 0 1 0; 1 1 0; 0 0 1; 1 0 1; 0  1 1; 1 1 1];
+            this.verifyEqual(controller.measAvailabilityStates, expectedStates);
+            
+            % check the corresponding indices (index is delay +1)
+            % 0 0 0 ~=1 ~=2 ~=3
+            % 1 0 0 ==1 ~=2 ~=3
+            % 0 1 0 ~=1 ==2 ~=3
+            % 1 1 0 ==1 ==2 ~=3
+            % 0 0 1 ~=1 ~=2 ==3
+            % 1 0 1 ==1 ~=2 ==3
+            % 0 1 1 ~=1 ==2 ==3
+            % 1 1 1 ==1 ==2 ==3
+            this.verifyTrue(iscell(controller.measAvailabilityIdx));
+            this.verifySize(controller.measAvailabilityIdx, [3, 8]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 1}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 1}, [1 3 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 1}, [1 2 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 2}, 1);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 2}, [1 3 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 2}, [1 2 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 3}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 3}, 2);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 3}, [1 2 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 4}, 1);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 4}, 2);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 4}, [1 2 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 5}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 5}, [1 3 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 5}, 3);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 6}, 1);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 6}, [1 3 4]);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 6}, 3);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 7}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 7}, 2);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 7}, 3);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 8}, 1);
+            this.verifyEqual(controller.measAvailabilityIdx{2, 8}, 2);
+            this.verifyEqual(controller.measAvailabilityIdx{3, 8}, 3);
+            
+            % now check masurement availability matrices S
+            % 0 0 0 ~=1 ~=2 ~=3
+            % 1 0 0 ==1 ~=2 ~=3
+            % 0 1 0 ~=1 ==2 ~=3
+            % 1 1 0 ==1 ==2 ~=3
+            % 0 0 1 ~=1 ~=2 ==3
+            % 1 0 1 ==1 ~=2 ==3
+            % 0 1 1 ~=1 ==2 ==3
+            % 1 1 1 ==1 ==2 ==3
+            % here 1 indicates that measurement is available for processing
+            expS = zeros(3 * this.dimY, 3 * this.dimY, 8);
+            expS(:, :, 2) = blkdiag(eye(this.dimY), zeros(this.dimY), zeros(this.dimY));
+            expS(:, :, 3) = blkdiag(zeros(this.dimY), eye(this.dimY), zeros(this.dimY));
+            expS(:, :, 4) = blkdiag(eye(this.dimY), eye(this.dimY), zeros(this.dimY));
+            expS(:, :, 5) = blkdiag(zeros(this.dimY), zeros(this.dimY), eye(this.dimY));
+            expS(:, :, 6) = blkdiag(eye(this.dimY), zeros(this.dimY), eye(this.dimY));
+            expS(:, :, 7) = blkdiag(zeros(this.dimY), eye(this.dimY), eye(this.dimY));
+            expS(:, :, 8) = blkdiag(eye(this.dimY), eye(this.dimY), eye(this.dimY));
+            
+            this.verifyTrue(issparse(controller.augmentedMeasMatrix));
+            this.verifyEqual(controller.S, expS);
         end
 %%
-%%
-        %% testSetInitialControllerGainsInvalidM
-        function testSetInitialControllerGainsInvalidM(this)
-            expectedErrId = 'RecedingHorizonUdpLikeController:SetInitialControllerGains:InvalidM';
-                        
-            invalidM = this; % not a matrix
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidM, this.initialK, this.initialL), ...
-                expectedErrId);
-            
-            invalidM = this.initialK; % wrong dimension
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidM, this.initialK, this.initialL), ...
-                expectedErrId);
-            
-            invalidM = this.initialM(:, :, 1:end-1); % wrong number of slices
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidM, this.initialK, this.initialL), ...
-                expectedErrId);
-        end
+%%      
         
         %% testSetInitialControllerGainsInvalidK
         function testSetInitialControllerGainsInvalidK(this)
             expectedErrId = 'RecedingHorizonUdpLikeController:SetInitialControllerGains:InvalidK';
                         
             invalidK = this; % not a matrix
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, invalidK, this.initialL), ...
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidK, this.initialL), ...
                 expectedErrId);
             
-            invalidK = this.initialM; % wrong dimension
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, invalidK, this.initialL), ...
+            invalidK = this.initialL; % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidK, this.initialL), ...
                 expectedErrId);
             
             invalidK = this.initialK(:, :, 1:end-1); % wrong number of slices
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, invalidK, this.initialL), ...
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(invalidK, this.initialL), ...
                 expectedErrId);
         end
         
@@ -828,22 +950,25 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             expectedErrId = 'RecedingHorizonUdpLikeController:SetInitialControllerGains:InvalidL';
                         
             invalidL = this; % not a matrix
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, invalidL), ...
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialK, invalidL), ...
                 expectedErrId);
             
-            invalidL = this.initialM; % wrong dimension
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, invalidL), ...
+            invalidL = this.initialK; % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialK, invalidL), ...
                 expectedErrId);
             
             invalidL = this.initialL(:, :, 1); % wrong number of slices
-            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, invalidL), ...
+            this.verifyError(@() this.controllerUnderTest.setInitialControllerGains(this.initialK, invalidL), ...
                 expectedErrId);
         end
         
         %% testSetInitialControllerGains
         function testSetInitialControllerGains(this)
             % this call should not crash
-            this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+            
+            this.verifyEqual(this.controllerUnderTest.L, this.initialL);
+            this.verifyEqual(this.controllerUnderTest.K, this.initialK);
         end
 %%
 %%
@@ -866,6 +991,262 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.setControllerPlantState(initialState);
             this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), stateMean);
         end
+%%
+%%
+        %% testChangeCaDelayProbs
+        function testChangeCaDelayProbs(this)
+            oldTransitionMatrix = this.modeTransitionMatrix;
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);                       
+            this.assertEqual(this.controllerUnderTest.transitionMatrixCa, oldTransitionMatrix);
+            this.assertEqual(this.controllerUnderTest.transitionMatrixCaHistory, oldTransitionMatrix);
+           
+            % now change the ca delay probs
+            newCaDelayProbs = ones(1, 10) / 10;        
+
+            this.controllerUnderTest.changeCaDelayProbs(newCaDelayProbs);            
+            
+            % we observed the previous mode and received two measurements
+            previousMode = 1;
+            modeDelay = 1;
+            receivedMeasurements = [ones(this.dimY, 1) 1.5 * ones(this.dimY, 1)];
+            measurementDelays = [1 0];
+
+            % expected controller gains, based on the new transition matrix
+            this.modeTransitionMatrix = Utility.calculateDelayTransitionMatrix(...
+                    Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));                         
+            [K, L, Aexp, Bexp] = this.computeGainsMeasurementAndMode();
+         
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            expectedMeasurement = this.augC * this.augX0;
+            innovation = [receivedMeasurements(:, 2); receivedMeasurements(:, 1)] - expectedMeasurement;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+
+            this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+            % check the side effect
+            this.verifyEqual(this.controllerUnderTest.transitionMatrixCa, this.modeTransitionMatrix);
+            this.verifyEqual(this.controllerUnderTest.transitionMatrixCaHistory, this.modeTransitionMatrix);
+        end    
+%%
+%%
+        %% testChangeScDelayProbs
+        function testChangeScDelayProbs(this)
+            oldTransitionMatrix = this.truncatedScDelayTransMat;            
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+
+            this.assertTrue(isa(this.controllerUnderTest, 'ScDelayProbsChangeable'));
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);                       
+            this.assertEqual(this.controllerUnderTest.scDelayTransitionMatrix, oldTransitionMatrix, 'AbsTol', 1e-15);
+            this.assertEqual(this.controllerUnderTest.transitionMatrixScHistory, oldTransitionMatrix, 'AbsTol', 1e-15);
+           
+            % now change the sc delay probs
+            newScDelayProbs = ones(1, 10) / 10;        
+                        
+            this.controllerUnderTest.changeScDelayProbs(newScDelayProbs);            
+            
+            % we observed the previous mode and received two measurements
+            previousMode = 1;
+            modeDelay = 1;
+            receivedMeasurements = [ones(this.dimY, 1) 1.5 * ones(this.dimY, 1)];
+            measurementDelays = [1 0];
+
+            % expected controller gains, based on the new transition matrix
+            newScDelayProbs = Utility.truncateDiscreteProbabilityDistribution(newScDelayProbs, size(this.scDelayTransMat, 1));
+            newTruncatedScDelayProbs = Utility.truncateDiscreteProbabilityDistribution(newScDelayProbs, numel(this.truncatedScDelayProbs));
+            this.truncatedScDelayTransMat = repmat(reshape(newTruncatedScDelayProbs, 1, []), numel(newTruncatedScDelayProbs), 1);            
+            this.scDelayTransMat = repmat(reshape(newScDelayProbs, 1, []), numel(newScDelayProbs), 1);
+            
+            [K, L, Aexp, Bexp] = this.computeGainsMeasurementAndMode();
+         
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            expectedMeasurement = this.augC * this.augX0;
+            innovation = [receivedMeasurements(:, 2); receivedMeasurements(:, 1)] - expectedMeasurement;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+
+            this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+            % check the side effect
+            this.verifyEqual(this.controllerUnderTest.scDelayTransitionMatrix, this.truncatedScDelayTransMat);
+            this.verifyEqual(this.controllerUnderTest.transitionMatrixScHistory, this.truncatedScDelayTransMat);
+        end    
+%%
+%%
+        %% testChangeModelParametersInvalidAMatrix
+        function testChangeModelParametersInvalidAMatrix(this)
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
+            
+            invalidA = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX); % correct dims, but inf
+            invalidA(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, this.W), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidBMatrix
+        function testChangeModelParametersInvalidBMatrix(this)
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            
+            invalidB = eye(this.dimX, this.dimU + 1); % invalid dims
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, this.W), ...
+                expectedErrId);            
+             
+            invalidB = eye(this.dimX, this.dimU); % correct dims, but inf
+            invalidB(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, this.W), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidWMatrix
+        function testChangeModelParametersInvalidWMatrix(this)
+            expectedErrId = 'Validator:ValidateSysNoiseCovarianceMatrix:InvalidCovDim';
+            
+            invalidW = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+            
+            invalidW = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+            
+            invalidW = zeros(this.dimX); % matrix is square, but not positive definite
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, this.B, invalidW), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersNewA
+        function testChangeModelParametersNewA(this)
+            dimEta = 2;
+            
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            % now change A, affects augA (A_tilde in the paper) 
+            newA = this.A + eye(this.dimX);                        
+            
+            this.controllerUnderTest.changeModelParameters(newA, this.B, this.W);
+            % now process one measurement and compute a control sequence
+            % using new system matrix A
+            
+            [F, ~, H, ~] = Utility.createActuatorMatrices(this.sequenceLength, this.dimU);            
+            D = eye(this.dimX);
+            E = zeros(this.dimX);
+            
+            % this is the new augA (A_tilde)
+            this.A = newA;
+            this.augA = repmat(blkdiag([newA zeros(this.dimX); D E], F), 1,1, this.sequenceLength + 1);
+            this.augA(1:this.dimX, end - dimEta + 1:end, :) = mtimesx(this.B, H);
+
+            % one measurement received, without delay
+            receivedMeasurement = ones(this.dimY, 1);
+            measurementDelay = 0;
+            
+            % expected controller gains                  
+            [K, L, Aexp, Bexp] = this.computeGainsNoModes();
+            
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            innovation = [receivedMeasurement; zeros(this.dimY, 1)] - this.S(:, :, 2) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
+                        
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurement, measurementDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+
+            this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+        end
+        
+        %% testChangeModelParametersNewB
+        function testChangeModelParametersNewB(this)
+            dimEta = 2;
+            dimAugState = 2 * this.dimX + dimEta;
+            numModes = this.sequenceLength + 1;
+            
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+            
+            % now change B, affects both augA and augB
+            newB = -this.B;
+            
+            this.controllerUnderTest.changeModelParameters(this.A, newB, this.W);
+            % now process one measurement and compute a control sequence
+            % using new input matrix B
+            
+            [F, G, H, ~] = Utility.createActuatorMatrices(this.sequenceLength, this.dimU);           
+            D = eye(this.dimX);
+            E = zeros(this.dimX);
+            
+            % this is the new augA (A_tilde)
+            this.B = newB;
+            this.augA = repmat(blkdiag([this.A zeros(this.dimX); D E], F), 1,1, numModes);
+            this.augA(1:this.dimX, end - dimEta + 1:end, :) = mtimesx(newB, H);
+            % this is the new augB (B_tilde)
+            this.augB = repmat([zeros(dimAugState - size(G, 1), size(G, 2)); G], 1, 1, numModes);
+            this.augB(1:this.dimX, :, :) = mtimesx(newB, this.J);
+            
+            receivedMeasurement = ones(this.dimY, 1);
+            measurementDelay = 0;
+            
+            % expected controller gains                  
+            [K, L, Aexp, Bexp] = this.computeGainsNoModes();
+            
+            expectedInputSequence = L(:, :, 1) * this.augX0;
+            innovation = [receivedMeasurement; zeros(this.dimY, 1)] - this.S(:, :, 2) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
+                        
+            actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurement, measurementDelay);
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+
+            this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+            
+        end
+        
+        %% testChangeModelParametersNewW
+        function testChangeModelParametersNewW(this)
+            dimEta = 2;
+            
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
+            % initial control state is non-zero
+            this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
+               
+            % reduce the noise
+            newW = 0.75 * this.W;
+            this.augW = blkdiag(newW, zeros(this.dimX), zeros(dimEta));            
+            
+            % expected controller gains                  
+            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
+     
+            expectedInputSequence = L(:, :, 1) * this.augX0;            
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;
+            
+            this.controllerUnderTest.changeModelParameters(this.A, this.B, newW);            
+            
+            actualInputSequence = this.controllerUnderTest.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
+
+            this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewControllerState(1:this.dimX), ...
+                'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol); 
+        end
+        
 %%
 %%
         %% testGetLastComputationMeasurementDataNoMeasurements
@@ -1084,7 +1465,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1112,7 +1493,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);            
         end
         
@@ -1147,7 +1528,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);            
         end
         
@@ -1155,16 +1536,16 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         function testComputeControlSequenceNoMeasurementsNoModes(this)
             import matlab.unittest.constraints.IsScalar;
             
-            this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
             this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsNoMeasurementsNoModes();
+            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
      
-            expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0;
+            expectedInputSequence = L(:, :, 1) * this.augX0;            
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1176,7 +1557,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1189,18 +1570,21 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             controller = RecedingHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
                 this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
                 this.W, this.V, this.horizonLength, this.x0, this.x0Cov, useMexImplementation);
+            controller.maxNumIterations = RecedingHorizonUdpLikeControllerTest.numIterations;
             
-            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            controller.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(controller.getControllerPlantState(), this.x0);
             % ensure that matlab implementation is used
             this.assertFalse(controller.useMexImplementation);
+            this.assertEqual(controller.K, this.initialK);
+            this.assertEqual(controller.L, this.initialL);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsNoMeasurementsNoModes();
+            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
      
-            expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0;
+            expectedInputSequence = L(:, :, 1) * this.augX0;            
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;
             
             actualInputSequence = controller.computeControlSequence();
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1212,7 +1596,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
         
@@ -1223,16 +1607,17 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             receivedMeasurement = ones(this.dimY, 1);
             measurementDelay = 0;
             
-            this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
             this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsNoModes();
+            [K, L, Aexp, Bexp] = this.computeGainsNoModes();
 
             expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurement; zeros(this.dimY, 1)];
+            innovation = [receivedMeasurement; zeros(this.dimY, 1)] - this.S(:, :, 2) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurement, measurementDelay);
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1244,7 +1629,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1261,16 +1646,17 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             receivedMeasurement = ones(this.dimY, 1);
             measurementDelay = 0;
             
-            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            controller.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(controller.getControllerPlantState(), this.x0);
             this.assertFalse(controller.useMexImplementation);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsNoModes();
+            [K, L, Aexp, Bexp] = this.computeGainsNoModes();
 
             expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurement; zeros(this.dimY, 1)];
+            innovation = [receivedMeasurement; zeros(this.dimY, 1)] - this.S(:, :, 2) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
             
             actualInputSequence = controller.computeControlSequence(receivedMeasurement, measurementDelay);
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1282,7 +1668,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
         
@@ -1296,17 +1682,18 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             previousMode = 1;
             modeDelay = 1;
             
-            this.controllerUnderTest.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            this.controllerUnderTest.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(this.controllerUnderTest.getControllerPlantState(), this.x0);
             this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsMeasurementAndMode();
+            [K, L, Aexp, Bexp] = this.computeGainsMeasurementAndMode();
 
             expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurements(:, 2); receivedMeasurements(:, 1)];
-            
+            innovation = [receivedMeasurements(:, 2); receivedMeasurements(:, 1)] - this.S(:, :, 4) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
+                        
             actualInputSequence = this.controllerUnderTest.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
 
@@ -1317,7 +1704,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(this.controllerUnderTest.lastNumIterations, 0);
             this.verifyLessThanOrEqual(this.controllerUnderTest.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(this.controllerUnderTest.lastNumIterations, IsScalar);
         end
         
@@ -1337,17 +1724,18 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             previousMode = 1;
             modeDelay = 1;
             
-            controller.setInitialControllerGains(this.initialM, this.initialK, this.initialL);
+            controller.setInitialControllerGains(this.initialK, this.initialL);
             % initial control state is non-zero
             this.assertEqual(controller.getControllerPlantState(), this.x0);
             % and we use Matlab to compute the gains
             this.assertFalse(controller.useMexImplementation);
 
             % expected controller gains                  
-            [M, K, L] = this.computeGainsMeasurementAndMode();
+            [K, L, Aexp, Bexp] = this.computeGainsMeasurementAndMode();
 
             expectedInputSequence = L(:, :, 1) * this.augX0;
-            expectedNewControllerState = M(:, :, 1) * this.augX0 + K(:, :, 1) * [receivedMeasurements(:, 2); receivedMeasurements(:, 1)];
+            innovation = [receivedMeasurements(:, 2); receivedMeasurements(:, 1)] - this.S(:, :, 4) * this.augC * this.augX0;
+            expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence + K(:, :, 1) * innovation;
             
             actualInputSequence = controller.computeControlSequence(receivedMeasurements, measurementDelays, previousMode, modeDelay);
             this.verifyEqual(actualInputSequence, expectedInputSequence, 'AbsTol', RecedingHorizonUdpLikeControllerTest.absTol);
@@ -1359,7 +1747,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % gains
             this.verifyGreaterThan(controller.lastNumIterations, 0);
             this.verifyLessThanOrEqual(controller.lastNumIterations, ...
-                RecedingHorizonUdpLikeController.defaultMaxNumIterations);
+                RecedingHorizonUdpLikeControllerTest.numIterations);
             this.verifyThat(controller.lastNumIterations, IsScalar);
         end
 %%

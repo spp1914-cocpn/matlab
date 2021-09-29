@@ -1,4 +1,4 @@
-classdef RecedingHorizonUdpLikeController < SequenceBasedController
+classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParamsChangeable & CaDelayProbsChangeable & ScDelayProbsChangeable
     % Implementation of a receding horizon linear sequence-based controller for
     % NCS with UDP-like networks connecting the controller and actuator, 
     % and sensor and controller, respectively, where application layer ACKs
@@ -15,7 +15,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -38,11 +38,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
     
      
     properties (GetAccess = public, Constant)
-        defaultMaxNumIterations = 1000;%1000;%5000;
+        defaultMaxNumIterations = 20;%30;%1000;
     end
          
     properties (Access = private, Constant)
         convergenceDiff = 1e-20;
+        probBoundDelaysSc = 1e-50;
     end
     
     properties (SetAccess = immutable, GetAccess = private)
@@ -53,17 +54,9 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
         R;
         
         dimEta;
-        %etaState;
         
         dimAugState; % dimension of the controller's augmented state       
-        
-        augA;
-        augB;
-          
         JRJ; % only nonzero for the first mode
-                
-        augmentedNoiseCov;
-        augW;
         augV;
     end
     
@@ -86,29 +79,59 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
         maxNumIterations(1,1) double = RecedingHorizonUdpLikeController.defaultMaxNumIterations;
     end
     
-    properties (Access = private)
+    properties (SetAccess = private, GetAccess = ?RecedingHorizonUdpLikeControllerTest)
+        augA; % can be changed using changeModelParameters()
+        augB;
+        augW;
+        
         S;
         augmentedMeasMatrix; % sparse!
         
         augQ;
         terminalAugQ; % the same for all modes
         
+        % stores the most recent mode transition matrix T_k used for the
+        % prediction of theta_k over the optimization horizon
         transitionMatrixCa;
-        transitionMatrixSc_part; % only a third of the matrix
+        % history to store previous transition matrices T_{k-j} states (required for incorporation of mode observations)        
+        % transitionMatrixCaHistory(:, :, 1) is thus T_{k-1}, used to propagate theta_{k-1} to theta_k
+        % transitionMatrixCaHistory(:, :, 2) is thus T_{k-2}, used to propagate theta_{k-2} to theta_{k-1}
+        % transitionMatrixCaHistory(:, :, 3) is thus T_{k-3}, used to propagate theta_{k-3} to theta_{k-2}
+        % ...
+        % transitionMatrixCaHistory(:, :, maxMeasurementDelay) is thus T_{k-maxMeasurementDelay}, used to propagate theta_{k-maxMeasurementDelay} to theta_{k-maxMeasurementDelay+1}
+        transitionMatrixCaHistory;
+        
+        % stores the most recent transition matrix P_k used for the
+        % prediction of measurement delay tau_k over the optimization horizon
+        scDelayTransitionMatrix;
+        % history to store previous transition matrices P_{k-j} states (required for incorporation of delayed measurements)
+        % transitionMatrixScHistory(:, :, 1) is thus P_{k-1}, used to propagate tau_{k-1} to tau_k
+        % transitionMatrixScHistory(:, :, 2) is thus P_{k-2}, used to propagate tau_{k-2} to tau_{k-1}
+        % transitionMatrixScHistory(:, :, 3) is thus P_{k-3}, used to propagate tau_{k-3} to tau_{k-2}
+        % ...
+        % transitionMatrixScHistory(:, :, maxMeasurementDelay) is thus T_{k-maxMeasurementDelay}, used to propagate tau_{k-maxMeasurementDelay} to tau_{k-maxMeasurementDelay+1}
+        transitionMatrixScHistory;
+
+        % we store the previous estimate of the measurement delays tau_k to tau_k-M (unit vector if measurement is available)
+        measDelayProbs;
+        % measDelayProbs(:, 1) = current delay probs (time k)
+        % measDelayProbs(:, 2) = previous delay probs(time k-1)
+        % ...
+        % measDelayProbs(:, M+1) = delay probs at time k-M, where M is maxMeasDelay
+        measAvailabilityStates; % as binary number, ordered accoridng to de2bi
+        measAvailabilityIdx; % indices of meas delay probs corresponding to availability states
         
         lastNumUsedMeas = 0;
-        lastNumDiscardedMeas = 0;
-        
-        modeSc; % this is observed (stored as integer)
+        lastNumDiscardedMeas = 0;        
+    
         modeCa; % this one is only partially observed (stored as probability (column) vec)
         lastModeObservationDelay = inf; % store the time delay to the last mode observation
         
         L;
-        M;
         K;
         augState; % the controller's augmented plant state
         augStateSecondMoment; % internal estimate of second moment per ca mode
-        augStateCov; % internal estimate of covariance per ca mode
+        augStateCov; % internal estimate of error covariance per ca mode
     end   
       
     properties (GetAccess = public, Dependent)
@@ -202,7 +225,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             numCaModes = sequenceLength + 1;
             Validator.validateTransitionMatrix(caModeTransitionMatrix, numCaModes);
             this.transitionMatrixCa = caModeTransitionMatrix;
-              
+
             Validator.validateDiscreteProbabilityDistribution(scDelayProb);
             
             Validator.validateMeasurementMatrix(C, dimX);
@@ -223,82 +246,104 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             assert(Checks.isCov(x0Cov, dimX), ...
                 'RecedingHorizonUdpLikeController:InvalidX0Cov', ...
                 '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by%d-dimensional **', dimX, dimX);
-            
+
             if nargin > 14
                 this.useMexImplementation = useMexImplementation;
             end
-
+            
             this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
-            this.dimAugmentedMeas = this.dimMeas * this.measBufferLength;
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
             % augmented state consists of x_k, x_k-1, ..., x_k-M and eta_k
             this.dimAugState = dimX * this.measBufferLength + this.dimEta;
-             
+            this.dimAugmentedMeas = this.dimMeas * this.measBufferLength;
+            
             % and the augmented noise covs
             this.augW = blkdiag(W, zeros(maxMeasDelay*dimX+this.dimEta));
-            this.augV = kron(eye(this.measBufferLength), V);           
+            this.augV = kron(eye(this.measBufferLength), V);
 
-            this.horizonLength = horizonLength;          
+            this.horizonLength = horizonLength;           
                         
-            numModesSc = 3 ^ (this.measBufferLength);
-            modesScDecimal = 0:3^(this.measBufferLength)-1; % decimal numbers        
-            modesScBase3 = zeros(numModesSc, this.measBufferLength);
-            for i = 0:maxMeasDelay
-                modesScBase3(:, i+1) = mod(floor(modesScDecimal ./ (3 ^ i)), 3);
-            end            
-            this.computeAndSetScTransitionMatrix(scDelayProb, modesScBase3, modesScDecimal);
-            this.initAugmentedMeasMatrices(modesScBase3, numModesSc, modesScDecimal, C);
-            
-            [F, G, H, ~] = Utility.createAugmentedPlantModel(sequenceLength, A, B);
+            [F, G, H, ~] = Utility.createActuatorMatrices(sequenceLength, dimU);
             J = [speye(dimU) zeros(dimU, dimU * (sequenceLength - 1))];
             this.JRJ = J' * R * J;
             
             D = eye(dimX); 
-           
-            % A_tilde in the paper
-            this.augA = repmat(blkdiag(A, diag(ones(dimX * (maxMeasDelay - 1), 1), -dimX), F), 1, 1, numCaModes);
-            this.augA(dimX + 1:dimX * 2, 1:dimX, :) = repmat(D, 1, 1, numCaModes); % below A
-            % H is empty for first and last mode
-            % compute B * H(:, :,  i) for all modes (except first and last)
-            % in one shot
-            this.augA(1:dimX, end - this.dimEta + 1:end, 2:sequenceLength) = mtimesx(B, H(:, :, 2:sequenceLength));
-            % B_tilde in the paper
-            this.augB = repmat([zeros(this.dimAugState - size(G, 1), size(G, 2)); G], 1, 1, numCaModes);
-            % augB is only different for first mode (multiply B by J)
-            % B*J is zero for all modes but first
-            %
-            this.augB(1:dimX, :, 1) = B * J; 
+            if maxMeasDelay > 0
+                % A_tilde in the paper
+                this.augA = repmat(blkdiag(A, diag(ones(dimX * (maxMeasDelay - 1), 1), -dimX), F), 1, 1, numCaModes);
+                this.augA(dimX + 1:dimX * 2, 1:dimX, :) = repmat(D, 1, 1, numCaModes); % below A
+
+                % H is empty for first and last mode
+                % compute B * H(:, :,  i) for all modes (except first and last)
+                % in one shot
+                this.augA(1:dimX, end - this.dimEta + 1:end, 2:sequenceLength) = mtimesx(B, H(:, :, 2:sequenceLength));
+                % B_tilde in the paper
+                this.augB = repmat([zeros(this.dimAugState - size(G, 1), size(G, 2)); G], 1, 1, numCaModes);
+                % augB is only different for first mode (multiply B by J)
+                % B*J is zero for all modes but first
+                %
+                this.augB(1:dimX, :, 1) = B * J;
+            else
+                % corner case: max measurement delay = 0
+                [~,~,~,~,this.augA, this.augB] = Utility.createAugmentedPlantModel(sequenceLength, A, B);
+            end
 
             this.initAugmentedCostMatrices(numCaModes, H, A, B);
-            this.initControllerGains();
-            this.modeSc = 0;   % no measurements available initially
-          
+
             this.setControllerPlantStateInternal(x0(:), x0Cov);
-        end             
+            
+            this.transitionMatrixCaHistory = repmat(this.transitionMatrixCa, 1, 1, this.maxMeasurementDelay);
+            
+            % measurement availability is the second mode of the system
+            % gamma_k+j|k-i = 1: measurement y_{k-i} can be processed at time k+j (i.e., it arrives at time k+j, thus has a delay of j+i time steps)
+            % y_k+j|k-i = 0: measurement y_{k-i} cannot be processed at time k+j (i.e., it has already been processed, and therefore arrived at a previous time, or is simply not yet available)
+            % -> delay of y_{k-i} is not i+j time steps
+            % so two possible states per relevant measurement, in total
+            % 2^M+1, with M the maxMeasurement delay to be maintained at
+            % time k: gamma_k|k, gamma_k|k-1, ..., gamma_k|k-M
+            this.measAvailabilityStates = de2bi([0:2^this.measBufferLength-1]);
+            
+            % fix the number of elements of the delay probs: M+2
+            normalizedScDelayProbs = Utility.normalizeProbabilities(Utility.truncateDiscreteProbabilityDistribution(scDelayProb, maxMeasDelay + 2), ...
+                RecedingHorizonUdpLikeController.probBoundDelaysSc);
+            this.scDelayTransitionMatrix = repmat(reshape(normalizedScDelayProbs, 1, []), numel(normalizedScDelayProbs), 1);
+            this.transitionMatrixScHistory = repmat(this.scDelayTransitionMatrix, 1, 1, this.maxMeasurementDelay);
+            
+            % extract the corresponding indices
+            allIdx = 1:2^this.measBufferLength;
+            this.measAvailabilityIdx = cell(this.measBufferLength, 2^this.measBufferLength);
+            k = 1;
+            for j=1:this.measBufferLength
+                zeroIdx = [];
+                for i=1:2^(k-1)        
+                    zeroIdx = [zeroIdx, i:2^k:2^this.measBufferLength];
+                end
+                k = k + 1;
+                [this.measAvailabilityIdx{j,zeroIdx}] = deal([1:j-1, j+1:numel(normalizedScDelayProbs)]);
+                [this.measAvailabilityIdx{j, setdiff(allIdx, zeroIdx)}] = deal(j);
+            end           
+            % initial guess: we don't know anything about the measurement delays
+            this.measDelayProbs = zeros(numel(normalizedScDelayProbs), this.measBufferLength) + 1/numel(normalizedScDelayProbs);
+
+            this.initAugmentedMeasMatrices(C);
+            this.initControllerGains();
+        end
         
         %% setInitialControllerGains
-        function setInitialControllerGains(this, initialM, initialK, initialL)
-            % Set the controller gains M, K, and L to be
-            % employed at the beginning of the time of operation.
+        function setInitialControllerGains(this, initialK, initialL)
+            % Set the controller gains K and L to be employed at the beginning of the time of operation.
             %
             % This function is intended to be used to set initial first
             % guess gains that serve as starting point for the first
             % optimization, or for testing purposes.
             %
             % Parameters:
-            %   >> initialM (3D matrix)
-            %      N initial gains M_0, M_1, ... M_{N-1} slice-wise arranged, where N is the optimization horizon.
-            %
             %   >> initialK (3D matrix)
             %      N initial gains K_0, K_1, ... K_{N-1} slice-wise arranged, where N is the optimization horizon.
             %
             %   >> initialL (3D matrix)
             %      N initial gains L_0, L_1, ... L_{N-1} slice-wise arranged, where N is the optimization horizon.
             
-            assert(Checks.isMat3D(initialM, this.dimAugState, this.dimAugState, this.horizonLength), ...
-                'RecedingHorizonUdpLikeController:SetInitialControllerGains:InvalidM', ...
-                '** <initialM> must be a 3D matrix of dimension %d-by-%d-by-%d **', ...
-                this.dimAugState, this.dimAugState, this.horizonLength); 
             assert(Checks.isMat3D(initialK, this.dimAugState, this.dimAugmentedMeas, this.horizonLength), ...
                 'RecedingHorizonUdpLikeController:SetInitialControllerGains:InvalidK', ...
                 '** <initialK> must be a 3D matrix of dimension %d-by-%d-by-%d **', ...
@@ -308,11 +353,76 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 '** <initialL> must be a 3D matrix of dimension %d-by-%d-by-%d **', ...
                 this.dimPlantInput * this.sequenceLength, this.dimAugState, this.horizonLength); 
             
-            this.M = initialM;
             this.K = initialK;
             this.L = initialL;
         end
-                      
+        
+        %% changeCaDelayProbs
+        function changeCaDelayProbs(this, newCaDelayProbs)
+            % Change the distribution of the control packet delays to be
+            % assumed by the controller during optimization.
+            %
+            % Parameters:
+            %  >> newCaDelayProbs (Nonnegative vector)
+            %     Vector specifiying the new delay distribution.
+            %
+            newMat = Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
+            if ~isequal(newMat, this.transitionMatrixCa)
+                this.transitionMatrixCa = newMat;               
+            end            
+        end
+        
+        %% changeScDelayProbs
+        function changeScDelayProbs(this, newScDelayProbs)
+            % Change the distribution of the measurement packet delays to be
+            % assumed by the controller during optimization.
+            %
+            % Parameters:
+            %  >> newScDelayProbs (Nonnegative vector)
+            %     Vector specifiying the new delay distribution.
+            %
+            
+            % we must truncate the distribution so that the number of
+            % element is conformable, then normalize             
+            normalizedScDelayProbs = Utility.normalizeProbabilities(...
+                Utility.truncateDiscreteProbabilityDistribution(newScDelayProbs, size(this.scDelayTransitionMatrix, 1)), ...
+                RecedingHorizonUdpLikeController.probBoundDelaysSc);
+            newMat = repmat(reshape(normalizedScDelayProbs, 1, []), numel(normalizedScDelayProbs), 1);            
+            if ~isequal(newMat, this.scDelayTransitionMatrix)
+                this.scDelayTransitionMatrix = newMat;
+            end            
+        end
+        
+        %% changeModelParameters
+        function changeModelParameters(this, newA, newB, newW)
+            Validator.validateSystemMatrix(newA, this.dimPlantState);
+            Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);
+            Validator.validateSysNoiseCovarianceMatrix(newW, this.dimPlantState);
+            
+            % and the augmented plant noise cov changes
+            this.augW(1:this.dimPlantState, 1:this.dimPlantState) = newW;           
+            
+            [~, ~, H, J] = Utility.createActuatorMatrices(this.sequenceLength, this.dimPlantInput);
+            
+            % A_tilde in the paper: update the A portion of A_tilde
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1) = newA;
+            for i=2:this.sequenceLength
+                this.augA(1:this.dimPlantState, 1:this.dimPlantState, i) = newA;
+                % update B*H for all but first and last mode
+                % H is empty for first and last mode
+                this.augA(1:this.dimPlantState, end-this.dimEta +1:end, i) = newB * H(:, :, i);
+            end
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, this.sequenceLength + 1) = newA;            
+            % augB is only different for first mode (multiply B by J)
+            % B*J is zero for all modes but first
+            %
+            this.augB(1:this.dimPlantState, :, 1) = newB * J(:, :, 1); 
+            % terminal state weighting Q_K has to be adapted,
+            % dynamics-dependent
+            this.computeAndSetTerminalAugQ(newA, newB);
+        end
+        
         %% setControllerPlantState
         function setControllerPlantState(this, state)
             % Set the estimate of the plant state.
@@ -364,74 +474,92 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 this.checkMeasurementsAndDelays(measurements, measurementDelays);
                 [applicableMeas, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
             end
-            if nargin < 4 || isempty(modeMeas)
-                mostRecentMode = [];
-            else
+            mostRecentMode = [];
+            if nargin >= 4 && ~isempty(modeMeas)
                 this.checkModeMeasurementsAndDelays(modeMeas, modeDelays);
                 % find the mode observation with smallest delay
                 % get the ca mode + corresponding delay
                 [modeDelay, idx] = min(modeDelays);
-                mostRecentMode = modeMeas(idx);                 
-            end           
-            
-            % we stack the available measurements
-            % and we infer the SC mode 
-            
-            % convert current sc mode into base3 number
-            measurementModes = mod(floor(this.modeSc ./ 3 .^ [0:this.measBufferLength-1]), 3);
-            % now shift the whole vector and replace 1 with 2
-            % because they have been processed in the last time step
-            newMode = [0 measurementModes(1:end-1)];
-            newMode(newMode == 1) = 2;
-            % construct the augmented measurement, absence of measurement = 0
-            augmentedMeas = zeros(this.dimAugmentedMeas, 1);
-            if ~isempty(applicableMeas)
-                for idx=1:numel(applicableDelays)
-                    delay = applicableDelays(idx);
-                    newMode(delay+1) = 1;
-                    augmentedMeas(delay * this.dimMeas + 1:(delay + 1) * this.dimMeas) = applicableMeas(:, idx); 
+                if modeDelay <= this.maxMeasurementDelay
+                    mostRecentMode = modeMeas(idx);
                 end
             end
-
-            this.modeSc = sum(3 .^ [0:this.measBufferLength - 1] .* newMode); % new mode, as decimal number
-            modeProbSc = [zeros(this.modeSc,1); 1; zeros(3 ^ this.measBufferLength - this.modeSc - 1, 1)];
-            Se = this.computeExpectedMeasAvailabilityMatrices(modeProbSc);   
-
-            % integrate the mode observation to update the ca mode, if
+            
+            % we stack the available measurements 
+            % construct the augmented measurement, absence of measurement = 0 w.l.o.g.
+            augmentedMeas = zeros(this.dimAugmentedMeas, 1);
+            newMeasMode = zeros(1, this.measBufferLength); % row vector (gamma_k)
+            for j=this.maxMeasurementDelay:-1:0
+                % check if measurement y_{k-j} is available
+                [avail, idx]= ismember(j, applicableDelays);
+                if avail
+                    % measurement is available for processing, it arrived
+                    % at time k, so delay is j
+                    augmentedMeas(j * this.dimMeas + 1:(j + 1) * this.dimMeas) = applicableMeas(:, idx);
+                    % update the corresponding delay prob (1 at position j+1, zero elsewhere)
+                    this.measDelayProbs(1:j, j+1) = 0;
+                    this.measDelayProbs(j+1 , j+1) = 1;
+                    this.measDelayProbs(j+2:end, j +1) = 0;
+                    newMeasMode(j + 1) = 1; % indicate availability
+                elseif ~any(this.measDelayProbs(1:j, j+1) == 1)
+                    % measurement has not arrived, so (1) its delay must be > j
+                    % or (2) it has already arrived in a previous time step
+                    % in the latter case (2), the delay probs are already a
+                    % unit vector with one at position 1<= i <=j+1
+                    % only in the former case (1) we can update the delay probs
+                    this.measDelayProbs(1:j+1, j+1) = 0;
+                    % and normalize (implying that we divide by Pr[delay > j])
+                    this.measDelayProbs(:, j+1) = this.measDelayProbs(:, j+1) ./ sum(this.measDelayProbs(:, j+1));
+                end
+                % this also affects the next state, so we can update our delay estimates
+                if j~=0
+                   this.measDelayProbs(:, j) = this.transitionMatrixScHistory(:, :, j)' * this.measDelayProbs(:, j+1);
+                end
+            end           
+            
+            Se = this.computeExpectedMeasAvailabilityMatrices(newMeasMode);
+            % integrate the mode observation to update the ca mode theta_k, if
             % present
-            if ~isempty(mostRecentMode) && modeDelay < this.lastModeObservationDelay
-                %mostRecentModeProb = [zeros(mostRecentMode - 1, 1); 1; zeros(numCaModes - mostRecentMode, 1)]; 
-                %this.modeCa = (this.transitionMatrixCa ^ modeDelay)' * mostRecentModeProb;
+            if ~isempty(mostRecentMode) && modeDelay < this.lastModeObservationDelay                
                 % simply extract the corresponding row as mode
                 % probabilities are unit vector
-                probMat = this.transitionMatrixCa ^ modeDelay;
+                probMat = eye(this.sequenceLength + 1);
+                for j=modeDelay:-1:1
+                    probMat = probMat * this.transitionMatrixCaHistory(:, :, j); 
+                end                
                 this.modeCa = probMat(mostRecentMode, :)';                
                 this.lastModeObservationDelay = modeDelay;
             end
             
             numCaModes = this.sequenceLength + 1;
-            % predict the ca mode probs
-            modeProbsCa = zeros(numCaModes, this.horizonLength + 1);
-            modeProbsCa(:, 1) = this.modeCa;
             
-            % initialization      
-            for k = 1:this.horizonLength                
-                % compute the ca mode probs
-                modeProbsCa(:, k + 1) = this.transitionMatrixCa' * modeProbsCa(:, k);
-            end
-     
             if this.useMexImplementation
-                [this.K, this.L, this.M, iternum] ...
+                [this.K, this.L, iternum] ...
                     = mex_RecedingHorizonUdpLikeController(this.augA, this.augB, this.augQ, this.transitionMatrixCa, ...
-                        this.augW, this.augV, this.augmentedMeasMatrix, Se, this.JRJ, this.K, this.L, this.M, ...
-                        this.augStateCov, this.augStateSecondMoment, this.terminalAugQ, modeProbsCa, this.maxNumIterations);
-            else                
+                        this.augW, this.augV, this.augmentedMeasMatrix, Se, this.JRJ, this.K, this.L, ...
+                        this.augStateCov, this.augStateSecondMoment, this.terminalAugQ, this.modeCa, this.maxNumIterations);
+                Aexp =  sum(reshape(this.modeCa, 1, 1, numCaModes) .* this.augA, 3);
+                Bexp =  sum(reshape(this.modeCa, 1, 1, numCaModes) .* this.augB, 3);
+            else
+                % predict the ca mode probs over the horizon from theta_k to theta_{k+K}
+                modeProbsCa = zeros(numCaModes, this.horizonLength + 1);
+                modeProbsCa(:, 1) = this.modeCa; %theta_k
+                Aexp = zeros(this.dimAugState, this.dimAugState, this.horizonLength);
+                Bexp = zeros(this.dimAugState, this.dimPlantInput * this.sequenceLength, this.horizonLength);
+                % initialization
+                for j = 1:this.horizonLength
+                    Aexp(:, :, j) = sum(reshape(modeProbsCa(:, j), 1, 1, numCaModes) .* this.augA, 3); % Ahat_{k+j}
+                    Bexp(:, :, j) = sum(reshape(modeProbsCa(:, j), 1, 1, numCaModes) .* this.augB, 3); % Bhat_{k+j}
+                    % predict the ca mode probs
+                    modeProbsCa(:, j + 1) = this.transitionMatrixCa' * modeProbsCa(:, j); %theta_{k+j}
+                end
+
                 oldCostsToGo = inf(1, this.horizonLength);
                 oldCosts = inf;
-                iternum = 1;
+                iternum = 0;
                 while (iternum < this.maxNumIterations)
                     % forward pass: obtain the second moments for the given sequence of controller gains
-                    [Xu, Xl] = this.predictXHorizon(modeProbsCa, Se);
+                    [Xu, Xl] = this.predictXHorizon(modeProbsCa, Se, Aexp, Bexp);
 
                     Pu = repmat(this.terminalAugQ, 1, 1, numCaModes);
                     Pl = zeros(this.dimAugState, this.dimAugState, numCaModes);                
@@ -439,17 +567,16 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
 
                     % backward pass to compute the gains
                     for k=this.horizonLength:-1:1                         
-                        % compute the gain for the current k
-                        [tempM, tempK, tempL, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
-                            Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
-
-                        [tempPu, tempPl, tempOmega] = this.computeCostate(currPu_epsilon, currPl_epsilon, omega, tempL, tempM, tempK, Se(:, :, k));
+                        % compute the gains (K_k,L_k) for the current k
+                        [tempK, tempL, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
+                            Pu, Pl, modeProbsCa(:, k), Se(:, :, k), Aexp(:, :, k), Bexp(:, :, k));
+                        
+                        [tempPu, tempPl, tempOmega] = this.computeCostate(currPu_epsilon, currPl_epsilon, omega, tempL, tempK, Se(:, :, k), Aexp(:, :, k), Bexp(:, :, k));
                         Xsum = squeeze(Xl(:, :, k, :) + Xu(:, :, k, :));
                         costsToGo = dot(tempOmega, modeProbsCa(:, k)) + trace(sum(mtimesx(tempPu, Xsum) + mtimesx(tempPl, squeeze(Xu(:, :, k, :))), 3));
-
-                        if costsToGo < oldCostsToGo(k)                       
+                                                
+                        if costsToGo < oldCostsToGo(k)
                             oldCostsToGo(k) = costsToGo;
-                            this.M(:, :, k) = tempM;
                             this.L(:, :, k) = tempL;
                             this.K(:, :, k) = tempK;
                             Pu = tempPu;
@@ -458,48 +585,57 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                         else            
                             % recompute the costate with the old gain
                             [Pu, Pl, omega] = ...
-                                this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L(:, :, k), this.M(:, :, k), this.K(:, :, k), Se(:, :, k));
+                                this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L(:, :, k), this.K(:, :, k), Se(:, :, k), Aexp(:, :, k), Bexp(:, :, k));
                         end
-    %                     % compute the gain for the current k
-    %                     [this.M{k}, this.K{k}, this.L{k}, currPu_epsilon, currPl_epsilon] = this.computeGains(squeeze(Xu(:, :, k, :)), squeeze(Xl(:, :, k, :)), ...
-    %                         Pu, Pl, modeProbsCa(:, k), Se(:, :, k));
-    % 
-    %                     % update the costate using the computed gains
-    %                     [Pu, Pl, omega] = ...
-    %                         this.computeCostate(currPu_epsilon, currPl_epsilon, omega, this.L{k}, this.M{k}, this.K{k}, Se(:, :, k));
                     end
                     % the total costs are the costs-to-go/stage costs for the
                     % first time step
                     costs = oldCostsToGo(1);
-
-                    if abs(oldCosts - costs) < RecedingHorizonUdpLikeController.convergenceDiff
-                        %fprintf('Converged after %d iterations, current costs (bound): %f\n', iternum, costs);
-                        break;
-                    else
-                        oldCosts = costs;
+%                     if abs(oldCosts - costs) < RecedingHorizonUdpLikeController.convergenceDiff
+%                         %fprintf('Converged after %d iterations, current costs (bound): %f\n', iternum, costs);                        
+%                         break;
+%                     else
+%                         oldCosts = costs;
                         iternum = iternum + 1;
-                    end                
+%                     end                
                 end
             end
-            inputSequence = this.doControlSequenceComputation();
-            % update the controller state (k+1)
-            this.augState = this.M(:, :, 1) * this.augState + this.K(:, :, 1) * augmentedMeas;
+            
+            inputSequence = this.doControlSequenceComputation();            
+            innovation = augmentedMeas - Se(:, :, 1) * this.augmentedMeasMatrix * this.augState;
+                        
+            % update the controller state (k+1)            
+            this.augState = Aexp(:, :, 1) * this.augState + Bexp(:, :, 1) * inputSequence + this.K(:, :, 1) * innovation;            
+            
             % also update the required moments
-            this.updateControllerMoments(Se(:, :, 1));
+            this.updateControllerMoments(Se(:, :, 1), Aexp(:, :, 1), Bexp(:, :, 1));
             % also predict the ca mode
             this.modeCa = this.transitionMatrixCa' * this.modeCa;
             this.lastModeObservationDelay = this.lastModeObservationDelay + 1;
-            
+            this.transitionMatrixCaHistory  = cat(3, this.transitionMatrixCa, ...
+                this.transitionMatrixCaHistory(:, :, 1:end-1));
+
+            % we also have to update the measurement delay probs
+            % predict the meas delay probs (k+1)            
+            if this.measBufferLength == 1
+                % corner case
+                this.measDelayProbs = this.scDelayTransitionMatrix' * this.measDelayProbs;
+            else
+                this.measDelayProbs = circshift(this.measDelayProbs, 1, 2);
+                this.measDelayProbs(:, 1) = this.scDelayTransitionMatrix' * this.measDelayProbs(:, 2);
+            end
+
+            this.transitionMatrixScHistory = cat(3, this.scDelayTransitionMatrix, ...
+                this.transitionMatrixScHistory(:, :, 1:end-1));
+
             this.lastNumIterations = iternum;
             
-%             % shift the current gains
-% %             celldisp(this.M)
-%             this.M = circshift(this.M, -1, 2);
-% %             celldisp(this.M)
-%             this.L = circshift(this.L, -1, 2);
-%             this.K = circshift(this.K, -1, 2);
-%             
-%             % and fill with a random matrix
+            % shift the current gains
+%             this.M = circshift(this.M, -1, 3);
+%             this.L = circshift(this.L, -1, 3);
+%             this.K = circshift(this.K, -1, 3);
+            
+            % and fill with a random matrix
 %             this.M(:, :, end) = rand(this.dimAugState)-.5;
 %             this.K(:, :, end) = rand(this.dimAugState,this.dimAugmentedMeas)-.5;
 %             this.L(:, :, end) = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState)-.5;
@@ -539,31 +675,31 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
         %% initControllerGains
         function initControllerGains(this)
             % simple initialization procedure: pick initial gains randomly    
-            this.M = rand(this.dimAugState, this.dimAugState, this.horizonLength) - 0.5;
-            this.K = rand(this.dimAugState, this.dimAugmentedMeas, this.horizonLength) - 0.5;
-            this.L = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState, this.horizonLength) - 0.5;             
+            this.K = rand(this.dimAugState, this.dimAugmentedMeas, this.horizonLength);
+            this.L = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState, this.horizonLength);            
         end
         
+        
         %% initAugmentedMeasMatrices
-        function initAugmentedMeasMatrices(this, modesScBase3, numModesSc, modesScDecimal, C)
+        function initAugmentedMeasMatrices(this, C)
             if this.useMexImplementation                
                 [this.S, this.augmentedMeasMatrix] = ...
-                    mex_RecedingHorizonUdpLikeControllerMeasMatrices(modesScBase3, this.measBufferLength, C, this.dimEta);
+                    mex_RecedingHorizonUdpLikeControllerMeasMatrices(this.measAvailabilityStates, C, this.dimEta);                
             else
                 % now the augmented meas matrix (sparse)
                 this.augmentedMeasMatrix = [kron(speye(this.measBufferLength), C) zeros(this.dimAugmentedMeas, this.dimEta)];
+                
                 % now compute the S matrices, per mode
-                this.S = zeros(this.measBufferLength * this.dimMeas, ...
-                    this.measBufferLength * this.dimMeas, numModesSc);
-
-                 for j=modesScDecimal
+                this.S = zeros(this.dimAugmentedMeas,this.dimAugmentedMeas, 2^this.measBufferLength);
+         
+                for j=1:size(this.measAvailabilityStates, 1)
                     % only if measurement mode is 1 it is available for the
                     % controller
-                    avail = modesScBase3(j+1, :) == 1;
-                    this.S(:, :, j+1) = kron(diag(avail), speye(this.dimMeas));
-                 end
+                    avail = this.measAvailabilityStates(j, :) == 1;
+                    this.S(:, :, j) = kron(diag(avail), speye(this.dimMeas));                    
+                end
             end
-        end
+        end       
         
         %% initAugmentedCostMatrices        
         function initAugmentedCostMatrices(this, numCaModes, H, A, B)
@@ -596,175 +732,107 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 this.augQ(idx:this.dimAugState, idx:this.dimAugState, i) ...
                     = H(:, :, i)' * this.R * H(:, :, i); % H_tilde in the paper
             end
-        end
-        
-        %% computeAndSetScTransitionMatrix
-        function computeAndSetScTransitionMatrix(this, scDelayProb, modesScBase3, modesScDecimal)
-            
-            elementCount = numel(scDelayProb);
-            if elementCount <= this.measBufferLength
-                % fill up with zeros (row vector)
-                trueScDelayProbs = [reshape(scDelayProb, 1, elementCount), zeros(1, this.measBufferLength + 1 - elementCount)];
-            else                
-                trueScDelayProbs = scDelayProb;
-            end
-            
-            % ensure that the distribution is normalized to avoid NaNs
-            idx = find(trueScDelayProbs <= 1e-15);
-            normalizedProbs = trueScDelayProbs;
-            if ~isempty(idx)
-                normalizedProbs(idx) = 1e-15;
-                normalizedProbs = normalizedProbs / sum(normalizedProbs); 
-            end
-            
-            if this.useMexImplementation
-                this.transitionMatrixSc_part = sparse(mex_RecedingHorizonUdpLikeControllerTransitionMatrix(modesScBase3, this.measBufferLength, normalizedProbs));
-            else
-                maxMeasDelay = this.measBufferLength - 1;
-                % compute the individual transition matrices for i={0, M}
-                measStateTransitionMatrices = repmat([0 0 0; 0 0 1; 0 0 1], 1, 1, this.measBufferLength);            
-                sums = cumsum(normalizedProbs);
-                a_i = normalizedProbs(2:maxMeasDelay+2) ./ (1 -sums(1:this.measBufferLength));
-                measStateTransitionMatrices(1, 1, :) = 1 - a_i;
-                measStateTransitionMatrices(1, 2, :) = a_i;            
-
-                % only store the first third of the large matrix
-                this.transitionMatrixSc_part = sparse(3 ^ maxMeasDelay, 3 ^ this.measBufferLength);
-                for i=0:3 ^ maxMeasDelay-1
-                    i_idx = modesScBase3(i+1, :); % old mode
-                    for j=modesScDecimal
-                        j_idx = modesScBase3(j+1, :); % new mode
-                        prob= 0;
-                        switch j_idx(1)
-                            case 0
-                                prob = 1-normalizedProbs(1);
-                            case 1
-                                prob = normalizedProbs(1);
-                            otherwise
-                                continue                   
-                        end
-                        for a=1:maxMeasDelay                        
-                            prob = prob * measStateTransitionMatrices(i_idx(a)+1, j_idx(a+1)+1, a);
-                        end
-                        this.transitionMatrixSc_part(i+1,j+1) = prob;                    
-                    end          
-                end  
-            end
-%             Z = full([this.transitionMatrixSc_part; this.transitionMatrixSc_part; this.transitionMatrixSc_part])
-% %             sum(Z, 2)
-% %             %v = [1-trueScDelayProbs(1) trueScDelayProbs(1) 0; 0 0 1; 0 0 1];
-%             v = repmat([1-trueScDelayProbs(1) trueScDelayProbs(1) 0]', 1, 3)
-% %             %Z2 = kron(v', kron(measStateTransitionMatrices(:, :, 1), measStateTransitionMatrices(:, :, 2)))
-%               Z2 = kron(v', kron(measStateTransitionMatrices(:, :, 1), measStateTransitionMatrices(:, :, 2)))
-%               cell2mat(arrayfun(@(i) ismember(Z(:, i), Z2), 1:27, 'UniformOutput', false))
-%             size(Z2)
-%             sum(Z2, 2)
-        end
+        end  
         
         %% computeExpectedMeasAvailabilityMatrices
-        function Se = computeExpectedMeasAvailabilityMatrices(this, currentModeSc)
-            numCombinations = 3 ^ (this.measBufferLength);
-       
-            modeProbs = currentModeSc;
-            part = numCombinations / 3;
-            Se = zeros(this.measBufferLength * this.dimMeas, ...
-                this.measBufferLength * this.dimMeas, this.horizonLength);
-            % predict the mode probs
-            for j=1:this.horizonLength % new mode
-                Se(:, :, j) = sum(reshape(modeProbs, 1, 1, []) .* this.S, 3);
-                
-                modeProbs = this.transitionMatrixSc_part' ...
-                    * (modeProbs(1:part) + modeProbs(part + 1:2 * part) ...
-                    + modeProbs(2 * part+1:numCombinations));
+        function Se = computeExpectedMeasAvailabilityMatrices(this, currentMeasAvailability)            
+            % at the current time k, we know the availability of the measurements
+            % simply check which measurements are available
+            Se = cat(3, this.S(:, :, bi2de(currentMeasAvailability) + 1), ...
+                zeros(this.dimAugmentedMeas, this.dimAugmentedMeas, this.horizonLength -1));
+            
+            predMeasDelayProbs = this.measDelayProbs; % at time k, last column is delay probs for y_k-M
+            for k=1:this.horizonLength-1
+                % predict the meas delay probs (k+1)
+                predMeasDelayProbs(:, end) = this.scDelayTransitionMatrix' * predMeasDelayProbs(:, 1); % delay probs for time k+1
+                predMeasDelayProbs = circshift(predMeasDelayProbs, 1, 2);
+                %predMeasDelayProbs(:, 1) = this.scDelayTransitionMatrix' * predMeasDelayProbs(:, 2);
+                % now we can predict the measurement availability at time k+1
+                availProbs = this.computeMeasAvailabilityProbs(predMeasDelayProbs(:, end));                
+                Se(:, :, k+1) = sum(reshape(availProbs, 1, 1, []) .* this.S, 3);
             end
         end
         
         %% computeGains
-        function [M, K, L, Pu_epsilon, Pl_epsilon] = computeGains(this, currXu, currXl, currPu, currPl, currModeProbs, currSe)            
-            dimU = this.dimPlantInput;
- 
+        function [K, L, Pu_epsilon, Pl_epsilon] = computeGains(this, currXu, currXl, currPu, currPl, ...
+                currModeProbs, currSe, currAexp, currBexp)
+                                    
             numCaModes = this.sequenceLength + 1;  
-            SC = currSe * this.augmentedMeasMatrix;        
-            noisePartV = reshape(currModeProbs, 1,1, numCaModes) .* this.augV;
-            Xsums = currXu + currXl;     
+            CS = (currSe * this.augmentedMeasMatrix)'; %SC'
+            noisePartV = reshape(currModeProbs, 1,1, numCaModes) .* this.augV;            
             
             % compute the required matrices (they are large, due to kron)
             % initialize with first mode
             Pu_epsilon = cat(3, sum(reshape(this.transitionMatrixCa(1, :), 1, 1, []) .* currPu, 3), ...
                                 zeros(this.dimAugState, this.dimAugState, numCaModes -1));
             Pl_epsilon = cat(3, sum(reshape(this.transitionMatrixCa(1, :), 1, 1, []) .* currPl, 3), ...
-                                zeros(this.dimAugState, this.dimAugState, numCaModes -1));    
+                                zeros(this.dimAugState, this.dimAugState, numCaModes -1));   
             
             currPu_epsilon = Pu_epsilon(:, :, 1);
             currPl_epsilon = Pl_epsilon(:, :, 1);
             
-            Psum = currPu_epsilon + currPl_epsilon;
-
-            Pl_epsilonB = currPl_epsilon * this.augB(:, :, 1);             
-            
-            SCXl = mtimesx(SC, currXl); % computes SC * curr(:, :, i) in one shot for all i
-                      
+            % quadratic in K
             Psi = kron(currSe * (noisePartV(:, :, 1) ...
-                + this.augmentedMeasMatrix * Xsums(:, :, 1) * this.augmentedMeasMatrix') * currSe', currPl_epsilon);
-            Lambda = kron(currXl(:, :, 1), currPl_epsilon);                
-            Phi = kron(currXl(:, :, 1), this.augB(:, :,1)' * Psum * this.augB(:, :,1) + this.JRJ);    
-            Ypsilon = kron(SCXl(:, :, 1), Pl_epsilonB);                
-            Sigma = kron(currXl(:, :, 1), Pl_epsilonB');                
-            Pi = kron(SCXl(:, :, 1), currPl_epsilon);             
+                + this.augmentedMeasMatrix * currXu(:, :, 1) * this.augmentedMeasMatrix') * currSe', currPl_epsilon);
+            % quadratic in L
+            part = this.JRJ + this.augB(:, :, 1)' * (currPu_epsilon)* this.augB(:, :, 1) ...
+                + (this.augB(:, :, 1)-currBexp)' * currPl_epsilon * (this.augB(:, :, 1)-currBexp);
+            Phi = kron(currXl(:, :, 1), part);            
+                      
+            % linear in vec(k)
+            % negative!
+            rho = currPl_epsilon * this.augA(:, :, 1) * currXu(:, :, 1) * CS;
             
-            for i=2:numCaModes                
+            % linear in vec (L)
+            gamma = (this.augB(:, :, 1)' * currPu_epsilon * this.augA(:, :, 1) ...
+                + (this.augB(:, :, 1) - currBexp)' * currPl_epsilon * (this.augA(:, :, 1) - currAexp)) ...
+                * currXl(:, :, 1);
+            
+            for i=2:numCaModes                                
                 currPu_epsilon = sum(reshape(this.transitionMatrixCa(i, :), 1, 1, []) .* currPu, 3); 
                 currPl_epsilon = sum(reshape(this.transitionMatrixCa(i, :), 1, 1, []) .* currPl, 3); 
-                
-                Psum = currPu_epsilon + currPl_epsilon;                  
-                Pl_epsilonB = currPl_epsilon * this.augB(:, :, i);              
+                                
+                Pu_epsilon(:, :, i) = currPu_epsilon;
+                Pl_epsilon(:, :, i) = currPl_epsilon;                         
           
                 Psi = Psi + kron(currSe * (noisePartV(:, :, i) ...
-                    + this.augmentedMeasMatrix * Xsums(:, :, i) * this.augmentedMeasMatrix') * currSe', currPl_epsilon);
+                    + this.augmentedMeasMatrix * currXu(:, :, i) * this.augmentedMeasMatrix') * currSe', currPl_epsilon);
                 
-                Lambda = Lambda + kron(currXl(:, :, i), currPl_epsilon);
+                part = this.augB(:, :, i)' * (currPu_epsilon)* this.augB(:, :, i) ...
+                    + (this.augB(:, :, i)-currBexp)' * currPl_epsilon * (this.augB(:, :, i)-currBexp);
+                Phi = Phi + kron(currXl(:, :, i), part);               
+                
+                rho = rho + currPl_epsilon * this.augA(:, :, i) * currXu(:, :, i) * CS;
+                                
+                gamma = gamma + (this.augB(:, :, i)' * currPu_epsilon * this.augA(:, :, i) ...
+                    + (this.augB(:, :, i) - currBexp)' * currPl_epsilon * (this.augA(:, :, i) - currAexp)) ...
+                    * currXl(:, :, i);
+            end            
+            % K, L  
+            K = reshape(lsqminnorm(Psi, rho(:)), this.dimAugState, this.dimAugmentedMeas);
+            L = reshape(lsqminnorm(Phi, -gamma(:)), this.dimPlantInput * this.sequenceLength, this.dimAugState);
 
-                Phi = Phi + kron(currXl(:, :, i), this.augB(:, :,i)' * Psum * this.augB(:, :,i));
-
-                Ypsilon = Ypsilon + kron(SCXl(:, :, i), Pl_epsilonB);
-                
-                Sigma = Sigma + kron(currXl(:, :, i), Pl_epsilonB');
-                
-                Pi = Pi + kron(SCXl(:, :, i), currPl_epsilon);
-                
-                Pu_epsilon(:, :, i) = currPu_epsilon;
-                Pl_epsilon(:, :, i) = currPl_epsilon;
-            end
-            
-            % now come the vectors
-            Pl_epsilonA = mtimesx(Pl_epsilon, this.augA);
-            rho = sum(mtimesx(mtimesx(Pl_epsilonA, Xsums), SC, 'T'), 3);
-            phi = sum(mtimesx(Pl_epsilonA, currXl), 3);
-            gamma = sum(mtimesx(mtimesx(mtimesx(this.augB, 'T', Pl_epsilon + Pu_epsilon), this.augA), currXl), 3);
-             
-            % now solve the system of equations
-            A = [Psi -Ypsilon Pi; -Ypsilon' Phi -Sigma; Pi' -Sigma' Lambda];
-            A = (A + A') / 2; % ensure that A is symmetric (positive semidefiniteness can be lost due to numerical issues)
-            gains = -pinv(A) * [-rho(:); gamma(:); -phi(:)];
-            % maybe replace pinv by lsqminnorm
-            % and extract the gain matrices
-            startIdx = 1;
-            endIdx = this.dimAugState * this.dimAugmentedMeas;
-            K = reshape(gains(startIdx:endIdx), this.dimAugState, this.dimAugmentedMeas);
-           
-            startIdx = endIdx + 1;
-            endIdx = endIdx + (dimU * this.sequenceLength * this.dimAugState);
-            L = reshape(gains(startIdx:endIdx), dimU * this.sequenceLength, this.dimAugState);
-           
-            startIdx = endIdx + 1;
-            M = reshape(gains(startIdx:end), this.dimAugState, this.dimAugState);
+%             A = blkdiag(Psi, Phi);
+%             
+%             %mine = min(eig(A))
+%             b = [-rho(:); gamma(:)];
+%             gains = lsqminnorm(A, -b);
+%             
+%             %ma = max(abs(A * gains + b))
+%             
+%             startIdx = 1;
+%             endIdx = this.dimAugState * this.dimAugmentedMeas;
+%             K = reshape(gains(startIdx:endIdx), this.dimAugState, this.dimAugmentedMeas);
+% 
+%             startIdx = endIdx + 1;
+%             L = reshape(gains(startIdx:end), this.dimPlantInput * this.sequenceLength, this.dimAugState);
         end
-        
+
         %% computeCostate
-        function [Pu, Pl, omega] = computeCostate(this, currPu_epsilon, currPl_epsilon, currOmega, currL, currM, currK, Se)
+        function [Pu, Pl, omega] = computeCostate(this, currPu_epsilon, currPl_epsilon, currOmega, currL, currK, currSe, currAexp, currBexp)
             numCaModes = this.sequenceLength + 1;
 
-            KS = currK * Se;
+            KS = currK * currSe;
             KSC = KS * this.augmentedMeasMatrix;
             KSVSK = KS * this.augV * KS'; %E_tilde in the paper
             
@@ -780,32 +848,26 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
                 + arrayfun(@(i) trace(tmp(:, :, i)), 1:numCaModes);
             
             BL = mtimesx(this.augB, currL); % compute this.augB(:, :, i) * L in one shot for all i
+            AexpBexpL = currAexp + currBexp * currL;            
             ABL = BL + this.augA;
-            MBL = currM-BL;
-            ABLMKSC = ABL - currM - KSC; % D_tilde in the paper
-            
+            diffPart = ABL - AexpBexpL; % for all modes
+            O_tilde = AexpBexpL-BL - KSC; %Aexp+Bexp*L-K*S*C-B(i)*L
+                  
             Pu = this.augQ + mtimesx(mtimesx(ABL, 'T', currPu_epsilon), ABL) ...
-                + mtimesx(mtimesx(ABLMKSC, 'T', currPl_epsilon), ABLMKSC);
+                + mtimesx(mtimesx(diffPart, 'T', currPl_epsilon), diffPart);
             Pu(:, :, 1) =  Pu(:, :, 1) + LJRJL; % additional part for first mode
             
             Pl = mtimesx(mtimesx(BL, 'T', currPu_epsilon), BL) ...
-                + mtimesx(mtimesx(MBL, 'T', currPl_epsilon), MBL);
+                + mtimesx(mtimesx(O_tilde, 'T', currPl_epsilon), O_tilde);
             Pl(:, :, 1) = Pl(:, :, 1) + LJRJL; % additional part for first mode
 
             % ensure symmetry of costate
             Pu = (Pu + permute(Pu, [2 1 3])) / 2;
             Pl = (Pl + permute(Pl, [2 1 3])) / 2;
-        end      
-        
-        %% updateControllerState
-        function updateControllerState(this, augmentedMeas)
-            
-            % update controller state (k+1)
-            this.augState = this.M(:, :, 1) * this.augState + this.K(:, :, 1) * augmentedMeas;
         end
-        
+                
         %% updateControllerMoments
-        function updateControllerMoments(this, Se)
+        function updateControllerMoments(this, Se, Aexp, Bexp)
             numCaModes = this.sequenceLength + 1;
             
             % update the required moments
@@ -818,25 +880,21 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             noise2 = noise1 + reshape(this.modeCa, 1, 1, numCaModes) .* this.augW;
 
             AKSC = this.augA - KSC;
-            MKSC = KSC + this.M(:, :, 1);
-            % computes this.augB(:, :, i) * L in one single shot for
-            % all i
-            AKSCMBL = AKSC + mtimesx(this.augB, this.L(:, :, 1)) - this.M(:, :, 1);
-            
+            AexpBexpL = Aexp + Bexp * this.L(:, :, 1);
+            diffPart = this.augA - Aexp + mtimesx(this.augB - Bexp, this.L(:, :, 1)); % for all modes
+            AABBL_Xl_LBBAA = mtimesx(mtimesx(diffPart, this.augStateSecondMoment), diffPart, 'T');
             AKSC_Xu_CSKA = mtimesx(mtimesx(AKSC, this.augStateCov), AKSC, 'T');
-            AKSCMBL_Xl_LBMCSKA = mtimesx(mtimesx(AKSCMBL, this.augStateSecondMoment), AKSCMBL, 'T');
-            MKSC_Xl_CSKM = mtimesx(mtimesx(MKSC, this.augStateSecondMoment), MKSC, 'T');
-            KSC_Xu_CSK = mtimesx(mtimesx(KSC, this.augStateCov), KSC, 'T');
+                        
+            KSC_Xu_CSK = mtimesx(mtimesx(KSC, this.augStateCov), KSC, 'T');     
+            ABL_Xl_BLA = mtimesx(mtimesx(AexpBexpL, this.augStateSecondMoment), AexpBexpL, 'T');
             
             for j=1:numCaModes % new mode
                 newAugStateCov(:, :, j) = sum(reshape(this.transitionMatrixCa(:, j), 1, 1, numCaModes) ...
-                    .* (AKSC_Xu_CSKA + AKSCMBL_Xl_LBMCSKA + noise2), 3);
+                    .* (AKSC_Xu_CSKA + AABBL_Xl_LBBAA + noise2), 3);
                 
                 newAugStateSecondMoment(:, :, j) = sum(reshape(this.transitionMatrixCa(:, j), 1, 1, numCaModes) ...
-                    .* (MKSC_Xl_CSKM + KSC_Xu_CSK + noise1), 3);
-            end            
-
-%             newAugStateSecondMoment = newAugStateCov + reshape(this.modeCa, 1, 1, numCaModes) .* (this.augState * this.augState');
+                    .* (ABL_Xl_BLA + KSC_Xu_CSK + noise1), 3);
+            end
 
             % ensure symmetry
             this.augStateCov = (newAugStateCov + permute(newAugStateCov, [2 1 3])) / 2;
@@ -844,44 +902,41 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
         end
         
         %% predictXHorizon
-        function [Xu, Xl] = predictXHorizon(this, modeProbsCa, Se)
+        function [Xu, Xl] = predictXHorizon(this, modeProbsCa, Se, Aexp, Bexp)
             numCaModes = this.sequenceLength + 1;
             
             Xu = zeros(this.dimAugState, this.dimAugState, this.horizonLength + 1, numCaModes);
             Xl = zeros(this.dimAugState, this.dimAugState, this.horizonLength + 1, numCaModes);
             
             Xu(:, :, 1, :) = this.augStateCov; 
-            Xl(:, :, 1, :) = this.augStateSecondMoment; 
-                        
+            Xl(:, :, 1, :) = this.augStateSecondMoment;                         
+            
             KS = mtimesx(this.K, Se);
             KSC = mtimesx(KS, this.augmentedMeasMatrix);
             KSVSK = mtimesx(mtimesx(KS, this.augV), KS, 'T'); % E_tilde in the paper
-            MKSC = KSC + this.M;
-  
+            AexpBexpL = Aexp + mtimesx(Bexp, this.L); % for all k
             for k=1:this.horizonLength
                 AKSC = this.augA - KSC(:, :, k);
-                % computes this.augB(:, :, i) * L in one single shot for
-                % all i
-                AKSCMBL = AKSC + mtimesx(this.augB, this.L(:, :, k)) - this.M(:, :, k);                
-                E_tilde = reshape(modeProbsCa(:, k), 1, 1, numCaModes) .* KSVSK(:, :, k);
-                noise2 = E_tilde + reshape(modeProbsCa(:, k), 1, 1, numCaModes) .* this.augW;
-    
+                diffPart = this.augA - Aexp(:, :, k) + mtimesx(this.augB - Bexp(:, :, k), this.L(:, :, k));
+                AABBL_Xl_LBBAA = mtimesx(mtimesx(diffPart, squeeze(Xl(:, :, k, :))), diffPart, 'T');
                 AKSC_Xu_CSKA = mtimesx(mtimesx(AKSC, squeeze(Xu(:, :, k, :))), AKSC, 'T');
-                AKSCMBL_Xl_LBMCSKA = mtimesx(mtimesx(AKSCMBL, squeeze(Xl(:, :, k, :))), AKSCMBL, 'T'); %D_tilde in the paper
-                MKSC_Xl_CSKM = mtimesx(mtimesx(MKSC(:, :, k), squeeze(Xl(:, :, k, :))), MKSC(:, :, k), 'T');
+                
+                E_tilde = reshape(modeProbsCa(:, k), 1, 1, numCaModes) .* KSVSK(:, :, k);
+                noise2 = E_tilde + reshape(modeProbsCa(:, k), 1, 1, numCaModes) .* this.augW;                
+                                                
                 KSC_Xu_CSK = mtimesx(mtimesx(KSC(:, :, k), squeeze(Xu(:, :, k, :))), KSC(:, :, k), 'T');     
-          
+                ABL_Xl_BLA = mtimesx(mtimesx(AexpBexpL(:, :, k), squeeze(Xl(:, :, k, :))), AexpBexpL(:, :, k), 'T');
+                
                 for j=1:numCaModes % new mode                 
                     Xu(:, :, k+1, j) = sum(reshape(this.transitionMatrixCa(:, j), 1, 1, numCaModes) ...
-                        .* (AKSC_Xu_CSKA + AKSCMBL_Xl_LBMCSKA + noise2), 3);
+                        .* (AKSC_Xu_CSKA + AABBL_Xl_LBBAA + noise2), 3);
                     Xl(:, :, k+1, j) = sum(reshape(this.transitionMatrixCa(:, j), 1, 1, numCaModes) ...
-                        .* (MKSC_Xl_CSKM + KSC_Xu_CSK + E_tilde), 3);
+                        .* (ABL_Xl_BLA + KSC_Xu_CSK + E_tilde), 3);
                 end                
-           
                 % ensure symmetry
                 Xu(:, :, k+1, :) = (squeeze(Xu(:, :, k+1, :)) + permute(squeeze(Xu(:, :, k+1, :)), [2 1 3])) / 2;
-                Xl(:, :, k+1, :) = (squeeze(Xl(:, :, k+1, :)) + permute(squeeze(Xl(:, :, k+1, :)), [2 1 3])) / 2;
-            end
+                Xl(:, :, k+1, :) = (squeeze(Xl(:, :, k+1, :)) + permute(squeeze(Xl(:, :, k+1, :)), [2 1 3])) / 2; 
+            end         
         end
         
         %% checkMeasurementsAndDelays
@@ -943,15 +998,14 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
       
         %% setControllerPlantStateInternal
         function setControllerPlantStateInternal(this, mean, cov)
+            this.modeCa = [zeros(this.sequenceLength, 1); 1]; 
             % no checks at all
             this.augState = [repmat(mean, this.measBufferLength, 1); zeros(this.dimEta, 1)];
             % x_o and "past states" are correlated, has to be reflected by cov
             covAug = blkdiag(kron(ones(this.measBufferLength), cov), zeros(this.dimEta));
             this.augStateCov = cat(3, zeros(this.dimAugState, this.dimAugState, this.sequenceLength), covAug);
             this.augStateSecondMoment = cat(3, zeros(this.dimAugState, this.dimAugState, this.sequenceLength), ...
-                (this.augState * this.augState') + covAug);   
-
-            this.modeCa = [zeros(this.sequenceLength, 1); 1]; 
+                this.augState * this.augState' + covAug);  
         end
         
         %% setEtaStateInternal
@@ -960,6 +1014,81 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController
             % the overall covariance remains unaffected, however update the
             % mode-conditioned second moments
             this.augStateSecondMoment = this.augStateCov + repmat(this.augState * this.augState', 1, 1, this.sequenceLength + 1);
+        end
+        
+        %% computeMeasAvailabilityProbs
+        function probs = computeMeasAvailabilityProbs(this, delayProbs)
+            if this.useMexImplementation
+                probs = mex_RecedingHorizonUdpLikeControllerMeasAvailProbs(this.scDelayTransitionMatrix, this.measAvailabilityIdx, delayProbs);
+            else               
+                switch this.measBufferLength
+                    case 1 % no measurement delay allowed
+                        probs = zeros(1, 2);
+                        probs(1) = sum(delayProbs(this.measAvailabilityIdx{1, 1}));
+                        probs(2) = sum(delayProbs(this.measAvailabilityIdx{1, 2}));
+                    case 2
+                        % delay probs is a column vector
+                        probs = zeros(1, 4);
+                        for p=1:4                            
+                            localIdx = this.measAvailabilityIdx{2, p};
+                            for l=this.measAvailabilityIdx{1, p}        
+                                probs(p) = probs(p) + sum(this.scDelayTransitionMatrix(localIdx, l) .* delayProbs(localIdx));
+                            end
+                        end
+                    case 3
+                        % delay probs is a column vector
+                        probs = zeros(1, 8);
+                        for p=1:8
+                            localIdx2 = this.measAvailabilityIdx{3, p};
+                            for l=this.measAvailabilityIdx{1, p}
+                                for m=this.measAvailabilityIdx{2, p}
+                                    probs(p) = probs(p) + this.scDelayTransitionMatrix(m, l) * sum(this.scDelayTransitionMatrix(localIdx2, m) .* delayProbs(localIdx2));    
+                                end                                 
+                            end
+                        end
+                    case 4
+                         % delay probs is a column vector
+                        probs = zeros(1, 16); % 2^4
+                        for p=1:16
+                            localIdx3 = this.measAvailabilityIdx{4, p};
+                            for l=this.measAvailabilityIdx{1, p}
+                                for m=this.measAvailabilityIdx{2, p}
+                                    for n=this.measAvailabilityIdx{3, p}
+                                        probs(p) = probs(p) +  this.scDelayTransitionMatrix(m, l) * this.scDelayTransitionMatrix(n, m) ...
+                                            * sum(this.scDelayTransitionMatrix(localIdx3, n) .* delayProbs(localIdx3));    
+                                    end
+                                end
+                            end
+                        end
+                    otherwise
+                        % recursion is VERY slow in Matlab
+                        probs = this.computeMeasAvailabilityProbsRecursive(delayProbs);
+                end
+            end                  
+        end
+        
+        %% computeMeasAvailabilityProbsRecursive
+        function probs = computeMeasAvailabilityProbsRecursive(this, delayProbs)
+            % delay probs is a column vector
+            probs = zeros(1, 2^this.measBufferLength);
+            for k=1:2^this.measBufferLength
+                currIdx = this.measAvailabilityIdx{1, k};
+                for l=currIdx        
+                    probs(k) = probs(k) + computeRecursive(2, l, delayProbs);
+                end
+            end
+            
+            function e = computeRecursive(depth, j, delayProbs)                
+                localIdx = this.measAvailabilityIdx{depth, k};                
+                if depth== this.measBufferLength  
+                    e = sum(this.scDelayTransitionMatrix(localIdx, j) .* delayProbs(localIdx));
+                else
+                    e = 0;
+                    for i=localIdx
+                        e = e + this.scDelayTransitionMatrix(i, j) * computeRecursive(depth + 1, i, delayProbs);     
+                    end                    
+                end
+            end     
         end
     end
     

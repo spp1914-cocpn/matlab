@@ -171,15 +171,13 @@ classdef (Abstract) NonlinearPlant < SystemModel
         end
         
         %% systemEquation
-        function predictedStates = systemEquation(this, stateSamples, inputSamples, noiseSamples)
-            % The system equation.
+        function predictedStates = systemEquation(this, stateSamples, noiseSamples)
+            % The system equation, evaluated with the current input (if any)
+            % for a set of L ( L>= 1) state and noise samples.
             %
             % Parameters:
             %   >> stateSamples (Matrix)
             %      L column-wise arranged state samples.
-            %
-            %   >> inputSamples (Matrix)
-            %      L column-wise arranged input samples.
             %
             %   >> noiseSamples (Matrix)
             %      L column-wise arranged system noise samples.
@@ -188,8 +186,13 @@ classdef (Abstract) NonlinearPlant < SystemModel
             %   << predictedStates (Matrix)
             %      L column-wise arranged predicted state samples.
             
-            % simple use function to call true system function
-            predictedStates = this.nonlinearDynamics(stateSamples, inputSamples, noiseSamples);
+            if isempty(this.sysInput)            
+                % simple use function to call true system function
+                predictedStates = this.nonlinearDynamics(stateSamples, [], noiseSamples);
+            else
+                % simple use function to call true system function
+                predictedStates = this.nonlinearDynamics(stateSamples, repmat(this.sysInput, 1, size(stateSamples, 2)), noiseSamples); 
+            end
         end
     end
     
@@ -216,8 +219,9 @@ classdef (Abstract) NonlinearPlant < SystemModel
         %   >> stateSamples (Matrix)
         %      L column-wise arranged state samples.
         %
-        %   >> inputSamples (Matrix)
-        %      L column-wise arranged input samples.
+        %   >> inputSamples (Matrix, can be empty)
+        %      L column-wise arranged input samples, or the empty matrix,
+        %      if to be evaluated without inputs.
         %
         %   >> noiseSamples (Matrix)
         %      L column-wise arranged system noise samples.

@@ -5,7 +5,7 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -114,27 +114,6 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             invalidSequenceLength = inf; % must not be inf
             this.verifyError(@() BufferingActuator(invalidSequenceLength, this.defaultU), expectedErrId);
         end
-
-        %% testBufferingActuatorInvalidDefaultU
-        function testBufferingActuatorInvalidDefaultU(this)
-            if verLessThan('matlab', '9.8')
-                % Matlab R2018 or R2019
-                expectedErrId = 'MATLAB:type:InvalidInputSize';
-            else
-                expectedErrId = 'MATLAB:validation:IncompatibleSize';
-            end
-            
-            invalidDefaultU = ones(this.dimU, this.dimU); % must be a vector
-            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
-            
-            expectedErrId = 'MATLAB:validators:mustBeFinite';
-            
-            invalidDefaultU = [4 nan]; % must not contain nan
-            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
-            
-            invalidDefaultU = [inf 4]; % must not contain inf
-            this.verifyError(@() BufferingActuator(this.sequenceLength, invalidDefaultU), expectedErrId);
-        end
         
         %% testBufferingActuator
         function testBufferingActuator(this)
@@ -216,10 +195,10 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             expectedMode = this.sequenceLength + 1; % default input is applied
             
             timestep = this.timestamp;            
-            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep, []);
+            [actualInput, actualMode, ack] = this.actuatorUnderTest.step(timestep, []);
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU);
-            this.verifyEmpty(acks);
+            this.verifyEmpty(ack);
         end
         
         %% testStepMultipleTimesteps
@@ -227,69 +206,37 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             timestep = this.timestamp;
             % dataPacket2 has the smallest delay
             packets = [this.dataPacket; this.dataPacket2; this.dataPacket3];            
-            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep, packets);
+            [actualInput, actualMode, ack] = this.actuatorUnderTest.step(timestep, packets);
             
             this.verifyEqual(actualMode, 1);
             this.verifyEqual(actualInput, this.controlSequence2(:, 1));
-            this.verifySize(acks, [3 1]);
+            this.verifySize(ack, [1 1]);
             
-            % check the payload of the 3 acks
-            ackPayload = acks(1).payload;
+            % check the payload of the ack
+            ackPayload = ack.payload;
             this.verifyNotEmpty(ackPayload);
             this.verifyTrue(iscell(ackPayload));
             this.verifySize(ackPayload, [1 2]);
-            this.verifyEqual(ackPayload{1}, this.dataPacket.timeStamp); % the timestamp of the ACK'ed packet
-            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
-            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
-            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
-            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
-            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket.timeStamp);
-            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
-            this.verifyEqual(ackPayload{2}.tau, this.dataPacket.packetDelay); 
-                        
-            ackPayload = acks(2).payload;
-            this.verifyNotEmpty(ackPayload);
-            this.verifyTrue(iscell(ackPayload));
-            this.verifySize(ackPayload, [1 2]);
-            this.verifyEqual(ackPayload{1}, this.dataPacket2.timeStamp); % the timestamp of the ACK'ed packet
-            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
-            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
-            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
-            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
-            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket2.timeStamp);
-            this.verifyEqual(ackPayload{2}.theta, 1); % first mode 
-            this.verifyEqual(ackPayload{2}.tau, 0); % delay is zero
-            
-            ackPayload = acks(3).payload;
-            this.verifyNotEmpty(ackPayload);
-            this.verifyTrue(iscell(ackPayload));
-            this.verifySize(ackPayload, [1 2]);
-            this.verifyEqual(ackPayload{1}, this.dataPacket3.timeStamp); % the timestamp of the ACK'ed packet
-            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
-            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
-            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
-            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
-            this.verifyEqual(ackPayload{2}.timeStep, this.dataPacket3.timeStamp);
-            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
-            this.verifyEqual(ackPayload{2}.tau, this.dataPacket3.packetDelay); 
+            this.verifyEqual(ackPayload{1}, this.dataPacket2.timeStamp); % the timestamp when the ack'ed packet was sent
+            this.verifyEqual(ackPayload{2}, this.dataPacket2.packetDelay + 1); % the corresponding mode (value of theta_k), first mode is 1!
             
             % now get the input for the next timesteps
             for j = 1:this.sequenceLength - 1
-                [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep + j, []);
+                [actualInput, actualMode, ack] = this.actuatorUnderTest.step(timestep + j, []);
                 expectedMode = j + 1;
                 expectedInput = this.controlSequence2(:, expectedMode);
                 this.verifyEqual(actualMode, expectedMode);
                 this.verifyEqual(actualInput, expectedInput);
-                this.verifyEmpty(acks);
+                this.verifyEmpty(ack);
             end
             
             % now try to get the input for a future time steps, which is not
             % part of the sequence any more
-            [actualInput, actualMode, acks] = this.actuatorUnderTest.step(timestep + this.sequenceLength, []);
+            [actualInput, actualMode, ack] = this.actuatorUnderTest.step(timestep + this.sequenceLength, []);
             expectedMode = this.sequenceLength + 1; % default input is applied
             this.verifyEqual(actualMode, expectedMode);
             this.verifyEqual(actualInput, this.defaultU);
-            this.verifyEmpty(acks);
+            this.verifyEmpty(ack);
         end       
         
         %% testStepDelayTooLarge
@@ -306,20 +253,7 @@ classdef BufferingActuatorTest < matlab.unittest.TestCase
             this.verifyEqual(actualInput, this.defaultU);
             this.verifyEqual(actualMode, this.sequenceLength + 1); % max mode
             
-            this.verifyNotEmpty(ackPacket);
-            ackPayload = ackPacket.payload;
-            % check the payload of the ack
-            this.verifyNotEmpty(ackPayload);
-            this.verifyTrue(iscell(ackPayload));
-            this.verifySize(ackPayload, [1 2]);
-            this.verifyEqual(ackPayload{1}, delayedPacket.timeStamp); % the timestamp of the ACK'ed packet
-            this.verifyTrue(isstruct(ackPayload{2})); % the information about actuator mode and packet delay (tau and theta) 
-            this.verifyTrue(isfield(ackPayload{2}, 'timeStep'));
-            this.verifyTrue(isfield(ackPayload{2}, 'theta'));
-            this.verifyTrue(isfield(ackPayload{2}, 'tau')); % the packet delay
-            this.verifyEqual(ackPayload{2}.timeStep, delayedPacket.timeStamp);
-            this.verifyEqual(ackPayload{2}.theta, this.sequenceLength + 1); % max mode
-            this.verifyEqual(ackPayload{2}.tau, delayedPacket.packetDelay); 
+            this.verifyEmpty(ackPacket); % packet is not ack'ed as it is not kept            
         end
         
         %% testReset
