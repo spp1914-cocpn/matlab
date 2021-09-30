@@ -53,8 +53,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     dcube P(mxGetPr(outputArrays[0]), dimAugState, dimAugState, numModes, false, true);
     
     P.each_slice([&terminalQ](mat& p) {p.submat(0, 0, terminalQ.n_rows-1, terminalQ.n_cols-1) = terminalQ;});    
-    const dmat eyeM = eye<dmat>(augB.n_cols, augB.n_cols);
-    
+        
     for (auto k = horizonLength - 1; k >=1; --k) {
         // backward iteration over the horizon
         const dcube P_old = P;

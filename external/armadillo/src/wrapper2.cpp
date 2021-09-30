@@ -1149,6 +1149,28 @@ extern "C"
       arma_fortran_sans_prefix(arma_zgehrd)(n, ilo, ihi, a, lda, tao, work, lwork, info);
       }
     
+    
+    
+    void arma_fortran_with_prefix(arma_spstrf)(const char* uplo, const blas_int* n,    float* a, const blas_int* lda, blas_int* piv, blas_int* rank, const  float* tol,  float* work, blas_int* info, blas_len uplo_len)
+      {
+      arma_fortran_sans_prefix(arma_spstrf)(uplo, n, a, lda, piv, rank, tol, work, info, uplo_len);
+      }
+    
+    void arma_fortran_with_prefix(arma_dpstrf)(const char* uplo, const blas_int* n,   double* a, const blas_int* lda, blas_int* piv, blas_int* rank, const double* tol, double* work, blas_int* info, blas_len uplo_len)
+      {
+      arma_fortran_sans_prefix(arma_dpstrf)(uplo, n, a, lda, piv, rank, tol, work, info, uplo_len);
+      }
+    
+    void arma_fortran_with_prefix(arma_cpstrf)(const char* uplo, const blas_int* n, blas_cxf* a, const blas_int* lda, blas_int* piv, blas_int* rank, const  float* tol,  float* work, blas_int* info, blas_len uplo_len)
+      {
+      arma_fortran_sans_prefix(arma_cpstrf)(uplo, n, a, lda, piv, rank, tol, work, info, uplo_len);
+      }
+    
+    void arma_fortran_with_prefix(arma_zpstrf)(const char* uplo, const blas_int* n, blas_cxd* a, const blas_int* lda, blas_int* piv, blas_int* rank, const double* tol, double* work, blas_int* info, blas_len uplo_len)
+      {
+      arma_fortran_sans_prefix(arma_zpstrf)(uplo, n, a, lda, piv, rank, tol, work, info, uplo_len);
+      }
+    
   #endif
   
   

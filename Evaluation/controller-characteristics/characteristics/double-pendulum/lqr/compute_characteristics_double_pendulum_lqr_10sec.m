@@ -1,6 +1,6 @@
 % parameters as defined in Omnet config file ncs-testbench/simulations/controller/characterization.ini
 % results are from config SamplingRateSeriesDoublePendulumLQR
-% corresponding to stabilization of short
+% corresponding to stabilization of a double inverted pendulum
 packetRates = 50:5:300;
 numRepetitions = 50;
 numPacketRates = numel(packetRates);

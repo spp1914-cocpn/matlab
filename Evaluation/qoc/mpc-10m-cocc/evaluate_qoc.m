@@ -78,8 +78,8 @@ for r=1:numRepetitions
     ncs1ErrorNorms(:, r) = vecnorm(squeeze(ncs1States(:, r, :)), 2, 2);
     ncs2ErrorNorms(:, r) = vecnorm(squeeze(ncs2States(:, r, :)), 2, 2);
     
-%     ncs1Qocs(:, r) = translatorData.translator.translateControlError(ncs1ErrorNorms(:, r));
-%     ncs2Qocs(:, r) = translatorData.translator.translateControlError(ncs2ErrorNorms(:, r));
+    ncs1Qocs(:, r) = translatorData.translator.translateControlError(ncs1ErrorNorms(:, r));
+    ncs2Qocs(:, r) = translatorData.translator.translateControlError(ncs2ErrorNorms(:, r));
 end
 % 
 ncs1MeanErrors = mean(ncs1ErrorNorms, 2, 'omitnan');
@@ -95,14 +95,14 @@ ncs2ErrorVars = var(ncs2ErrorNorms, 0, 2, 'omitnan');
 
 % translate into qoc (could be improved -> first compute QoC, then take the
 % mean)
-ncs1MeanQocs = translatorData.translator.translateControlError(ncs1MeanErrors);
-ncs1MedianQocs = translatorData.translator.translateControlError(ncs1MedianErrors);
-ncs1UpperQuantilesQoc = translatorData.translator.translateControlError(ncs1UpperQuantiles);
-ncs1LowerQuantilesQoc = translatorData.translator.translateControlError(ncs1LowerQuantiles);
-ncs2MeanQocs = translatorData.translator.translateControlError(ncs2MeanErrors);
-ncs2MedianQocs = translatorData.translator.translateControlError(ncs2MedianErrors);
-ncs2UpperQuantilesQoc = translatorData.translator.translateControlError(ncs2UpperQuantiles);
-ncs2LowerQuantilesQoc = translatorData.translator.translateControlError(ncs2LowerQuantiles);
+ncs1MeanQocs = mean(ncs1Qocs, 2, 'omitnan');
+ncs1MedianQocs = median(ncs1Qocs, 2, 'omitnan');
+ncs1UpperQuantilesQoc = quantile(ncs1Qocs, 0.9, 2);
+ncs1LowerQuantilesQoc = quantile(ncs1Qocs, 0.1, 2);
+ncs2MeanQocs = mean(ncs2Qocs, 2, 'omitnan');
+ncs2MedianQocs = median(ncs2Qocs, 2, 'omitnan');
+ncs2UpperQuantilesQoc = quantile(ncs2Qocs, 0.9, 2);
+ncs2LowerQuantilesQoc = quantile(ncs2Qocs, 0.1, 2);
 
 figure('Name', scenarioName, 'NumberTitle','off');
 t = tiledlayout(2, 1);
@@ -124,7 +124,7 @@ hold off;
 
 nexttile;
 hold on;
-%fill([ncsTimes', fliplr(ncsTimes')], [ncsUpperQuantilesQoc', fliplr(ncsLowerQuantilesQoc')], 'g', 'FaceAlpha', 0.5);
+fill([ncs1Times', fliplr(ncs1Times')], [ncs1UpperQuantilesQoc', fliplr(ncs1LowerQuantilesQoc')], 'g', 'FaceAlpha', 0.5);
 plot(ncs1Times, ncs1MeanQocs, 'LineWidth', 2);
 plot(ncs1Times, ncs1MedianQocs, 'LineWidth', 2);
 plot(ncs1TargetQocTimes, ncs1TargetQocs, 'LineWidth', 2);
@@ -134,8 +134,8 @@ xticks([0:10:simTime]);
 ylim([0 1]);
 ylabel('QoC'); 
 %legend('Mean', 'Target', 'interpreter', 'latex', 'Location', 'southwest'); 
-legend('Mean', 'Median', 'Target', 'interpreter', 'latex'); 
-%legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Target', 'interpreter', 'latex');
+%legend('Mean', 'Median', 'Target', 'interpreter', 'latex'); 
+legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Median', 'Target', 'interpreter', 'latex');
 hold off; 
 
 %
@@ -160,7 +160,7 @@ hold off;
 
 nexttile;
 hold on;
-%fill([ncsTimes', fliplr(ncsTimes')], [ncsUpperQuantilesQoc', fliplr(ncsLowerQuantilesQoc')], 'g', 'FaceAlpha', 0.5);
+fill([ncs2Times', fliplr(ncs2Times')], [ncs2UpperQuantilesQoc', fliplr(ncs2LowerQuantilesQoc')], 'g', 'FaceAlpha', 0.5);
 plot(ncs2Times, ncs2MeanQocs, 'LineWidth', 2);
 plot(ncs2Times, ncs2MedianQocs, 'LineWidth', 2);
 plot(ncs2TargetQocTimes, ncs2TargetQocs, 'LineWidth', 2);
@@ -170,8 +170,8 @@ xticks([0:10:simTime]);
 ylim([0 1]);
 ylabel('QoC'); 
 %legend('Mean', 'Target', 'interpreter', 'latex', 'Location', 'southwest'); 
-legend('Mean', 'Median', 'Target', 'interpreter', 'latex'); 
-%legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Target', 'interpreter', 'latex');
+%legend('Mean', 'Median', 'Target', 'interpreter', 'latex'); 
+legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Median', 'Target', 'interpreter', 'latex');
 hold off;   
 
 % also plot the error variance

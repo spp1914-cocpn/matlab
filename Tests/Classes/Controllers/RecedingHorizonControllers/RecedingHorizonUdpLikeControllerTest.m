@@ -196,7 +196,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             dimEta = 2;
             dimAugState = 2 * this.dimX + dimEta;
             numCaModes = this.sequenceLength + 1;
-            
+
             K = this.initialK;
             L = this.initialL;
             
@@ -261,41 +261,58 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                         + this.modeTransitionMatrix(3, 3) * PUnder(:, :, 3);
                     P_sum32 = this.modeTransitionMatrix(3, 1) * PUpper(:, :, 1) + this.modeTransitionMatrix(3, 2) * PUpper(:, :, 2)...
                         + this.modeTransitionMatrix(3, 3) * PUpper(:, :, 3);                 
+                         
+                    % first, find L
+                    A1 =  (this.J(:, :, 1)' * this.R * this.J(:, :, 1) + this.augB(:, :, 1)' * P_sum12 * this.augB(:, :, 1) ...
+                        + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * this.augB(:, :, 1) ...
+                        + (Bexp(:, :, k)-this.augB(:, :, 1))' * P_sum11 * Bexp(:, :, k));
+                    B1 = XUnder(:, :, 1, k);
+                    A2 = (this.J(:, :, 2)' * this.R * this.J(:, :, 2) + this.augB(:, :, 2)' * P_sum22 * this.augB(:, :, 2) ...
+                        + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * this.augB(:, :, 2) ...
+                        + (Bexp(:, :, k)-this.augB(:, :, 2))' * P_sum21 * Bexp(:, :, k));
+                    B2 = XUnder(:, :, 2, k);
+                    A3 = (this.J(:, :, 3)' * this.R * this.J(:, :, 3) + this.augB(:, :, 3)' * P_sum32 * this.augB(:, :, 3) ...
+                        + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * this.augB(:, :, 3) ...
+                        + (Bexp(:, :, k)-this.augB(:, :, 3))' * P_sum31 * Bexp(:, :, k));
+                    B3 = XUnder(:, :, 3, k);                                  
                     
-                    % psi matrix
-                    Psi = kron(S_tilde(:, :, k) * (caModeProbs(1, k) * this.augV + this.augC * XUpper(:, :, 1, k) * this.augC') * S_tilde(:, :, k)', P_sum11) ...
-                        + kron(S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * XUpper(:, :, 2, k) * this.augC') * S_tilde(:, :, k)', P_sum21) ...
-                        + kron(S_tilde(:, :, k) * (caModeProbs(3, k) * this.augV + this.augC * XUpper(:, :, 3, k) * this.augC') * S_tilde(:, :, k)', P_sum31);
+                    F = ((Bexp(:, :, k)-this.augB(:, :, 1))' * P_sum11 * this.augA(:, :, 1) ...
+                        + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * Aexp(:, :, k) ...
+                        - this.augB(:, :, 1)' * P_sum12 * this.augA(:, :, 1)) * XUnder(:, :, 1, k);
+                    F = F + ((Bexp(:, :, k)-this.augB(:, :, 2))' * P_sum21 * this.augA(:, :, 2) ...
+                        + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * Aexp(:, :, k) ...
+                        - this.augB(:, :, 2)' * P_sum22 * this.augA(:, :, 2)) * XUnder(:, :, 2, k);
+                    F = F + ((Bexp(:, :, k)-this.augB(:, :, 3))' * P_sum31 * this.augA(:, :, 3) ...
+                        + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * Aexp(:, :, k) ...
+                        - this.augB(:, :, 3)' * P_sum32 * this.augA(:, :, 3)) * XUnder(:, :, 3, k);                    
                     
-                    % phi matrix
-                    Phi = kron(XUnder(:, :, 1, k), ...
-                            this.augB(:, :, 1)' * P_sum12 * this.augB(:, :, 1) + this.J(:, :, 1)' * this.R * this.J(:, :, 1) ...
-                            + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * (this.augB(:, :, 1)-Bexp(:, :, k)));
-                    Phi = Phi + kron(XUnder(:, :, 2, k), ...
-                            this.augB(:, :, 2)' * P_sum22 * this.augB(:, :, 2) + this.J(:, :, 2)' * this.R * this.J(:, :, 2) ...
-                            + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * (this.augB(:, :, 2)-Bexp(:, :, k)));
-                    Phi = Phi + kron(XUnder(:, :, 3, k), ...
-                            this.augB(:, :, 3)' * P_sum32 * this.augB(:, :, 3) + this.J(:, :, 3)' * this.R * this.J(:, :, 3) ...
-                            + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * (this.augB(:, :, 3)-Bexp(:, :, k)));                   
+                    if isequal(F, zeros(size(F)))
+                        % L=0 is a feasible solution in case F=0
+                        L(:, :, k) = zeros(this.sequenceLength * this.dimU, dimAugState);
+                    else
+                        L(:, :, k) = reshape(lsqminnorm(kron(B1', A1) + kron(B2', A2) + kron(B3', A3), F(:)), ...
+                                    this.sequenceLength * this.dimU, dimAugState);
+                    end
                     
-                    % rho vector
-                    rho = P_sum11 * this.augA(:, :, 1) * XUpper(:, :, 1, k) * this.augC' * S_tilde(:, :, k)' ...
+                    % now, find K                    
+                    A1 = P_sum11;                    
+                    B1 = S_tilde(:, :, k) * (caModeProbs(1, k) * this.augV + this.augC * XUpper(:, :, 1, k) * this.augC') * S_tilde(:, :, k)';
+                    A2 = P_sum21;
+                    B2 = S_tilde(:, :, k) * (caModeProbs(2, k) * this.augV + this.augC * XUpper(:, :, 2, k) * this.augC') * S_tilde(:, :, k)';
+                    A3 = P_sum31;
+                    B3 = S_tilde(:, :, k) * (caModeProbs(3, k) * this.augV + this.augC * XUpper(:, :, 3, k) * this.augC') * S_tilde(:, :, k)';
+                    
+                    F = P_sum11 * this.augA(:, :, 1) * XUpper(:, :, 1, k) * this.augC' * S_tilde(:, :, k)' ...
                         + P_sum21 * this.augA(:, :, 2) * XUpper(:, :, 2, k) * this.augC' * S_tilde(:, :, k)' ...
                         + P_sum31 * this.augA(:, :, 3) * XUpper(:, :, 3, k) * this.augC' * S_tilde(:, :, k)';
-                    % gamma vector
-                    gamma = this.augB(:, :, 1)' * P_sum12 * this.augA(:, :, 1) * XUnder(:, :, 1, k) ...
-                        + (this.augB(:, :, 1)-Bexp(:, :, k))' * P_sum11 * (this.augA(:, :, 1) - Aexp(:, :, k)) * XUnder(:, :, 1, k) ...
-                        + this.augB(:, :, 2)' * P_sum22 * this.augA(:, :, 2) * XUnder(:, :, 2, k) ...
-                        + (this.augB(:, :, 2)-Bexp(:, :, k))' * P_sum21 * (this.augA(:, :, 2) - Aexp(:, :, k)) * XUnder(:, :, 2, k) ...
-                        + this.augB(:, :, 3)' * P_sum32 * this.augA(:, :, 3) * XUnder(:, :, 3, k) ...
-                        + (this.augB(:, :, 3)-Bexp(:, :, k))' * P_sum31 * (this.augA(:, :, 3) - Aexp(:, :, k)) * XUnder(:, :, 3, k);           
                     
-                    % construct system of linear equations to solve (Amat *x = b)                    
-                    xk = lsqminnorm(Psi, rho(:));                    
-                    K(:, :, k) = reshape(xk, dimAugState, []);                    
-                  
-                    xl = lsqminnorm(Phi, -gamma(:));                    
-                    L(:, :, k) = reshape(xl, 2* this.dimU, []);                    
+                    if isequal(F, zeros(size(F)))
+                        % K=0 is a feasible solution in case F=0
+                        K(:, :, k) = zeros(dimAugState, (this.maxMeasDelay + 1) * this.dimY);
+                    else
+                        K(:, :, k) = reshape(lsqminnorm(kron(B1', A1) + kron(B2', A2) + kron(B3', A3), F(:)), ...
+                                        dimAugState, (this.maxMeasDelay + 1) * this.dimY);
+                    end   
                     
                     % now we can update the costate with the computed gains
                     PUpper(:, :, 1) = L(:, :, k)' * this.J(:, :, 1)' * this.R * this.J(:, :, 1) * L(:, :, k) + this.augQ(:, :, 1) ...
@@ -349,7 +366,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = [1 0 0 0 0 0];
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6              
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -361,7 +378,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                           
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -375,7 +392,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = measDelayProbs * T;
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6               
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -387,7 +404,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                           
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -420,7 +437,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = [1 0 0 0 0 0];
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6                
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -432,7 +449,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                          
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -446,7 +463,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = measDelayProbs * T;
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6               
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -458,7 +475,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                           
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -493,7 +510,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = 1/5 * [0 1 1 1 1 1]; % at time k
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6               
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -505,7 +522,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                          
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -519,7 +536,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             measDelayProbs = measDelayProbs * T;
             % for mode 0 0 (y_k and y_k+1 not available)
             % delay of y_k ~= 1 and delay of y_k+1 ~= 0            
-            for j=[2:6]                
+            for j=2:6               
                 for m=[1 3:6]            
                     availProbs(1) = availProbs(1) + T(m,j)* measDelayProbs(m);            
                 end
@@ -531,7 +548,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             end
             % for mode 0 1 (y_k+1 not available and y_k available)
             % delay of y_k == 1 and delay of y_k+1 ~= 0
-            for j=[2:6]                           
+            for j=2:6                       
                 availProbs(3) = availProbs(3) + T(2,j)* measDelayProbs(2);
             end
             % for mode 1 1 (y_k available and y_k+1 available)
@@ -878,25 +895,25 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % 1 1 1 ==1 ==2 ==3
             this.verifyTrue(iscell(controller.measAvailabilityIdx));
             this.verifySize(controller.measAvailabilityIdx, [3, 8]);
-            this.verifyEqual(controller.measAvailabilityIdx{1, 1}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 1}, 2:4);
             this.verifyEqual(controller.measAvailabilityIdx{2, 1}, [1 3 4]);
             this.verifyEqual(controller.measAvailabilityIdx{3, 1}, [1 2 4]);
             this.verifyEqual(controller.measAvailabilityIdx{1, 2}, 1);
             this.verifyEqual(controller.measAvailabilityIdx{2, 2}, [1 3 4]);
             this.verifyEqual(controller.measAvailabilityIdx{3, 2}, [1 2 4]);
-            this.verifyEqual(controller.measAvailabilityIdx{1, 3}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 3}, 2:4);
             this.verifyEqual(controller.measAvailabilityIdx{2, 3}, 2);
             this.verifyEqual(controller.measAvailabilityIdx{3, 3}, [1 2 4]);
             this.verifyEqual(controller.measAvailabilityIdx{1, 4}, 1);
             this.verifyEqual(controller.measAvailabilityIdx{2, 4}, 2);
             this.verifyEqual(controller.measAvailabilityIdx{3, 4}, [1 2 4]);
-            this.verifyEqual(controller.measAvailabilityIdx{1, 5}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 5}, 2:4);
             this.verifyEqual(controller.measAvailabilityIdx{2, 5}, [1 3 4]);
             this.verifyEqual(controller.measAvailabilityIdx{3, 5}, 3);
             this.verifyEqual(controller.measAvailabilityIdx{1, 6}, 1);
             this.verifyEqual(controller.measAvailabilityIdx{2, 6}, [1 3 4]);
             this.verifyEqual(controller.measAvailabilityIdx{3, 6}, 3);
-            this.verifyEqual(controller.measAvailabilityIdx{1, 7}, [2:4]);
+            this.verifyEqual(controller.measAvailabilityIdx{1, 7}, 2:4);
             this.verifyEqual(controller.measAvailabilityIdx{2, 7}, 2);
             this.verifyEqual(controller.measAvailabilityIdx{3, 7}, 3);
             this.verifyEqual(controller.measAvailabilityIdx{1, 8}, 1);
@@ -1233,7 +1250,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.augW = blkdiag(newW, zeros(this.dimX), zeros(dimEta));            
             
             % expected controller gains                  
-            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
+            [~, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
      
             expectedInputSequence = L(:, :, 1) * this.augX0;            
             expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;
@@ -1542,7 +1559,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.assertTrue(this.controllerUnderTest.useMexImplementation);
 
             % expected controller gains                  
-            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
+            [~, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
      
             expectedInputSequence = L(:, :, 1) * this.augX0;            
             expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;
@@ -1581,7 +1598,7 @@ classdef RecedingHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.assertEqual(controller.L, this.initialL);
 
             % expected controller gains                  
-            [K, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
+            [~, L, Aexp, Bexp] = this.computeGainsNoMeasurementsNoModes();
      
             expectedInputSequence = L(:, :, 1) * this.augX0;            
             expectedNewControllerState = Aexp(:, :, 1) * this.augX0 + Bexp(:, :, 1) * expectedInputSequence;

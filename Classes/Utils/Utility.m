@@ -623,10 +623,10 @@ classdef Utility < handle
             %   Washington D. C., USA, June 2013.
             %
             %   Florian Rosenthal and Uwe D. Hanebeck,
-            %   Stability Analysis of Polytopic Markov Jump Linear Systems 
+            %   Stability Analysis of Polytopic Markov Jump Linear Systems
             %   with Applications to Sequence-Based Control over Networks,
-            %   Proceedings of the 21st IFAC World Congress (IFAC 2020),
-            %   Berlin, Germany, July 2020.
+            %   IFAC PapersOnLine,
+            %   Vol. 53, No. 2, pp. 3104-3111, 2020.
             %
             % Parameters:
             %   >> delayProbs (Nonnegative vector or matrix)

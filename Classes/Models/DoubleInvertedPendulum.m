@@ -52,6 +52,11 @@ classdef DoubleInvertedPendulum < NonlinearPlant
         frictionCart;
         frictionPendulum1;
         frictionPendulum2;
+        
+        useMexImplementation(1,1) logical = true; 
+        % by default, we use the C++ (mex) implementation for computation
+        % of the new system state (i.e., integration of the underlying ODE)
+        % this is usually faster, but can produce slightly different results
     end
     
     properties (SetAccess = immutable, GetAccess = ?DoubleInvertedPendulumTest)
@@ -76,8 +81,7 @@ classdef DoubleInvertedPendulum < NonlinearPlant
         samplingInterval(1,1) double {mustBePositive, mustBeFinite} = DoubleInvertedPendulum.defaultInternalSamplingRate;
         
         % we need noise terms for the continuous-time linearization of the model
-        % can be different from the ones used to simulate the
-        % discrete-time nonlinear dynamics
+        % can be different from the ones used to simulate the nonlinear dynamics
         % the controllers use discrete-time linearizations, the noise in
         % these models is dependent on the sampling rate
         % the terms are assumed to be independent of each other
@@ -90,7 +94,7 @@ classdef DoubleInvertedPendulum < NonlinearPlant
     methods (Access = public)
         %% DoubleInvertedPendulum
         function this = DoubleInvertedPendulum(massCart, massPendulum1, massPendulum2, lengthPendulum1, lengthPendulum2, ...
-                frictionCart, frictionPendulum1, frictionPendulum2, samplingInterval)
+                frictionCart, frictionPendulum1, frictionPendulum2, samplingInterval, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -124,6 +128,13 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             %      If left out, the default vale 0.001 is used, which
             %      corresponds to a sampling rate of 1 kHz.         
             %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for evaluation of the system dynamics
+            %      (done by integrating the underlying ODE)
+            %      which is typically faster than the Matlab implementation. 
+            %      If left out, the default value true is used.
+            %
             % Returns:
             %   << this (DoubleInvertedPendulum)
             %      A new DoubleInvertedPendulum instance.
@@ -141,6 +152,10 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             
             if nargin > 8
                 this.samplingInterval = samplingInterval;
+            end
+            
+            if nargin > 9
+                this.useMexImplementation = useMexImplementation;
             end
             
             this.odeOpts = odeset('Mass', @(t, y) blkdiag(eye(3), this.createMassMatrix(y)));
@@ -224,8 +239,8 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             %
             %   << C_cont (3-by-6 matrix)
             %      The measurement matrix, assuming that x_1 (position of
-            %      the cart) and x_3 (deviation of pendulum angle from
-            %      upward equilibrium) are measured.
+            %      the cart) and x_2 (deviation of lower pendulum rod from
+            %      upward equilibrium) and x_2-x_3 (i.e., the difference between the pendulum angles) are measured.
             %
             %   << G_cont (6-by-3 matrix)
             %      The system noise matrix, as described above, of the continuous-time linearization.
@@ -335,8 +350,8 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             %
             %   << C (3-by-6 matrix)
             %      The measurement matrix, assuming that x_1 (position of
-            %      the cart) and x_3 (deviation of pendulum angle from
-            %      upward equilibrium) are measured.
+            %      the cart) and x_2 (deviation of lower pendulum rod from
+            %      upward equilibrium) and x_2-x_3 (i.e., the difference between the pendulum angles) are measured.
             %
             %   << W (6-by-6 matrix)
             %      The covariance matrix of the noise, as described above.
@@ -372,7 +387,7 @@ classdef DoubleInvertedPendulum < NonlinearPlant
         %% isValidState
         function isValid = isValidState(~, state)
             % Function to check whether a given plant state is valid in the
-            % sense that the pendulum rod cannot be considered fallen over and the displacement of the cart is small.
+            % sense that the pendulum rods cannot be considered fallen over and the displacement of the cart is small.
             %
             % Parameters:
             %   >> state (6-dimensional vector)
@@ -381,16 +396,18 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             % Returns:
             %   << isValid (Flag, i.e., boolean)
             %      Flag to indicate whether the given state state is valid.
-            %      True is returned in case the absolute deviation of the rod from the upward
-            %      equilibrium is within [0°, 45°] and the position of the cart is within [-5m, 5m], false otherwise.
+            %      True is returned if the absolute deviation of the lower rod from the upward
+            %      equilibrium is within [0°, 45°], the absolute deviation of the upper rod from the upward
+            %      equilibrium is within [0°, 60°], and the position of the cart is within [-5m, 5m], false otherwise.
             %      False is also returned if any of the state variables is +/-inf or +/-nan.
             
             arguments
                 ~
                 state(6,1) double {mustBeReal} % if row vector is passed, it is converted automatically
             end            
-            isValid = all(isfinite(state)) && abs(rad2deg(state(2))) <= 55 ...
-                && abs(rad2deg(state(3))) <= 90 ...
+            isValid = all(isfinite(state)) ...
+                && abs(rad2deg(state(2))) <= 45 ...
+                && abs(rad2deg(state(3))) <= 60 ...
                 && abs(state(1)) <= 5;
         end
     end
@@ -412,24 +429,30 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             % [I 0; 0 M]x_dot = [q_dot; f(x, u, w)] (2)
             % by introducing the state variable x = [q, q_dot]', hence x_dot = [q_dot, q_dotdot]
             % assuming that u and w are constant over the sampling interval, we can solve this ODE numerically
-            massPend = this.massPendulum1 + this.massPendulum2;            
             
-            tspan = [0 this.samplingInterval];            
-            
+            if this.useMexImplementation
+                predictedStates = mex_DoublePendulumNonlinearDynamics(this.samplingInterval, this.massCart, this.massPendulum1, ...
+                    this.massPendulum2, this.lengthPendulum1, this.lengthPendulum2, this.frictionCart, this.frictionPendulum1, ...
+                    this.frictionPendulum2, stateSamples, inputSamples, noiseSamples);
+                return
+            end
+
             if isempty(inputSamples)
                 inputSamples = zeros(1, size(stateSamples, 2));
             end
-            
+
             if isempty(noiseSamples)
                 noiseSamples = zeros(3, size(stateSamples, 2));
             end
-            
+            massPend = this.massPendulum1 + this.massPendulum2;            
+                   
+            tspan = [0 this.samplingInterval];
             predictedStates = zeros(6, size(stateSamples, 2));
             for j=1:size(stateSamples, 2)                
-                [~,x]=ode113(@(t, x) fun(t, x, inputSamples(:, j), noiseSamples(:, j)), tspan, stateSamples(:, j), this.odeOpts);
-                predictedStates(:, j) = x(end, :)';
+                [~,xres]=ode113(@(t, x) fun(t, x, inputSamples(:, j), noiseSamples(:, j)), tspan, stateSamples(:, j), this.odeOpts);
+                predictedStates(:, j) = xres(end, :)';
             end
-        
+
             function dxdt = fun(~, x, u, w)
                 % states in x are ordered as follows: xc, theta1, theta2, then
 %               % the corresponding velocities
@@ -440,11 +463,11 @@ classdef DoubleInvertedPendulum < NonlinearPlant
                 dxdt(4) = -this.frictionCart * x(4) + this.lengthPendulum1 * massPend * sin(x(2)) * x(5)^2 + this.massPendulum2 * this.lengthPendulum2 * sin(x(3)) * x(6)^2;
                 dxdt(5) = -this.frictionPendulum1 * x(5) - this.lengthPendulum1 * this.lengthPendulum2 * this.massPendulum2 * sinDiff * x(6)^2;
                 dxdt(6) = -this.frictionPendulum2 * x(6) + this.lengthPendulum1 * this.lengthPendulum2 * this.massPendulum2 * sinDiff * x(5)^2;
-                
+
                 % gravity terms
                 dxdt(5) = dxdt(5) + DoubleInvertedPendulum.graviationalAcceleration * this.lengthPendulum1 * massPend * sin(x(2));
                 dxdt(6) = dxdt(6) + DoubleInvertedPendulum.graviationalAcceleration * this.lengthPendulum2 * this.massPendulum2 * sin(x(3));
-                
+
                 % input and noise                
                 dxdt(4) = dxdt(4) + u + w(3);
                 dxdt(5:6) = dxdt(5:6) + w(1:2);
@@ -488,7 +511,7 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             massPend = this.massPendulum1 + this.massPendulum2;
             % states in y are ordered as follows: q=[xc, theta1, theta2], then
             % the corresponding velocities q_dot
-            M = zeros(3,3); % M affects only the verlocities q_dot
+            M = zeros(3,3); % M affects only the velocities q_dot
             M(1,1) = this.massCart + this.massPendulum1 + this.massPendulum2;
             M(1,2) = this.lengthPendulum1 * massPend * cos(y(2));
             M(1,3) = this.massPendulum2 * this.lengthPendulum2 * cos(y(3));

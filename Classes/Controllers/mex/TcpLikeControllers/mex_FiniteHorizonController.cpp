@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -55,7 +55,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     }
     
     // we only need K_{k+1} to compute K_k and L_k
-    dcube K_k(size(augA)); 
+    dcube K_k(size(augA), fill::none); 
     K_k.each_slice() = terminalK; // K_N is the same for all modes
         
     double* dst = mxGetPr(outputArrays[0]);
@@ -66,7 +66,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
         
         dcube QAKA = augQ;
         dcube RBKB = augR;
-        dcube BKA(augB.n_cols, augA.n_rows, numModes);
+        dcube BKA(augB.n_cols, augA.n_rows, numModes, fill::none);
         
         for (uword i=0; i< numModes; ++i) {
             QAKA.slice(i) += symmatu(augA.slice(i).t() * K_prev.slice(i) * augA.slice(i)); // ensure symmetry

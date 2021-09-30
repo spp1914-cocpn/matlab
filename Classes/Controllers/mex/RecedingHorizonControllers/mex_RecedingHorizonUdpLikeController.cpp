@@ -48,7 +48,7 @@ using namespace RecedingHorizonUdpLikeController;
 const double CONVERGENCE_DIFF = 1e-20;
 const int MAX_NUM_ITERATIONS = 5;
 
-const solve_opts::opts SOLVE_OPTS = solve_opts::likely_sympd + solve_opts::refine + solve_opts::equilibrate;
+const solve_opts::opts SOLVE_OPTS = solve_opts::refine + solve_opts::equilibrate + solve_opts::allow_ugly;
 
 void computeGains(int stage, const Trajectory& trajectory, const Dynamics& dynamics, const Costate& costateEpsilon,  
        const dmat& JRJ, dmat& K, dmat& L) {
@@ -99,11 +99,14 @@ void computeGains(int stage, const Trajectory& trajectory, const Dynamics& dynam
             + diffBTranspose * PlEpsilon.slice(i) * (dynamics.getAugA(i) - Aexp);
         gamma += vectorise(partGamma * Xl.slice(i));        
     }
-    
+
     // we can solve independently for K and L
     // first, for K
-    dmat psiInv(size(Psi));
-    if (pinv(psiInv, Psi)) {
+    dmat psiInv(size(Psi), fill::none);
+    if (rho.is_zero()) {
+        // shortcut: rho is zero, so return zero solution
+        K.zeros();
+    } else if (pinv(psiInv, Psi)) {
         // pseudo inverse could be obtained successfully
         const dcolvec gainK = psiInv * rho; // rho is negative
         K = reshape(gainK, K.n_rows, K.n_cols);
@@ -118,10 +121,15 @@ void computeGains(int stage, const Trajectory& trajectory, const Dynamics& dynam
                 "** K could not be updated: both pinv and solve failed **");
         }
     }
-    
+
+    if (gamma.is_zero()) {
+        // shortcut: gamma is zero, so return zero solution
+        L.zeros();
+        return;
+    }    
     // now solve for L
-    dmat phiInv(size(Phi));
-     if (pinv(phiInv, Phi)) {
+    dmat phiInv(size(Phi), fill::none);
+    if (pinv(phiInv, Phi)) {
         // pseudo inverse could be obtained successfully
         const dcolvec gainL = -phiInv * gamma;
         L = reshape(gainL, L.n_rows, L.n_cols);        
@@ -183,7 +191,8 @@ void mexFunction(int numOutputs, mxArray* outputArrays[], int numInputs, const m
     Trajectory predTrajectory(dynamics, augStateCov_old, augStateSecondMoment_old);
    
     int counter = 0;
-    while (counter < maxNumIterations) {        
+    while (counter < maxNumIterations) {
+        counter++;
         // forward pass: obtain the second moments for the given sequence of controller gains
         predTrajectory.predictHorizon(K_new, L_new);
  
@@ -212,14 +221,13 @@ void mexFunction(int numOutputs, mxArray* outputArrays[], int numInputs, const m
                 currentCostate = currentCostateEpsilon.computeNew(K_new.slice(k), L_new.slice(k), augQ, JRJ);
             }            
         }
-/*
+
         if (abs(oldCost - oldCostToGo(0)) < CONVERGENCE_DIFF) {
             break;
         } else {
             oldCost = oldCostToGo(0);
         } 
-*/      
-        counter++;
+          
         if (utIsInterruptPending()) {        /* check for a Ctrl-C event */
             mexPrintf("Ctrl-C Detected. END\n\n");
             break;

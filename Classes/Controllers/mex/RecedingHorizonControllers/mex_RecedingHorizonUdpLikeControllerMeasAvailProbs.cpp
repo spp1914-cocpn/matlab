@@ -46,7 +46,7 @@ double evalDepth(const uword depth, const uword state, const uword colIdx, const
     
     double prob = 0;
     for (auto rowIdx : localIdx) {
-        prob += scDelayTransMat(rowIdx-1, colIdx) 
+        prob += scDelayTransMat(rowIdx, colIdx) 
             * evalDepth(depth + 1, state, rowIdx, measAvailabilityIdx, scDelayTransMat, delayProbs);
         // enter recursion: T(i, s) * [T(l, i) * .....T(j, r) * T(m,j) * p(m)]
     }

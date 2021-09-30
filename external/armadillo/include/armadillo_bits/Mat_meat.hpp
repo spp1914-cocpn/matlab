@@ -24,7 +24,7 @@ Mat<eT>::~Mat()
   {
   arma_extra_debug_sigprint_this(this);
   
-  if(n_alloc > arma_config::mat_prealloc)
+  if(n_alloc > 0)
     {
     arma_extra_debug_print("Mat::destructor: releasing memory");
     memory::release( access::rw(mem) );
@@ -69,6 +69,13 @@ Mat<eT>::Mat(const uword in_n_rows, const uword in_n_cols)
   arma_extra_debug_sigprint_this(this);
   
   init_cold();
+  
+  #if (!defined(ARMA_DONT_ZERO_INIT))
+    {
+    arma_extra_debug_print("Mat::constructor: zeroing memory");
+    arrayops::fill_zeros(memptr(), n_elem);
+    }
+  #endif
   }
 
 
@@ -87,6 +94,65 @@ Mat<eT>::Mat(const SizeMat& s)
   arma_extra_debug_sigprint_this(this);
   
   init_cold();
+  
+  #if (!defined(ARMA_DONT_ZERO_INIT))
+    {
+    arma_extra_debug_print("Mat::constructor: zeroing memory");
+    arrayops::fill_zeros(memptr(), n_elem);
+    }
+  #endif
+  }
+
+
+
+//! internal use only
+template<typename eT>
+template<bool do_zeros>
+inline
+Mat<eT>::Mat(const uword in_n_rows, const uword in_n_cols, const arma_initmode_indicator<do_zeros>&)
+  : n_rows(in_n_rows)
+  , n_cols(in_n_cols)
+  , n_elem(in_n_rows*in_n_cols)
+  , n_alloc()
+  , vec_state(0)
+  , mem_state(0)
+  , mem()
+  {
+  arma_extra_debug_sigprint_this(this);
+  
+  init_cold();
+  
+  if(do_zeros)
+    {
+    arma_extra_debug_print("Mat::constructor: zeroing memory");
+    arrayops::fill_zeros(memptr(), n_elem);
+    }
+  }
+
+
+
+//! internal use only
+template<typename eT>
+template<bool do_zeros>
+inline
+Mat<eT>::Mat(const SizeMat& s, const arma_initmode_indicator<do_zeros>&)
+  : n_rows(s.n_rows)
+  , n_cols(s.n_cols)
+  , n_elem(s.n_rows*s.n_cols)
+  , n_alloc()
+  , vec_state(0)
+  , mem_state(0)
+  , mem()
+  {
+  arma_extra_debug_sigprint_this(this);
+  
+  init_cold();
+  
+  if(do_zeros)
+    {
+    arma_extra_debug_print("Mat::constructor: zeroing memory");
+    arrayops::fill_zeros(memptr(), n_elem);
+    }
   }
 
 
@@ -130,6 +196,47 @@ Mat<eT>::Mat(const SizeMat& s, const fill::fill_class<fill_type>& f)
   init_cold();
   
   (*this).fill(f);
+  }
+
+
+
+//! construct the matrix to have user specified dimensions and fill with specified value
+template<typename eT>
+inline
+Mat<eT>::Mat(const uword in_n_rows, const uword in_n_cols, const fill::scalar_holder<eT> f)
+  : n_rows(in_n_rows)
+  , n_cols(in_n_cols)
+  , n_elem(in_n_rows*in_n_cols)
+  , n_alloc()
+  , vec_state(0)
+  , mem_state(0)
+  , mem()
+  {
+  arma_extra_debug_sigprint_this(this);
+  
+  init_cold();
+  
+  (*this).fill(f.scalar);
+  }
+
+
+
+template<typename eT>
+inline
+Mat<eT>::Mat(const SizeMat& s, const fill::scalar_holder<eT> f)
+  : n_rows(s.n_rows)
+  , n_cols(s.n_cols)
+  , n_elem(s.n_rows*s.n_cols)
+  , n_alloc()
+  , vec_state(0)
+  , mem_state(0)
+  , mem()
+  {
+  arma_extra_debug_sigprint_this(this);
+  
+  init_cold();
+  
+  (*this).fill(f.scalar);
   }
 
 
@@ -305,8 +412,8 @@ Mat<eT>::init_warm(uword in_n_rows, uword in_n_cols)
     
     if(new_n_elem > 0)  { arma_extra_debug_print("Mat::init(): using local memory"); }
     
-    access::rw(mem)       = (new_n_elem == 0) ? nullptr : mem_local;
-    access::rw(n_alloc)   = 0;
+    access::rw(mem)     = (new_n_elem == 0) ? nullptr : mem_local;
+    access::rw(n_alloc) = 0;
     }
   else  // condition: new_n_elem > arma_config::mat_prealloc
     {
@@ -316,11 +423,18 @@ Mat<eT>::init_warm(uword in_n_rows, uword in_n_cols)
         {
         arma_extra_debug_print("Mat::init(): releasing memory");
         memory::release( access::rw(mem) );
+        
+        // in case memory::acquire() throws an exception
+        access::rw(mem)     = nullptr;
+        access::rw(n_rows)  = 0;
+        access::rw(n_cols)  = 0;
+        access::rw(n_elem)  = 0;
+        access::rw(n_alloc) = 0;
         }
       
       arma_extra_debug_print("Mat::init(): acquiring memory");
-      access::rw(mem)       = memory::acquire<eT>(new_n_elem);
-      access::rw(n_alloc)   = new_n_elem;
+      access::rw(mem)     = memory::acquire<eT>(new_n_elem);
+      access::rw(n_alloc) = new_n_elem;
       }
     else // condition: new_n_elem <= n_alloc
       {
@@ -1175,7 +1289,7 @@ Mat<eT>::steal_mem_col(Mat<eT>& x, const uword max_n_rows)
     }
   else
     {
-    Mat<eT> tmp(alt_n_rows, 1);
+    Mat<eT> tmp(alt_n_rows, 1, arma_nozeros_indicator());
     
     arrayops::copy( tmp.memptr(), x.memptr(), alt_n_rows );
     
@@ -4214,7 +4328,7 @@ Mat<eT>::shed_rows(const uword in_row1, const uword in_row2)
   const uword n_keep_front = in_row1;
   const uword n_keep_back  = n_rows - (in_row2 + 1);
   
-  Mat<eT> X(n_keep_front + n_keep_back, n_cols);
+  Mat<eT> X(n_keep_front + n_keep_back, n_cols, arma_nozeros_indicator());
   
   if(n_keep_front > 0)
     {
@@ -4248,7 +4362,7 @@ Mat<eT>::shed_cols(const uword in_col1, const uword in_col2)
   const uword n_keep_front = in_col1;
   const uword n_keep_back  = n_cols - (in_col2 + 1);
   
-  Mat<eT> X(n_rows, n_keep_front + n_keep_back);
+  Mat<eT> X(n_rows, n_keep_front + n_keep_back, arma_nozeros_indicator());
   
   if(n_keep_front > 0)
     {
@@ -4298,7 +4412,7 @@ Mat<eT>::shed_rows(const Base<uword, T1>& indices)
       }
     }
   
-  Col<uword> tmp3(n_rows);
+  Col<uword> tmp3(n_rows, arma_nozeros_indicator());
   
   uword* tmp3_mem = tmp3.memptr();
   
@@ -4368,7 +4482,7 @@ Mat<eT>::shed_cols(const Base<uword, T1>& indices)
       }
     }
   
-  Col<uword> tmp3(n_cols);
+  Col<uword> tmp3(n_cols, arma_nozeros_indicator());
   
   uword* tmp3_mem = tmp3.memptr();
   
@@ -4425,7 +4539,7 @@ Mat<eT>::insert_rows(const uword row_num, const uword N, const bool set_to_zero)
   
   if(N > 0)
     {
-    Mat<eT> out(t_n_rows + N, t_n_cols);
+    Mat<eT> out(t_n_rows + N, t_n_cols, arma_nozeros_indicator());
     
     if(A_n_rows > 0)
       {
@@ -4468,7 +4582,7 @@ Mat<eT>::insert_cols(const uword col_num, const uword N, const bool set_to_zero)
   
   if(N > 0)
     {
-    Mat<eT> out(t_n_rows, t_n_cols + N);
+    Mat<eT> out(t_n_rows, t_n_cols + N, arma_nozeros_indicator());
     
     if(A_n_cols > 0)
       {
@@ -4538,7 +4652,7 @@ Mat<eT>::insert_rows(const uword row_num, const Base<eT,T1>& X)
   
   if(C_n_rows > 0)
     {
-    Mat<eT> out( t_n_rows + C_n_rows, (std::max)(t_n_cols, C_n_cols) );
+    Mat<eT> out( t_n_rows + C_n_rows, (std::max)(t_n_cols, C_n_cols), arma_nozeros_indicator() );
     
     if(t_n_cols > 0)
       {
@@ -4611,7 +4725,7 @@ Mat<eT>::insert_cols(const uword col_num, const Base<eT,T1>& X)
   
   if(C_n_cols > 0)
     {
-    Mat<eT> out( (std::max)(t_n_rows, C_n_rows), t_n_cols + C_n_cols );
+    Mat<eT> out( (std::max)(t_n_rows, C_n_rows), t_n_cols + C_n_cols, arma_nozeros_indicator() );
     
     if(t_n_rows > 0)
       {
@@ -6797,6 +6911,30 @@ Mat<eT>::clean(const typename get_pod_type<eT>::result threshold)
 
 
 
+template<typename eT>
+inline
+const Mat<eT>&
+Mat<eT>::clamp(const eT min_val, const eT max_val)
+  {
+  arma_extra_debug_sigprint();
+  
+  if(is_cx<eT>::no)
+    {
+    arma_debug_check( (access::tmp_real(min_val) > access::tmp_real(max_val)), "Mat::clamp(): min_val must be less than max_val" );
+    }
+  else
+    {
+    arma_debug_check( (access::tmp_real(min_val) > access::tmp_real(max_val)), "Mat::clamp(): real(min_val) must be less than real(max_val)" );
+    arma_debug_check( (access::tmp_imag(min_val) > access::tmp_imag(max_val)), "Mat::clamp(): imag(min_val) must be less than imag(max_val)" );
+    }
+  
+  arrayops::clamp(memptr(), n_elem, min_val, max_val);
+  
+  return *this;
+  }
+
+
+
 //! fill the matrix with the specified value
 template<typename eT>
 inline
@@ -6812,7 +6950,7 @@ Mat<eT>::fill(const eT val)
 
 
 
-//! fill the matrix with the specified value
+//! fill the matrix with the specified pattern
 template<typename eT>
 template<typename fill_type>
 inline
@@ -6821,11 +6959,11 @@ Mat<eT>::fill(const fill::fill_class<fill_type>&)
   {
   arma_extra_debug_sigprint();
   
-  if(is_same_type<fill_type, fill::fill_zeros>::yes)  (*this).zeros();
-  if(is_same_type<fill_type, fill::fill_ones >::yes)  (*this).ones();
-  if(is_same_type<fill_type, fill::fill_eye  >::yes)  (*this).eye();
-  if(is_same_type<fill_type, fill::fill_randu>::yes)  (*this).randu();
-  if(is_same_type<fill_type, fill::fill_randn>::yes)  (*this).randn();
+  if(is_same_type<fill_type, fill::fill_zeros>::yes)  { (*this).zeros(); }
+  if(is_same_type<fill_type, fill::fill_ones >::yes)  { (*this).ones();  }
+  if(is_same_type<fill_type, fill::fill_eye  >::yes)  { (*this).eye();   }
+  if(is_same_type<fill_type, fill::fill_randu>::yes)  { (*this).randu(); }
+  if(is_same_type<fill_type, fill::fill_randn>::yes)  { (*this).randn(); }
   
   return *this;
   }
@@ -7121,7 +7259,6 @@ Mat<eT>::soft_reset()
     }
   else
     {
-    // fill(Datum<eT>::nan);
     zeros();
     }
   }
@@ -7319,6 +7456,10 @@ Mat<eT>::save(const std::string name, const file_type type) const
       return (*this).save(csv_name(name), type);
       break;
     
+    case ssv_ascii:
+      return (*this).save(csv_name(name), type);
+      break;
+    
     case coord_ascii:
       save_okay = diskio::save_coord_ascii(*this, name);
       break;
@@ -7423,21 +7564,25 @@ Mat<eT>::save(const csv_name& spec, const file_type type) const
   {
   arma_extra_debug_sigprint();
   
-  if(type != csv_ascii)
+  if( (type != csv_ascii) && (type != ssv_ascii) ) 
     {
     arma_stop_runtime_error("Mat::save(): unsupported file type for csv_name()");
     return false;
     }
   
-  const bool   do_trans  = bool(spec.opts.flags & csv_opts::flag_trans      );
-  const bool   no_header = bool(spec.opts.flags & csv_opts::flag_no_header  );
-        bool with_header = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool   do_trans     = bool(spec.opts.flags & csv_opts::flag_trans      );
+  const bool   no_header    = bool(spec.opts.flags & csv_opts::flag_no_header  );
+        bool with_header    = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool  use_semicolon = bool(spec.opts.flags & csv_opts::flag_semicolon  ) || (type == ssv_ascii);
   
   arma_extra_debug_print("Mat::save(csv_name): enabled flags:");
   
-  if(do_trans   )  { arma_extra_debug_print("trans");       }
-  if(no_header  )  { arma_extra_debug_print("no_header");   }
-  if(with_header)  { arma_extra_debug_print("with_header"); }
+  if(do_trans     )  { arma_extra_debug_print("trans");       }
+  if(no_header    )  { arma_extra_debug_print("no_header");   }
+  if(with_header  )  { arma_extra_debug_print("with_header"); }
+  if(use_semicolon)  { arma_extra_debug_print("semicolon");   }
+  
+  const char separator = (use_semicolon) ? char(';') : char(',');
   
   if(no_header)  { with_header = false; }
   
@@ -7453,9 +7598,9 @@ Mat<eT>::save(const csv_name& spec, const file_type type) const
       {
       const std::string& token = spec.header_ro.at(i);
       
-      if(token.find(',') != std::string::npos)
+      if(token.find(separator) != std::string::npos)
         {
-        arma_debug_warn_level(1, "Mat::save(): token within the header contains a comma: '", token, "'");
+        arma_debug_warn_level(1, "Mat::save(): token within the header contains the separator character: '", token, "'");
         return false;
         }
       }
@@ -7475,11 +7620,11 @@ Mat<eT>::save(const csv_name& spec, const file_type type) const
     {
     const Mat<eT> tmp = (*this).st();
     
-    save_okay = diskio::save_csv_ascii(tmp, spec.filename, spec.header_ro, with_header);
+    save_okay = diskio::save_csv_ascii(tmp, spec.filename, spec.header_ro, with_header, separator);
     }
   else
     {
-    save_okay = diskio::save_csv_ascii(*this, spec.filename, spec.header_ro, with_header);
+    save_okay = diskio::save_csv_ascii(*this, spec.filename, spec.header_ro, with_header, separator);
     }
   
   if(save_okay == false)  { arma_debug_warn_level(3, "Mat::save(): couldn't write; file: ", spec.filename); }
@@ -7511,7 +7656,11 @@ Mat<eT>::save(std::ostream& os, const file_type type) const
       break;
     
     case csv_ascii:
-      save_okay = diskio::save_csv_ascii(*this, os);
+      save_okay = diskio::save_csv_ascii(*this, os, char(','));
+      break;
+    
+    case ssv_ascii:
+      save_okay = diskio::save_csv_ascii(*this, os, char(';'));
       break;
     
     case coord_ascii:
@@ -7569,6 +7718,10 @@ Mat<eT>::load(const std::string name, const file_type type)
       break;
     
     case csv_ascii:
+      return (*this).load(csv_name(name), type);
+      break;
+    
+    case ssv_ascii:
       return (*this).load(csv_name(name), type);
       break;
     
@@ -7680,21 +7833,25 @@ Mat<eT>::load(const csv_name& spec, const file_type type)
   {
   arma_extra_debug_sigprint();
   
-  if(type != csv_ascii)
+  if( (type != csv_ascii) && (type != ssv_ascii) ) 
     {
     arma_stop_runtime_error("Mat::load(): unsupported file type for csv_name()");
     return false;
     }
   
-  const bool   do_trans  = bool(spec.opts.flags & csv_opts::flag_trans      );
-  const bool   no_header = bool(spec.opts.flags & csv_opts::flag_no_header  );
-        bool with_header = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool   do_trans     = bool(spec.opts.flags & csv_opts::flag_trans      );
+  const bool   no_header    = bool(spec.opts.flags & csv_opts::flag_no_header  );
+        bool with_header    = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool  use_semicolon = bool(spec.opts.flags & csv_opts::flag_semicolon  ) || (type == ssv_ascii);
   
   arma_extra_debug_print("Mat::load(csv_name): enabled flags:");
   
-  if(do_trans   )  { arma_extra_debug_print("trans");       }
-  if(no_header  )  { arma_extra_debug_print("no_header");   }
-  if(with_header)  { arma_extra_debug_print("with_header"); }
+  if(do_trans     )  { arma_extra_debug_print("trans");       }
+  if(no_header    )  { arma_extra_debug_print("no_header");   }
+  if(with_header  )  { arma_extra_debug_print("with_header"); }
+  if(use_semicolon)  { arma_extra_debug_print("semicolon");   }
+  
+  const char separator = (use_semicolon) ? char(';') : char(',');
   
   if(no_header)  { with_header = false; }
   
@@ -7705,7 +7862,7 @@ Mat<eT>::load(const csv_name& spec, const file_type type)
     {
     Mat<eT> tmp_mat;
     
-    load_okay = diskio::load_csv_ascii(tmp_mat, spec.filename, err_msg, spec.header_rw, with_header);
+    load_okay = diskio::load_csv_ascii(tmp_mat, spec.filename, err_msg, spec.header_rw, with_header, separator);
     
     if(load_okay)
       {
@@ -7720,7 +7877,7 @@ Mat<eT>::load(const csv_name& spec, const file_type type)
     }
   else
     {
-    load_okay = diskio::load_csv_ascii(*this, spec.filename, err_msg, spec.header_rw, with_header);
+    load_okay = diskio::load_csv_ascii(*this, spec.filename, err_msg, spec.header_rw, with_header, separator);
     }
   
   if(load_okay == false)
@@ -7783,7 +7940,11 @@ Mat<eT>::load(std::istream& is, const file_type type)
       break;
     
     case csv_ascii:
-      load_okay = diskio::load_csv_ascii(*this, is, err_msg);
+      load_okay = diskio::load_csv_ascii(*this, is, err_msg, char(','));
+      break;
+    
+    case ssv_ascii:
+      load_okay = diskio::load_csv_ascii(*this, is, err_msg, char(';'));
       break;
     
     case coord_ascii:
@@ -8929,6 +9090,7 @@ Mat<eT>::size() const
 
 template<typename eT>
 inline
+arma_warn_unused
 eT&
 Mat<eT>::front()
   {
@@ -8941,6 +9103,7 @@ Mat<eT>::front()
 
 template<typename eT>
 inline
+arma_warn_unused
 const eT&
 Mat<eT>::front() const
   {
@@ -8953,6 +9116,7 @@ Mat<eT>::front() const
 
 template<typename eT>
 inline
+arma_warn_unused
 eT&
 Mat<eT>::back()
   {
@@ -8965,6 +9129,7 @@ Mat<eT>::back()
 
 template<typename eT>
 inline
+arma_warn_unused
 const eT&
 Mat<eT>::back() const
   {
@@ -8982,6 +9147,16 @@ Mat<eT>::fixed<fixed_n_rows, fixed_n_cols>::fixed()
   : Mat<eT>( arma_fixed_indicator(), fixed_n_rows, fixed_n_cols, 0, ((use_extra) ? mem_local_extra : Mat<eT>::mem_local) )
   {
   arma_extra_debug_sigprint_this(this);
+  
+  #if (!defined(ARMA_DONT_ZERO_INIT))
+    {
+    arma_extra_debug_print("Mat::fixed::constructor: zeroing memory");
+    
+    eT* mem_use = (use_extra) ? &(mem_local_extra[0]) : &(mem_local[0]);
+    
+    arrayops::inplace_set_fixed<eT,fixed_n_elem>( mem_use, eT(0) );
+    }
+  #endif
   }
 
 
@@ -9004,6 +9179,19 @@ Mat<eT>::fixed<fixed_n_rows, fixed_n_cols>::fixed(const fixed<fixed_n_rows, fixe
 
 template<typename eT>
 template<uword fixed_n_rows, uword fixed_n_cols>
+inline
+Mat<eT>::fixed<fixed_n_rows, fixed_n_cols>::fixed(const fill::scalar_holder<eT> f)
+  : Mat<eT>( arma_fixed_indicator(), fixed_n_rows, fixed_n_cols, 0, ((use_extra) ? mem_local_extra : Mat<eT>::mem_local) )
+  {
+  arma_extra_debug_sigprint_this(this);
+  
+  (*this).fill(f.scalar);
+  }
+
+
+
+template<typename eT>
+template<uword fixed_n_rows, uword fixed_n_cols>
 template<typename fill_type>
 inline
 Mat<eT>::fixed<fixed_n_rows, fixed_n_cols>::fixed(const fill::fill_class<fill_type>&)
@@ -9011,11 +9199,11 @@ Mat<eT>::fixed<fixed_n_rows, fixed_n_cols>::fixed(const fill::fill_class<fill_ty
   {
   arma_extra_debug_sigprint_this(this);
   
-  if(is_same_type<fill_type, fill::fill_zeros>::yes)  (*this).zeros();
-  if(is_same_type<fill_type, fill::fill_ones >::yes)  (*this).ones();
-  if(is_same_type<fill_type, fill::fill_eye  >::yes)  (*this).eye();
-  if(is_same_type<fill_type, fill::fill_randu>::yes)  (*this).randu();
-  if(is_same_type<fill_type, fill::fill_randn>::yes)  (*this).randn();
+  if(is_same_type<fill_type, fill::fill_zeros>::yes)  { (*this).zeros(); }
+  if(is_same_type<fill_type, fill::fill_ones >::yes)  { (*this).ones();  }
+  if(is_same_type<fill_type, fill::fill_eye  >::yes)  { (*this).eye();   }
+  if(is_same_type<fill_type, fill::fill_randu>::yes)  { (*this).randu(); }
+  if(is_same_type<fill_type, fill::fill_randn>::yes)  { (*this).randn(); }
   }
 
 

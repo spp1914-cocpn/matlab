@@ -338,6 +338,8 @@ class SpMat : public SpBase< eT, SpMat<eT> >
   
   inline const SpMat& clean(const pod_type threshold);
   
+  inline const SpMat& clamp(const eT min_val, const eT max_val);
+  
   inline const SpMat& zeros();
   inline const SpMat& zeros(const uword in_elem);
   inline const SpMat& zeros(const uword in_rows, const uword in_cols);
@@ -358,6 +360,7 @@ class SpMat : public SpBase< eT, SpMat<eT> >
   inline const SpMat& sprandn(const SizeMat& s,                         const double density);
   
   inline void reset();
+  inline void reset_cache();
   
   //! don't use this unless you're writing internal Armadillo code
   inline void reserve(const uword in_rows, const uword in_cols, const uword new_n_nonzero);

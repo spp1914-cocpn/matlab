@@ -133,7 +133,7 @@ namespace RecedingHorizonUdpLikeController {
             }            
    
             static Costate createTerminalCostate(Dynamics& dyn, const dmat& terminalAugQ) {
-                dcube terminalPu = dcube(terminalAugQ.n_rows, terminalAugQ.n_cols, dyn.getNumModes());
+                dcube terminalPu = dcube(terminalAugQ.n_rows, terminalAugQ.n_cols, dyn.getNumModes(), fill::none);
                 terminalPu.each_slice() = terminalAugQ;
 
                 Costate terminalCostate(terminalPu, zeros<dcube>(size(terminalPu)), zeros<dcolvec>(dyn.getNumModes()),

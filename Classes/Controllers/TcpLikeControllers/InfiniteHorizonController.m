@@ -1,4 +1,4 @@
-classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChangeable
+classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChangeable & ModelParamsChangeable
     % Implementation of the optimal infinite horizon linear sequence-based LQG controller for
     % NCS with a TCP-like network connecting the controller and the actuator.
     %
@@ -21,7 +21,7 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -62,16 +62,20 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
         G = [];
         % dimension of the augmented system state; 
         % (positive integer <dimX+dimU*sequenceLength*(sequenceLength-1)/2>)
-        dimState = -1;
+        dimState = -1;        
         
-        augA;
-        augB;
         augQ;
         augR;
     end
 
     properties (SetAccess = immutable, GetAccess = public)
-        % status of controller initialization (integer with following values)
+        useMexImplementation(1,1) logical = true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is faster, but can produce slightly different results
+    end
+    
+    properties (SetAccess = private, GetAccess = public)
+        % status of controller computation (integer with following values)
         %   1 : successful
         %   0 : maybe successful
         %       (controller gain diverged or its convergence was not
@@ -79,14 +83,10 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
         %  -1 : maybe successful
         %       (numerical problems occured; controller works with best
         %       gain obtained so far)
-        %  -2 : not usscessful; 
+        %  -2 : not sucessful; 
         %       (system is not stabilizable over the network; no gain
         %       computed)
         status = 0;
-        
-        useMexImplementation(1,1) logical = true; 
-        % by default, we use the C++ (mex) implementation for computation of controller gains
-        % this is faster, but can produce slightly different results
     end
     
     properties (SetAccess = private, GetAccess = protected)
@@ -95,6 +95,9 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
         % (column vector of dimension <dimState>)
         sysState = [];
         
+        augA;
+        augB;
+        
         % Markov chain
         % transition matrix of the Markov chain;
         % (matrix of dimension <sequenceLength+1> x <sequenceLength+1>)
@@ -102,6 +105,8 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
         % control gain matrix: U = -L*sysState;
         % (matrix of dimension <dimU*sequenceLength> x <dimState>)
         L = [];
+        
+        recomputeGain = false;
     end
     
     properties (Constant, Access = public)
@@ -182,13 +187,13 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
                 [this.L, this.status] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
                 assert(this.status ~= -2, ...
                     'InfiniteHorizonController:ConvergenceImpossible', ...
-                    '** Stabizilizing infinite time horizon controller does not exist **');
+                    '** Stabilizing infinite time horizon controller does not exist **');
             else
                 
                 [P, this.status] = this.computeSteadyStateControlCovarianceMatrices(A);
                 assert(this.status ~= -2, ...
                     'InfiniteHorizonController:ConvergenceImpossible', ...
-                    '** Stabizilizing infinite time horizon controller does not exist **');
+                    '** Stabilizing infinite time horizon controller does not exist **');
                 this.L = this.computeSteadyStateControlGainMatrices(P);
             end
         end
@@ -214,14 +219,9 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
                 Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
             if ~isequal(newMat, this.transitionMatrix)
                 this.transitionMatrix = newMat;
-                % and we must recompute the controller gain
-                A = this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1); 
-                if this.useMexImplementation
-                    [this.L, ~] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
-                else
-                    [P, ~] = this.computeSteadyStateControlCovarianceMatrices(A);
-                    this.L = this.computeSteadyStateControlGainMatrices(P);           
-                end     
+                this.recomputeGain = true;
+                % and we must remember to recompute the controller gain
+                this.recomputeGain = true;   
             end
         end
         
@@ -229,15 +229,33 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
         function changeTransitionMatrix(this, newTransitionMatrix)
             if ~isequal(newTransitionMatrix, this.transitionMatrix)
                 this.transitionMatrix = newTransitionMatrix;
-                % and we must recompute the controller gain
-                A = this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1);
-                if this.useMexImplementation
-                    [this.L, ~] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
-                else
-                    [P, ~] = this.computeSteadyStateControlCovarianceMatrices(A);
-                    this.L = this.computeSteadyStateControlGainMatrices(P);           
-                end
+                % and we must remember to recompute the controller gain
+                this.recomputeGain = true;                
             end
+        end
+        
+        %% changeModelParameters
+        function changeModelParameters(this, newA, newB, ~)
+            Validator.validateSystemMatrix(newA, this.dimPlantState);
+            Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);
+            
+            [~, ~, H, J] = Utility.createActuatorMatrices(this.sequenceLength, this.dimPlantInput);
+            % in the the augmented model, F, G, H, J do not change
+            % so only adapt the "first block row" in augA and augB            
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1) = newA;
+            for i=2:this.sequenceLength
+                % update B*H for all but first and last mode
+                % H is empty for first and last mode
+                this.augA(1:this.dimPlantState, :, i) = [newA, newB * H(:, :, i)];                
+            end
+            this.augA(1:this.dimPlantState, 1:this.dimPlantState, this.sequenceLength + 1) = newA;            
+            % augB is only different for first mode (multiply B by J)
+            % B*J is zero for all modes but first
+            %
+            this.augB(1:this.dimPlantState, :, 1) = newB * J(:, :, 1);
+            
+            % and we must remember to recompute the controller gain
+            this.recomputeGain = true;   
         end
     end 
 
@@ -249,6 +267,48 @@ classdef InfiniteHorizonController < SequenceBasedController & CaDelayProbsChang
                 'InfiniteHorizonController:DoControlSequenceComputation:InvalidMode', ...
                 '** Input parameter <mode> (previous plant mode/mode estimate) must be in {1, ... %d} **', ...
                 this.sequenceLength + 1);
+            
+            if this.recomputeGain
+                % we need to recompute the gain L, at least one parameter
+                % (A, B, Q, R, W, transition matrix) has changed
+                A = this.augA(1:this.dimPlantState, 1:this.dimPlantState, 1);
+                if this.useMexImplementation
+                    [L_new, this.status] = mex_InfiniteHorizonController(this.augA, this.augB, this.augQ, this.augR, this.transitionMatrix, A);
+                    switch this.status
+                        case -2 % stabilization not possible
+                            warning('InfiniteHorizonController:ConvergenceImpossible', ...
+                                '** Stabizilizing infinite time horizon controller does not exist, previous gain is re-used **');
+                        case -1 % numerical problems
+                            warning('InfiniteHorizonController:NumericalProblems', ...
+                                '** Numerical problems detected, computed gain may not be optimal **');
+                            this.L = L_new;
+                        case 0 % maybe successful
+                            warning('InfiniteHorizonController:MaybeSuccessful', ...
+                                '** Convergence could not be detected, computed gain may not be optimal **');
+                            this.L = L_new;
+                        case 1 % successful call, convergence
+                            this.L = L_new;
+                    end 
+                else
+                    [P, this.status] = this.computeSteadyStateControlCovarianceMatrices(A);
+                    switch this.status
+                        case -2 % stabilization not possible
+                            warning('InfiniteHorizonController:ConvergenceImpossible', ...
+                                '** Stabizilizing infinite time horizon controller does not exist, previous gain is re-used **');
+                        case -1 % numerical problems
+                            warning('InfiniteHorizonController:NumericalProblems', ...
+                                '** Numerical problems detected, computed gain may not be optimal **');
+                            this.L = this.computeSteadyStateControlGainMatrices(P);
+                        case 0 % maybe successful
+                            warning('InfiniteHorizonController:MaybeSuccessful', ...
+                                '** Convergence could not be detected, computed gain may not be optimal **');
+                            this.L = this.computeSteadyStateControlGainMatrices(P);
+                        case 1 % successful call, convergence
+                            this.L = this.computeSteadyStateControlGainMatrices(P);
+                    end                  
+                end
+                this.recomputeGain = false;
+             end
             
             [stateMean, ~] = state.getMeanAndCov();
             

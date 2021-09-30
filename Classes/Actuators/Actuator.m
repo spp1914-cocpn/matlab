@@ -4,7 +4,7 @@ classdef Actuator < handle
     % carry single control inputs. Output is a control input that is applied to the plant. 
     % The actuator is equipped with a buffer where most recent (indicated
     % by the time stamp) control input is stored. The actuator applies the control 
-    % input as long as it gets outdated, as configured by the user, or a newe packet arrives. 
+    % input until it gets outdated, as configured by the user, or a newer packet arrives. 
     % If no control input has been received yet, or the currently kept one has become outdated, 
     % a configurable default value is applied.
     %

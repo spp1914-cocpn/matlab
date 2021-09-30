@@ -5,7 +5,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -65,7 +65,7 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
     
     methods (Access = private)
         %% computeExpectedInputs
-        function inputs = computeExpectedInputs(this, transitionMat)
+        function inputs = computeExpectedInputs(this, transitionMat, A, B)
             % in this setup, the current input must arrive without delay,
             % or plant evolves open-loop
             % hence, in this setup, G and F are not existent
@@ -75,18 +75,23 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             % differ
             if nargin == 1
                transitionMat = this.transitionMatrix;
+               A = this.A_ctrb;
+               B = this.B_ctrb;
+            elseif nargin == 2
+               A = this.A_ctrb;
+               B = this.B_ctrb;
             end            
             
             % first mode
             R_1 = this.R;
             Q_1 = this.Q;
-            A_1 = this.A_ctrb;
-            B_1 = this.B_ctrb;
+            A_1 = A;
+            B_1 = B;
                        
             % second mode
             R_2 = zeros(this.dimU);
             %Q_2 = this.Q;
-            A_2 = this.A_ctrb;
+            A_2 = A;
             B_2 = zeros(this.dimX, this.dimU);
             
             % resulting stationary P matrix should be the same for both modes
@@ -336,10 +341,10 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             controller.changeCaDelayProbs(newDelayProbs);
             
             % this is the resulting transition matrix
-            newTranstionMatrix = Utility.calculateDelayTransitionMatrix(...
+            newTransitionMatrix = Utility.calculateDelayTransitionMatrix(...
                     Utility.truncateDiscreteProbabilityDistribution(newDelayProbs, this.sequenceLength + 1));
                 
-            expectedInputs = this.computeExpectedInputs(newTranstionMatrix);
+            expectedInputs = this.computeExpectedInputs(newTransitionMatrix);
             % check both modes
             % first mode: previous input arrived at plant
             actualInput = controller.computeControlSequence(this.stateDistribution, 1);
@@ -347,6 +352,97 @@ classdef InfiniteHorizonControllerTest< BaseTcpLikeControllerTest
             
             % second mode: previous input did not arrive at plant
             actualInput = controller.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+        end
+%%
+%%
+        %% testChangeModelParametersInvalidAMatrix
+        function testChangeModelParametersInvalidAMatrix(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            
+            expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
+            W = eye(this.dimX);
+            
+            invalidA = eye(this.dimX + 1, this.dimX); % not square
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX + 1); % matrix is square, but of wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, W), ...
+                expectedErrId);
+            
+            invalidA = eye(this.dimX); % correct dims, but inf
+            invalidA(end, end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(invalidA, this.B, W), ...
+                expectedErrId);
+        end
+        
+        %% testChangeModelParametersInvalidInputMatrix
+        function testChangeModelParametersInvalidInputMatrix(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            
+            expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
+            W = eye(this.dimX);
+            
+            invalidB = this.B(1,1); % wrong dimension
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, W), expectedErrId);
+                        
+            invalidB = this; % not a matrix
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, W), expectedErrId);
+                        
+            invalidB = this.B; % not finite
+            invalidB(end) = inf;
+            this.verifyError(@() this.controllerUnderTest.changeModelParameters(this.A, invalidB, W), expectedErrId);
+        end
+        
+         %% testChangeModelParameters
+        function testChangeModelParameters(this)           
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            
+            % sanity check: use the parameters as before
+            this.controllerUnderTest.changeModelParameters(this.A_ctrb, this.B_ctrb)
+            
+            expectedInputs = this.computeExpectedInputs();
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % another sanity check: changing W should not matter
+            % sanity check: use the parameters as before
+            newW = eye(this.dimX);
+            this.controllerUnderTest.changeModelParameters(this.A_ctrb, this.B_ctrb, newW);            
+            
+            % check both modes
+            % first mode: previous input arrived at plant
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % now change A and B
+            newA = this.A_ctrb - 0.1 * eye(this.dimX);
+            newB = this.B_ctrb + 2 * eye(size(this.B_ctrb));
+            this.assertEqual(rank(ctrb(newA, newB)), this.dimX);
+            
+            this.controllerUnderTest.changeModelParameters(newA, newB);                        
+            
+            expectedInputs = this.computeExpectedInputs(this.transitionMatrix, newA, newB);
+            % check both modes
+            % first mode: previous input arrived at plant
+            % this call triggers the recomputation of the gain
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 1);
+            this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
+            
+            % second mode: previous input did not arrive at plant
+            actualInput = this.controllerUnderTest.computeControlSequence(this.stateDistribution, 2);
             this.verifyEqual(actualInput, expectedInputs, 'AbsTol', 1e-11);
         end
 %%

@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -61,10 +61,10 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     }
     
     // we only need K_{k+1} to compute K_k and L_k
-    dcube K_k(size(augA)); 
+    dcube K_k(size(augA), fill::none); 
     K_k.each_slice() = terminalK; // K_N is the same for all modes
     // the same for sigma: only sigma_{k+1} required
-    dmat sigma_k(refWeightings.n_rows, numModes);
+    dmat sigma_k(refWeightings.n_rows, numModes, fill::none);
     sigma_k.each_col() = refWeightings.tail_cols(1);
     
     double* dstL = mxGetPr(outputArrays[0]);
@@ -81,9 +81,9 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
         
         dcube QAKA = augQ;
         dcube RBKB = augR;
-        dcube BKA(augB.n_cols, augA.n_cols, numModes);
-        dmat Asigma(augA.n_cols, numModes);
-        dmat Bsigma(augB.n_cols, numModes);
+        dcube BKA(augB.n_cols, augA.n_cols, numModes, fill::none);
+        dmat Asigma(augA.n_cols, numModes, fill::none);
+        dmat Bsigma(augB.n_cols, numModes, fill::none);
                 
         for (uword i=0; i< numModes; ++i) {
             QAKA.slice(i) += symmatu(augA.slice(i).t() * K_prev.slice(i) * augA.slice(i)); // ensure symmetry

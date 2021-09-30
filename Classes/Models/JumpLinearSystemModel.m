@@ -110,6 +110,14 @@ classdef JumpLinearSystemModel < SystemModel & matlab.mixin.Copyable
             input = cell2mat(cellfun(@(model) model.getSystemInput(), this.modeSystemModels, 'UniformOutput', false));
          end
         
+        %% setSystemParametersForMode
+        function setSystemParametersForMode(this, sysMatrix, sysInputMatrix, sysNoiseCov, mode)
+            this.checkMode(mode);
+            this.modeSystemModels{mode}.setSystemMatrix(sysMatrix);
+            this.modeSystemModels{mode}.setSystemInputMatrix(sysInputMatrix);
+            this.modeSystemModels{mode}.setNoise(sysNoiseCov);
+        end
+         
         %% setSystemMatrixForMode
         function setSystemMatrixForMode(this, sysMatrix, mode)
             this.checkMode(mode);

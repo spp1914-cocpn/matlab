@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -43,9 +43,8 @@ int computeSteadyStateControlCovariance(const dcube& augA, const dcube& augB, co
     
     int counter = 0;
     //drowvec convergenceDiffMin(numModes);
-    dcube convergenceDiffMin(1,1, numModes);
-    convergenceDiffMin.fill(MAX_ITERATION_DIFF);
-        
+    dcube convergenceDiffMin(1,1, numModes, fill::value(MAX_ITERATION_DIFF));
+            
     dcube currentP = zeros<dcube>(size(augA));
     dcube previousP = currentP;
     dcube Pmin = currentP;
@@ -106,7 +105,7 @@ int computeSteadyStateControlCovariance(const dcube& augA, const dcube& augB, co
                     
         dcube QAPA = augQ;
         dcube RBPB = augR;
-        dcube APB(augA.n_rows, augB.n_cols, numModes);
+        dcube APB(augA.n_rows, augB.n_cols, numModes, fill::none);
         
         for (auto i=0; i < numModes; ++i) {            
             QAPA.slice(i) += symmatu(augA.slice(i).t() * previousP.slice(i) * augA.slice(i));
@@ -172,7 +171,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
     int status = computeSteadyStateControlCovariance(augA, augB, augQ, augR, transitionMatrix, Pout);
     // now we can compute the actual gain matrices
     dcube RBPB = augR;
-    dcube BPA(augB.n_cols, augA.n_rows, numModes);
+    dcube BPA(augB.n_cols, augA.n_rows, numModes, fill::none);
 
     for (auto i=0; i < numModes; ++i) {
         RBPB.slice(i) += symmatu(augB.slice(i).t() * Pout.slice(i) * augB.slice(i));

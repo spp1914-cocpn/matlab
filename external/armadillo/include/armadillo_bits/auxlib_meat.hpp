@@ -842,7 +842,7 @@ auxlib::eig_gen
     
     vals.set_size(X.n_rows, 1);
     
-    Mat<T> tmp(1,1);
+    Mat<T> tmp(1, 1, arma_nozeros_indicator());
     
     if(vecs_on)
       {
@@ -1027,7 +1027,7 @@ auxlib::eig_gen_balance
     
     vals.set_size(X.n_rows, 1);
     
-    Mat<T> tmp(1,1);
+    Mat<T> tmp(1, 1, arma_nozeros_indicator());
     
     if(vecs_on)
       {
@@ -1241,8 +1241,8 @@ auxlib::eig_gen_twosided
     lvecs.set_size(X.n_rows, X.n_rows);
     rvecs.set_size(X.n_rows, X.n_rows);
     
-    Mat<T> ltmp(X.n_rows, X.n_rows);
-    Mat<T> rtmp(X.n_rows, X.n_rows);
+    Mat<T> ltmp(X.n_rows, X.n_rows, arma_nozeros_indicator());
+    Mat<T> rtmp(X.n_rows, X.n_rows, arma_nozeros_indicator());
     
     char     jobvl = 'V';
     char     jobvr = 'V';
@@ -1418,8 +1418,8 @@ auxlib::eig_gen_twosided_balance
     lvecs.set_size(X.n_rows, X.n_rows);
     rvecs.set_size(X.n_rows, X.n_rows);
     
-    Mat<T> ltmp(X.n_rows, X.n_rows);
-    Mat<T> rtmp(X.n_rows, X.n_rows);
+    Mat<T> ltmp(X.n_rows, X.n_rows, arma_nozeros_indicator());
+    Mat<T> rtmp(X.n_rows, X.n_rows, arma_nozeros_indicator());
     
     char     bal   = 'B';
     char     jobvl = 'V';
@@ -1622,7 +1622,7 @@ auxlib::eig_pair
     
     vals.set_size(A.n_rows, 1);
     
-    Mat<T> tmp(1,1);
+    Mat<T> tmp(1, 1, arma_nozeros_indicator());
     
     if(vecs_on)
       {
@@ -1871,8 +1871,8 @@ auxlib::eig_pair_twosided
     lvecs.set_size(A.n_rows, A.n_rows);
     rvecs.set_size(A.n_rows, A.n_rows);
     
-    Mat<T> ltmp(A.n_rows, A.n_rows);
-    Mat<T> rtmp(A.n_rows, A.n_rows);
+    Mat<T> ltmp(A.n_rows, A.n_rows, arma_nozeros_indicator());
+    Mat<T> rtmp(A.n_rows, A.n_rows, arma_nozeros_indicator());
     
     char     jobvl = 'V';
     char     jobvr = 'V';
@@ -2636,6 +2636,61 @@ auxlib::chol_band_common(Mat<eT>& X, const uword KD, const uword layout)
   }
 
 
+
+template<typename eT>
+inline
+bool
+auxlib::chol_pivot(Mat<eT>& X, Mat<uword>& P, const uword layout)
+  {
+  arma_extra_debug_sigprint();
+  
+  #if defined(ARMA_USE_LAPACK)
+    {
+    typedef typename get_pod_type<eT>::result T;
+    
+    arma_debug_assert_blas_size(X);
+    
+    char     uplo = (layout == 0) ? 'U' : 'L';
+    blas_int n    = blas_int(X.n_rows);
+    blas_int rank = 0;
+    T        tol  = T(-1);
+    blas_int info = 0;
+    
+    podarray<blas_int> ipiv(  X.n_rows);
+    podarray<T>        work(2*X.n_rows);
+    
+    ipiv.zeros();
+    
+    arma_extra_debug_print("lapack::pstrf()");
+    lapack::pstrf(&uplo, &n, X.memptr(), &n, ipiv.memptr(), &rank, &tol, work.memptr(), &info);
+    
+    if(info != 0)  { return false; }
+    
+    X = (layout == 0) ? trimatu(X) : trimatl(X);  // trimatu() and trimatl() return the same type
+    
+    P.set_size(X.n_rows, 1);
+    
+    for(uword i=0; i < X.n_rows; ++i)
+      {
+      P[i] = uword(ipiv[i] - 1);  // take into account that Fortran counts from 1
+      }
+    
+    return true;
+    }
+  #else
+    {
+    arma_ignore(X);
+    arma_ignore(P);
+    arma_ignore(layout);
+    
+    arma_stop_logic_error("chol(): use of LAPACK must be enabled");
+    return false;
+    }
+  #endif
+  }
+
+
+
 //
 // hessenberg decomposition
 template<typename eT, typename T1>
@@ -3086,8 +3141,8 @@ auxlib::svd(Col<eT>& S, Mat<eT>& A)
     
     arma_debug_assert_blas_size(A);
     
-    Mat<eT> U(1, 1);
-    Mat<eT> V(1, A.n_cols);
+    Mat<eT> U(1, 1,        arma_nozeros_indicator());
+    Mat<eT> V(1, A.n_cols, arma_nozeros_indicator());
     
     char jobu  = 'N';
     char jobvt = 'N';
@@ -3154,8 +3209,8 @@ auxlib::svd(Col<T>& S, Mat< std::complex<T> >& A)
     
     arma_debug_assert_blas_size(A);
     
-    Mat<eT> U(1, 1);
-    Mat<eT> V(1, A.n_cols);
+    Mat<eT> U(1, 1,        arma_nozeros_indicator());
+    Mat<eT> V(1, A.n_cols, arma_nozeros_indicator());
     
     char jobu  = 'N';
     char jobvt = 'N';
@@ -3616,8 +3671,8 @@ auxlib::svd_dc(Col<eT>& S, Mat<eT>& A)
     
     arma_debug_assert_blas_size(A);
     
-    Mat<eT> U(1, 1);
-    Mat<eT> V(1, 1);
+    Mat<eT> U(1, 1, arma_nozeros_indicator());
+    Mat<eT> V(1, 1, arma_nozeros_indicator());
     
     char jobz = 'N';
     
@@ -3686,8 +3741,8 @@ auxlib::svd_dc(Col<T>& S, Mat< std::complex<T> >& A)
     
     arma_debug_assert_blas_size(A);
     
-    Mat<eT> U(1, 1);
-    Mat<eT> V(1, 1);
+    Mat<eT> U(1, 1, arma_nozeros_indicator());
+    Mat<eT> V(1, 1, arma_nozeros_indicator());
     
     char jobz = 'N';
     
@@ -4091,7 +4146,7 @@ auxlib::solve_square_tiny(Mat<typename T1::elem_type>& out, const Mat<typename T
   
   const uword A_n_rows = A.n_rows;
   
-  Mat<eT> A_inv(A_n_rows, A_n_rows);
+  Mat<eT> A_inv(A_n_rows, A_n_rows, arma_nozeros_indicator());
   
   const bool status = op_inv::apply_tiny_noalias(A_inv, A);
   
@@ -4113,7 +4168,7 @@ auxlib::solve_square_tiny(Mat<typename T1::elem_type>& out, const Mat<typename T
   
   if(UB.is_alias(out))
     {
-    Mat<eT> tmp(A_n_rows, B_n_cols);
+    Mat<eT> tmp(A_n_rows, B_n_cols, arma_nozeros_indicator());
     
     gemm_emul<false,false,false,false>::apply(tmp, A_inv, B);
     
@@ -4325,7 +4380,7 @@ auxlib::solve_square_refine(Mat<typename T1::pod_type>& out, typename T1::pod_ty
     blas_int info  = blas_int(0);
     eT       rcond = eT(0);
     
-    Mat<eT> AF(A.n_rows, A.n_rows);
+    Mat<eT> AF(A.n_rows, A.n_rows, arma_nozeros_indicator());
     
     podarray<blas_int>  IPIV(  A.n_rows);
     podarray<eT>           R(  A.n_rows);
@@ -4427,7 +4482,7 @@ auxlib::solve_square_refine(Mat< std::complex<typename T1::pod_type> >& out, typ
     blas_int info  = blas_int(0);
     T        rcond = T(0);
     
-    Mat<eT> AF(A.n_rows, A.n_rows);
+    Mat<eT> AF(A.n_rows, A.n_rows, arma_nozeros_indicator());
     
     podarray<blas_int>  IPIV(  A.n_rows);
     podarray< T>           R(  A.n_rows);
@@ -4773,7 +4828,7 @@ auxlib::solve_sympd_refine(Mat<typename T1::pod_type>& out, typename T1::pod_typ
     blas_int info  = blas_int(0);
     eT       rcond = eT(0);
     
-    Mat<eT> AF(A.n_rows, A.n_rows);
+    Mat<eT> AF(A.n_rows, A.n_rows, arma_nozeros_indicator());
     
     podarray<eT>           S(  A.n_rows);
     podarray<eT>        FERR(  B.n_cols);
@@ -4862,7 +4917,7 @@ auxlib::solve_sympd_refine(Mat< std::complex<typename T1::pod_type> >& out, type
     blas_int info  = blas_int(0);
     T        rcond = T(0);
     
-    Mat<eT> AF(A.n_rows, A.n_rows);
+    Mat<eT> AF(A.n_rows, A.n_rows, arma_nozeros_indicator());
     
     podarray< T>           S(  A.n_rows);
     podarray< T>        FERR(  B.n_cols);
@@ -4921,7 +4976,7 @@ auxlib::solve_rect_fast(Mat<typename T1::elem_type>& out, Mat<typename T1::elem_
     
     arma_debug_assert_blas_size(A,B);
     
-    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols );
+    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols, arma_nozeros_indicator() );
     
     if(arma::size(tmp) == arma::size(B))
       {
@@ -5019,7 +5074,7 @@ auxlib::solve_rect_rcond(Mat<typename T1::elem_type>& out, typename T1::pod_type
     
     arma_debug_assert_blas_size(A,B);
     
-    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols );
+    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols, arma_nozeros_indicator() );
     
     if(arma::size(tmp) == arma::size(B))
       {
@@ -5072,8 +5127,7 @@ auxlib::solve_rect_rcond(Mat<typename T1::elem_type>& out, typename T1::pod_type
       // xGELS  docs: for M >= N, A contains details of its QR decomposition as returned by xGEQRF
       // xGEQRF docs: elements on and above the diagonal contain the min(M,N)-by-N upper trapezoidal matrix R
       
-      Mat<eT> R(A.n_cols, A.n_cols);
-      R.zeros();
+      Mat<eT> R(A.n_cols, A.n_cols, arma_zeros_indicator());
       
       for(uword col=0; col < A.n_cols; ++col)
         {
@@ -5096,8 +5150,7 @@ auxlib::solve_rect_rcond(Mat<typename T1::elem_type>& out, typename T1::pod_type
       // xGELS  docs: for M < N, A contains details of its LQ decomposition as returned by xGELQF
       // xGELQF docs: elements on and below the diagonal contain the M-by-min(M,N) lower trapezoidal matrix L
       
-      Mat<eT> L(A.n_rows, A.n_rows);
-      L.zeros();
+      Mat<eT> L(A.n_rows, A.n_rows, arma_zeros_indicator());
       
       for(uword col=0; col < A.n_rows; ++col)
         {
@@ -5163,7 +5216,7 @@ auxlib::solve_approx_svd(Mat<typename T1::pod_type>& out, Mat<typename T1::pod_t
     
     arma_debug_assert_blas_size(A,B);
     
-    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols );
+    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols, arma_nozeros_indicator() );
     
     if(arma::size(tmp) == arma::size(B))
       {
@@ -5284,7 +5337,7 @@ auxlib::solve_approx_svd(Mat< std::complex<typename T1::pod_type> >& out, Mat< s
     
     arma_debug_assert_blas_size(A,B);
     
-    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols );
+    Mat<eT> tmp( (std::max)(A.n_rows, A.n_cols), B.n_cols, arma_nozeros_indicator() );
     
     if(arma::size(tmp) == arma::size(B))
       {
@@ -5758,7 +5811,7 @@ auxlib::solve_band_refine(Mat<typename T1::pod_type>& out, typename T1::pod_type
     
     out.set_size(N, B.n_cols);
     
-    Mat<eT> AFB(2*KL+KU+1, N);
+    Mat<eT> AFB(2*KL+KU+1, N, arma_nozeros_indicator());
     
     char     fact  = (equilibrate) ? 'E' : 'N'; 
     char     trans = 'N';
@@ -5867,7 +5920,7 @@ auxlib::solve_band_refine(Mat< std::complex<typename T1::pod_type> >& out, typen
     
     out.set_size(N, B.n_cols);
     
-    Mat<eT> AFB(2*KL+KU+1, N);
+    Mat<eT> AFB(2*KL+KU+1, N, arma_nozeros_indicator());
     
     char     fact  = (equilibrate) ? 'E' : 'N'; 
     char     trans = 'N';

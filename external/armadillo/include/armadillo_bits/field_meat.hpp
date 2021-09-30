@@ -470,6 +470,7 @@ field<oT>::copy_size(const field<oT2>& x)
 //! linear element accessor (treats the field as a vector); no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::operator[] (const uword i)
   {
@@ -481,6 +482,7 @@ field<oT>::operator[] (const uword i)
 //! linear element accessor (treats the field as a vector); no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::operator[] (const uword i) const
   {
@@ -492,6 +494,7 @@ field<oT>::operator[] (const uword i) const
 //! linear element accessor (treats the field as a vector); no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::at(const uword i)
   {
@@ -503,6 +506,7 @@ field<oT>::at(const uword i)
 //! linear element accessor (treats the field as a vector); no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::at(const uword i) const
   {
@@ -514,6 +518,7 @@ field<oT>::at(const uword i) const
 //! linear element accessor (treats the field as a vector); bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::operator() (const uword i)
   {
@@ -527,6 +532,7 @@ field<oT>::operator() (const uword i)
 //! linear element accessor (treats the field as a vector); bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::operator() (const uword i) const
   {
@@ -540,6 +546,7 @@ field<oT>::operator() (const uword i) const
 //! element accessor; bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::operator() (const uword in_row, const uword in_col)
   {
@@ -553,6 +560,7 @@ field<oT>::operator() (const uword in_row, const uword in_col)
 //! element accessor; bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::operator() (const uword in_row, const uword in_col) const
   {
@@ -566,6 +574,7 @@ field<oT>::operator() (const uword in_row, const uword in_col) const
 //! element accessor; bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::operator() (const uword in_row, const uword in_col, const uword in_slice)
   {
@@ -579,6 +588,7 @@ field<oT>::operator() (const uword in_row, const uword in_col, const uword in_sl
 //! element accessor; bounds checking not done when ARMA_NO_DEBUG is defined
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::operator() (const uword in_row, const uword in_col, const uword in_slice) const
   {
@@ -592,6 +602,7 @@ field<oT>::operator() (const uword in_row, const uword in_col, const uword in_sl
 //! element accessor; no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::at(const uword in_row, const uword in_col)
   {
@@ -603,6 +614,7 @@ field<oT>::at(const uword in_row, const uword in_col)
 //! element accessor; no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::at(const uword in_row, const uword in_col) const
   {
@@ -614,6 +626,7 @@ field<oT>::at(const uword in_row, const uword in_col) const
 //! element accessor; no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 oT&
 field<oT>::at(const uword in_row, const uword in_col, const uword in_slice)
   {
@@ -625,10 +638,63 @@ field<oT>::at(const uword in_row, const uword in_col, const uword in_slice)
 //! element accessor; no bounds check
 template<typename oT>
 arma_inline
+arma_warn_unused
 const oT&
 field<oT>::at(const uword in_row, const uword in_col, const uword in_slice) const
   {
   return (*mem[in_row + in_col*n_rows + in_slice*(n_rows*n_cols)]);
+  }
+
+
+
+template<typename oT>
+arma_inline
+arma_warn_unused
+oT&
+field<oT>::front()
+  {
+  arma_debug_check( (n_elem == 0), "field::front(): field is empty" );
+  
+  return (*mem[0]);
+  }
+
+
+
+template<typename oT>
+arma_inline
+arma_warn_unused
+const oT&
+field<oT>::front() const
+  {
+  arma_debug_check( (n_elem == 0), "field::front(): field is empty" );
+  
+  return (*mem[0]);
+  }
+
+
+
+template<typename oT>
+arma_inline
+arma_warn_unused
+oT&
+field<oT>::back()
+  {
+  arma_debug_check( (n_elem == 0), "field::back(): field is empty" );
+  
+  return (*mem[n_elem-1]);
+  }
+
+
+
+template<typename oT>
+arma_inline
+arma_warn_unused
+const oT&
+field<oT>::back() const
+  {
+  arma_debug_check( (n_elem == 0), "field::back(): field is empty" );
+  
+  return (*mem[n_elem-1]);
   }
 
 
@@ -2377,7 +2443,7 @@ field_aux::save(const field<oT>&, const std::string&, const file_type, std::stri
   {
   arma_extra_debug_sigprint();
   
-  err_msg = " [saving/loading this type of field is currently not supported] filename = ";
+  err_msg = "saving/loading this type of field is currently not supported";
   
   return false;
   }
@@ -2391,7 +2457,7 @@ field_aux::save(const field<oT>&, std::ostream&, const file_type, std::string& e
   {
   arma_extra_debug_sigprint();
   
-  err_msg = " [saving/loading this type of field is currently not supported] filename = ";
+  err_msg = "saving/loading this type of field is currently not supported";
   
   return false;
   }
@@ -2405,7 +2471,7 @@ field_aux::load(field<oT>&, const std::string&, const file_type, std::string& er
   {
   arma_extra_debug_sigprint();
   
-  err_msg = " [saving/loading this type of field is currently not supported] filename = ";
+  err_msg = "saving/loading this type of field is currently not supported";
   
   return false;
   }
@@ -2419,7 +2485,7 @@ field_aux::load(field<oT>&, std::istream&, const file_type, std::string& err_msg
   {
   arma_extra_debug_sigprint();
   
-  err_msg = " [saving/loading this type of field is currently not supported] filename = ";
+  err_msg = "saving/loading this type of field is currently not supported";
   
   return false;
   }
@@ -2444,7 +2510,7 @@ field_aux::save(const field< Mat<eT> >& x, const std::string& name, const file_t
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2469,7 +2535,7 @@ field_aux::save(const field< Mat<eT> >& x, std::ostream& os, const file_type typ
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2498,7 +2564,7 @@ field_aux::load(field< Mat<eT> >& x, const std::string& name, const file_type ty
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2527,7 +2593,7 @@ field_aux::load(field< Mat<eT> >& x, std::istream& is, const file_type type, std
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2552,7 +2618,7 @@ field_aux::save(const field< Col<eT> >& x, const std::string& name, const file_t
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2577,7 +2643,7 @@ field_aux::save(const field< Col<eT> >& x, std::ostream& os, const file_type typ
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2606,7 +2672,7 @@ field_aux::load(field< Col<eT> >& x, const std::string& name, const file_type ty
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2635,7 +2701,7 @@ field_aux::load(field< Col<eT> >& x, std::istream& is, const file_type type, std
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2660,7 +2726,7 @@ field_aux::save(const field< Row<eT> >& x, const std::string& name, const file_t
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2685,7 +2751,7 @@ field_aux::save(const field< Row<eT> >& x, std::ostream& os, const file_type typ
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2714,7 +2780,7 @@ field_aux::load(field< Row<eT> >& x, const std::string& name, const file_type ty
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2743,7 +2809,7 @@ field_aux::load(field< Row<eT> >& x, std::istream& is, const file_type type, std
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2764,7 +2830,7 @@ field_aux::save(const field< Cube<eT> >& x, const std::string& name, const file_
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2785,7 +2851,7 @@ field_aux::save(const field< Cube<eT> >& x, std::ostream& os, const file_type ty
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2807,7 +2873,7 @@ field_aux::load(field< Cube<eT> >& x, const std::string& name, const file_type t
       break;
     
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }
@@ -2829,7 +2895,7 @@ field_aux::load(field< Cube<eT> >& x, std::istream& is, const file_type type, st
       break;
       
     default:
-      err_msg = " [unsupported type] filename = ";
+      err_msg = "unsupported type";
       return false;
     }
   }

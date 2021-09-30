@@ -29,16 +29,16 @@ struct arma_config
   
   
   #if defined(ARMA_OPENMP_THRESHOLD)
-    static constexpr uword mp_threshold = (sword(ARMA_OPENMP_THRESHOLD) > 0) ? uword(ARMA_OPENMP_THRESHOLD) : 240;
+    static constexpr uword mp_threshold = (sword(ARMA_OPENMP_THRESHOLD) > 0) ? uword(ARMA_OPENMP_THRESHOLD) : 320;
   #else
-    static constexpr uword mp_threshold = 240;
+    static constexpr uword mp_threshold = 320;
   #endif
   
   
   #if defined(ARMA_OPENMP_THREADS)
-    static constexpr uword mp_threads = (sword(ARMA_OPENMP_THREADS) > 0) ? uword(ARMA_OPENMP_THREADS) : 10;
+    static constexpr uword mp_threads = (sword(ARMA_OPENMP_THREADS) > 0) ? uword(ARMA_OPENMP_THREADS) : 8;
   #else
-    static constexpr uword mp_threads = 10;
+    static constexpr uword mp_threads = 8;
   #endif
   
   
@@ -121,6 +121,8 @@ struct arma_config
       || defined(ARMA_EXTRA_SPMAT_PROTO) || defined(ARMA_EXTRA_SPMAT_MEAT) \
       || defined(ARMA_EXTRA_SPCOL_PROTO) || defined(ARMA_EXTRA_SPCOL_MEAT) \
       || defined(ARMA_EXTRA_SPROW_PROTO) || defined(ARMA_EXTRA_SPROW_MEAT) \
+      || defined(ARMA_ALIEN_MEM_ALLOC_FUNCTION) \
+      || defined(ARMA_ALIEN_MEM_FREE_FUNCTION) \
       )
     static constexpr bool extra_code = true;
   #else

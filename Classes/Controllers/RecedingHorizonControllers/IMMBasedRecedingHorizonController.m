@@ -321,9 +321,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController & ModelPara
 
             for j=1:this.sequenceLength + 1
                 % change the affected parameters of the model
-                this.mjls.setSystemMatrixForMode(newA, j);
-                this.mjls.setSystemInputMatrixForMode(newB, j);
-                this.mjls.setSystemNoiseCovarianceMatrixForMode(newW, j);
+                this.mjls.setSystemParametersForMode(newA, newB, newW, j);
             end
             
             % remember to recompute the costate, depends on plant

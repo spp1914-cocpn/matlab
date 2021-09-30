@@ -343,8 +343,8 @@ SpMat<eT>::SpMat(const Base<uword,T1>& locations_expr, const Base<eT,T2>& vals_e
   
   if(N_new != N_old)
     {
-    Col<eT>    filtered_vals(N_new);
-    Mat<uword> filtered_locs(2, N_new);
+    Col<eT>    filtered_vals(   N_new, arma_nozeros_indicator());
+    Mat<uword> filtered_locs(2, N_new, arma_nozeros_indicator());
     
     uword index = 0;
     for(uword i = 0; i < N_old; ++i)
@@ -413,8 +413,8 @@ SpMat<eT>::SpMat(const Base<uword,T1>& locations_expr, const Base<eT,T2>& vals_e
     
     if(N_new != N_old)
       {
-      Col<eT>    filtered_vals(N_new);
-      Mat<uword> filtered_locs(2, N_new);
+      Col<eT>    filtered_vals(   N_new, arma_nozeros_indicator());
+      Mat<uword> filtered_locs(2, N_new, arma_nozeros_indicator());
       
       uword index = 0;
       for(uword i = 0; i < N_old; ++i)
@@ -482,8 +482,8 @@ SpMat<eT>::SpMat(const bool add_values, const Base<uword,T1>& locations_expr, co
     
     if(N_new != N_old)
       {
-      Col<eT>    filtered_vals(N_new);
-      Mat<uword> filtered_locs(2, N_new);
+      Col<eT>    filtered_vals(   N_new, arma_nozeros_indicator());
+      Mat<uword> filtered_locs(2, N_new, arma_nozeros_indicator());
       
       uword index = 0;
       for(uword i = 0; i < N_old; ++i)
@@ -4118,6 +4118,37 @@ SpMat<eT>::clean(const typename get_pod_type<eT>::result threshold)
 template<typename eT>
 inline
 const SpMat<eT>&
+SpMat<eT>::clamp(const eT min_val, const eT max_val)
+  {
+  arma_extra_debug_sigprint();
+  
+  if(is_cx<eT>::no)
+    {
+    arma_debug_check( (access::tmp_real(min_val) > access::tmp_real(max_val)), "SpMat::clamp(): min_val must be less than max_val" );
+    }
+  else
+    {
+    arma_debug_check( (access::tmp_real(min_val) > access::tmp_real(max_val)), "SpMat::clamp(): real(min_val) must be less than real(max_val)" );
+    arma_debug_check( (access::tmp_imag(min_val) > access::tmp_imag(max_val)), "SpMat::clamp(): imag(min_val) must be less than imag(max_val)" );
+    }
+  
+  if(n_nonzero == 0)  { return *this; }
+  
+  sync_csc();
+  invalidate_cache();
+  
+  arrayops::clamp(access::rwp(values), n_nonzero, min_val, max_val);
+  
+  if( (min_val == eT(0)) || (max_val == eT(0)) )  { remove_zeros(); }
+  
+  return *this;
+  }
+
+
+
+template<typename eT>
+inline
+const SpMat<eT>&
 SpMat<eT>::zeros()
   {
   arma_extra_debug_sigprint();
@@ -4473,6 +4504,45 @@ SpMat<eT>::reset()
 template<typename eT>
 inline
 void
+SpMat<eT>::reset_cache()
+  {
+  arma_extra_debug_sigprint();
+  
+  sync_csc();
+  
+  #if defined(ARMA_USE_OPENMP)
+    {
+    #pragma omp critical (arma_SpMat_cache)
+      {
+      cache.reset();
+      
+      sync_state = 0;
+      }
+    }
+  #elif (!defined(ARMA_DONT_USE_STD_MUTEX))
+    {
+    cache_mutex.lock();
+    
+    cache.reset();
+    
+    sync_state = 0;
+    
+    cache_mutex.unlock();
+    }
+  #else
+    {
+    cache.reset();
+    
+    sync_state = 0;
+    }
+  #endif
+  }
+
+
+
+template<typename eT>
+inline
+void
 SpMat<eT>::reserve(const uword in_rows, const uword in_cols, const uword new_n_nonzero)
   {
   arma_extra_debug_sigprint();
@@ -4527,6 +4597,10 @@ SpMat<eT>::save(const std::string name, const file_type type) const
       return (*this).save(csv_name(name), type);
       break;
     
+    case ssv_ascii:
+      return (*this).save(csv_name(name), type);
+      break;
+    
     case arma_binary:
       save_okay = diskio::save_arma_binary(*this, name);
       break;
@@ -4555,21 +4629,25 @@ SpMat<eT>::save(const csv_name& spec, const file_type type) const
   {
   arma_extra_debug_sigprint();
   
-  if(type != csv_ascii)
+  if( (type != csv_ascii) && (type != ssv_ascii) ) 
     {
     arma_stop_runtime_error("SpMat::save(): unsupported file type for csv_name()");
     return false;
     }
   
-  const bool   do_trans  = bool(spec.opts.flags & csv_opts::flag_trans      );
-  const bool   no_header = bool(spec.opts.flags & csv_opts::flag_no_header  );
-        bool with_header = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool   do_trans     = bool(spec.opts.flags & csv_opts::flag_trans      );
+  const bool   no_header    = bool(spec.opts.flags & csv_opts::flag_no_header  );
+        bool with_header    = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool  use_semicolon = bool(spec.opts.flags & csv_opts::flag_semicolon  ) || (type == ssv_ascii);
   
   arma_extra_debug_print("SpMat::save(csv_name): enabled flags:");
   
-  if(do_trans   )  { arma_extra_debug_print("trans");       }
-  if(no_header  )  { arma_extra_debug_print("no_header");   }
-  if(with_header)  { arma_extra_debug_print("with_header"); }
+  if(do_trans     )  { arma_extra_debug_print("trans");       }
+  if(no_header    )  { arma_extra_debug_print("no_header");   }
+  if(with_header  )  { arma_extra_debug_print("with_header"); }
+  if(use_semicolon)  { arma_extra_debug_print("semicolon");   }
+  
+  const char separator = (use_semicolon) ? char(';') : char(',');
   
   if(no_header)  { with_header = false; }
   
@@ -4585,9 +4663,9 @@ SpMat<eT>::save(const csv_name& spec, const file_type type) const
       {
       const std::string& token = spec.header_ro.at(i);
       
-      if(token.find(',') != std::string::npos)
+      if(token.find(separator) != std::string::npos)
         {
-        arma_debug_warn_level(1, "SpMat::save(): token within the header contains a comma: '", token, "'");
+        arma_debug_warn_level(1, "SpMat::save(): token within the header contains the separator character: '", token, "'");
         return false;
         }
       }
@@ -4607,11 +4685,11 @@ SpMat<eT>::save(const csv_name& spec, const file_type type) const
     {
     const SpMat<eT> tmp = (*this).st();
     
-    save_okay = diskio::save_csv_ascii(tmp, spec.filename, spec.header_ro, with_header);
+    save_okay = diskio::save_csv_ascii(tmp, spec.filename, spec.header_ro, with_header, separator);
     }
   else
     {
-    save_okay = diskio::save_csv_ascii(*this, spec.filename, spec.header_ro, with_header);
+    save_okay = diskio::save_csv_ascii(*this, spec.filename, spec.header_ro, with_header, separator);
     }
   
   if(save_okay == false)  { arma_debug_warn_level(3, "SpMat::save(): couldn't write; file: ", spec.filename); }
@@ -4637,7 +4715,11 @@ SpMat<eT>::save(std::ostream& os, const file_type type) const
   switch(type)
     {
     case csv_ascii:
-      save_okay = diskio::save_csv_ascii(*this, os);
+      save_okay = diskio::save_csv_ascii(*this, os, char(','));
+      break;
+    
+    case ssv_ascii:
+      save_okay = diskio::save_csv_ascii(*this, os, char(';'));
       break;
     
     case arma_binary:
@@ -4684,6 +4766,10 @@ SpMat<eT>::load(const std::string name, const file_type type)
       return (*this).load(csv_name(name), type);
       break;
     
+    case ssv_ascii:
+      return (*this).load(csv_name(name), type);
+      break;
+    
     case arma_binary:
       load_okay = diskio::load_arma_binary(*this, name, err_msg);
       break;
@@ -4724,21 +4810,25 @@ SpMat<eT>::load(const csv_name& spec, const file_type type)
   {
   arma_extra_debug_sigprint();
   
-  if(type != csv_ascii)
+  if( (type != csv_ascii) && (type != ssv_ascii) ) 
     {
     arma_stop_runtime_error("SpMat::load(): unsupported file type for csv_name()");
     return false;
     }
   
-  const bool   do_trans  = bool(spec.opts.flags & csv_opts::flag_trans      );
-  const bool   no_header = bool(spec.opts.flags & csv_opts::flag_no_header  );
-        bool with_header = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool   do_trans     = bool(spec.opts.flags & csv_opts::flag_trans      );
+  const bool   no_header    = bool(spec.opts.flags & csv_opts::flag_no_header  );
+        bool with_header    = bool(spec.opts.flags & csv_opts::flag_with_header);
+  const bool  use_semicolon = bool(spec.opts.flags & csv_opts::flag_semicolon  ) || (type == ssv_ascii);
   
   arma_extra_debug_print("SpMat::load(csv_name): enabled flags:");
   
-  if(do_trans   )  { arma_extra_debug_print("trans");       }
-  if(no_header  )  { arma_extra_debug_print("no_header");   }
-  if(with_header)  { arma_extra_debug_print("with_header"); }
+  if(do_trans     )  { arma_extra_debug_print("trans");       }
+  if(no_header    )  { arma_extra_debug_print("no_header");   }
+  if(with_header  )  { arma_extra_debug_print("with_header"); }
+  if(use_semicolon)  { arma_extra_debug_print("semicolon");   }
+  
+  const char separator = (use_semicolon) ? char(';') : char(',');
   
   if(no_header)  { with_header = false; }
   
@@ -4749,7 +4839,7 @@ SpMat<eT>::load(const csv_name& spec, const file_type type)
     {
     SpMat<eT> tmp_mat;
     
-    load_okay = diskio::load_csv_ascii(tmp_mat, spec.filename, err_msg, spec.header_rw, with_header);
+    load_okay = diskio::load_csv_ascii(tmp_mat, spec.filename, err_msg, spec.header_rw, with_header, separator);
     
     if(load_okay)
       {
@@ -4764,7 +4854,7 @@ SpMat<eT>::load(const csv_name& spec, const file_type type)
     }
   else
     {
-    load_okay = diskio::load_csv_ascii(*this, spec.filename, err_msg, spec.header_rw, with_header);
+    load_okay = diskio::load_csv_ascii(*this, spec.filename, err_msg, spec.header_rw, with_header, separator);
     }
   
   if(load_okay == false)
@@ -4821,7 +4911,11 @@ SpMat<eT>::load(std::istream& is, const file_type type)
     //   break;
     
     case csv_ascii:
-      load_okay = diskio::load_csv_ascii(*this, is, err_msg);
+      load_okay = diskio::load_csv_ascii(*this, is, err_msg, char(','));
+      break;
+    
+    case ssv_ascii:
+      load_okay = diskio::load_csv_ascii(*this, is, err_msg, char(';'));
       break;
     
     case arma_binary:
@@ -4928,6 +5022,15 @@ SpMat<eT>::init(uword in_rows, uword in_cols, const uword new_n_nonzero)
   if(values     )  { memory::release(access::rw(values));      }
   if(row_indices)  { memory::release(access::rw(row_indices)); }
   if(col_ptrs   )  { memory::release(access::rw(col_ptrs));    }
+  
+  // in case init_cold() throws an exception
+  access::rw(n_rows)      = 0;
+  access::rw(n_cols)      = 0;
+  access::rw(n_elem)      = 0;
+  access::rw(n_nonzero)   = 0;
+  access::rw(values)      = nullptr;
+  access::rw(row_indices) = nullptr;
+  access::rw(col_ptrs)    = nullptr;
   
   init_cold(in_rows, in_cols, new_n_nonzero);
   }
@@ -5365,7 +5468,7 @@ SpMat<eT>::init_batch_add(const Mat<uword>& locs, const Mat<eT>& vals, const boo
     if(actually_sorted == false)
       {
       // This may not be the fastest possible implementation but it maximizes code reuse.
-      Col<uword> abslocs(locs.n_cols);
+      Col<uword> abslocs(locs.n_cols, arma_nozeros_indicator());
       
       for(uword i = 0; i < locs.n_cols; ++i)
         {

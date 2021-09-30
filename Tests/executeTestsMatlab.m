@@ -1,11 +1,16 @@
-function results = executeTestsMatlab()
+function results = executeTestsMatlab(runInParallel)
     % Function to run all test cases in matlab/Tests.
+    %
+    % Parameters:
+    %   >> runInParallel (Flag, (i.e., a logical scalar), Optional)
+    %      A flag to indicate whether the some of the test cases shall be ran in
+    %      parallel. If left out, the default value <true> is used.
     
     % >> This function/class is part of CoCPN-Sim
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2018  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -26,9 +31,13 @@ function results = executeTestsMatlab()
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
+    arguments
+        runInParallel(1,1) logical = true;
+    end
+    
     results = [ executeActuatorsTests() ...
-                executeControllersTests() ...
-                executeFiltersTests() ...
+                executeControllersTests(runInParallel) ...
+                executeFiltersTests(runInParallel) ...
                 executeModelsTests() ...
                 executeUtilsTests() ...
                 executeNetworkTests()

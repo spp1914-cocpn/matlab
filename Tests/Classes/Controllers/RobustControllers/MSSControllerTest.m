@@ -61,7 +61,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             this.dimEta = this.dimU * this.sequenceLength * (this.sequenceLength - 1) / 2;
                         
             this.initialPlantState = 42; % because that's the answer
-            this.controllerUnderTest = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta);
+            this.controllerUnderTest = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, false, false);
         end
     end
     
@@ -71,11 +71,11 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             expectedErrId = 'Validator:ValidateSystemMatrix:InvalidMatrix';
             
             invalidA = eye(this.dimX + 1, this.dimX); % not square
-            this.verifyError(@() MSSController(invalidA, this.B, this.sequenceLength, this.controllerDelta), ...
+            this.verifyError(@() MSSController(invalidA, this.B, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedErrId);
             
             invalidA = inf(this.dimX, this.dimX); % square but inf
-            this.verifyError(@() MSSController(invalidA, this.B, this.sequenceLength, this.controllerDelta), ...
+            this.verifyError(@() MSSController(invalidA, this.B, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedErrId);
         end
         
@@ -84,12 +84,12 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrix';
             
             invalidB = eye(this.dimX + 1, this.dimU); % invalid dims
-            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta), ...
+            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedErrId);
             
             invalidB = eye(this.dimX, this.dimU); % correct dims, but nan
             invalidB(1, 1) = nan;
-            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta), ...
+            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedErrId);
         end
         
@@ -98,7 +98,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             expectedErrId = 'MSSController:InvalidPlant';
             
             invalidB = 0; % plant runs open loop, thus not controllable
-            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta), ...
+            this.verifyError(@() MSSController(this.A, invalidB, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedErrId);
         end
         
@@ -110,7 +110,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             rmpath('matlab/external/sdpt3/');
             this.assertFalse(exist('sdpt3', 'file') == 2);
               
-            this.verifyWarning(@() MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta), ...
+            this.verifyWarning(@() MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, true, false), ...
                 expectedWarnId);
             
             %restore
@@ -122,10 +122,12 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % validate the side effecs: flag useLmiLab is set properly
             % vertices of transition matrix polytope are computed corrected
             this.verifyFalse(this.controllerUnderTest.useLmiLab); % false by default
+            this.verifyFalse(this.controllerUnderTest.assumeCorrelatedDelays); % false by default
                         
             % finally check if flag is set according to given param
-            controller = MSSController(this.A, this.B, 2, this.controllerDelta, true);
+            controller = MSSController(this.A, this.B, 2, this.controllerDelta, false, true, true);
             this.verifyTrue(controller.useLmiLab);
+            this.verifyTrue(controller.assumeCorrelatedDelays);
             
             % gain is not completely zero and has correct dimensions
             this.verifySize(controller.L, [2, 2])
@@ -137,7 +139,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         function testPolytopeSeqOne(this)
             seqLenth = 1;
             expectedNumVertices = 2; % this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
              % check the transition matrix polytope if sequence length is 2
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -145,10 +147,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -214,14 +214,80 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                 this.verifyEqual(T_res(1, :), T_res(2, :));
                 % check if last entry is less than or equal to specified delta
                 this.verifyLessThanOrEqual(T_res(2, 2), this.controllerDelta);   
-            end
-             
+            end             
         end
+        
+        %% testPolytopeSeqOneCorrelatedDelays
+        function testPolytopeSeqOneCorrelatedDelays(this)
+            seqLenth = 1;
+            expectedNumVertices = 4; % this is the expected number of vertices of the transition matrix polytope
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, true);
+            
+            % check the transition matrix polytope if sequence length is 1
+            expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
+            this.verifySize(controller.vertices, expectedSize);            
+            % all vertices are different and valid transition matrices
+            for i=1:expectedNumVertices
+                this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1]', 'AbsTol', 1e-15);
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
+                end
+            end
+            
+            % check if some particular vertices are present            
+            P1 = [1-this.controllerDelta, this.controllerDelta;
+                  1-this.controllerDelta, this.controllerDelta];           
+            this.verifyEqual(sum(ismembertol(P1, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            
+            % check for a hessenberg transition matrix          
+            % use yalmip to solve the problem
+            alpha = sdpvar(1, expectedNumVertices-1);            
+            T = sdpvar(seqLenth + 1, seqLenth + 1, 'full'); % parameter
+            sumMat = 0;
+            for i=1:expectedNumVertices -1
+                sumMat = sumMat + alpha(i) * controller.vertices(:, :, i); 
+            end
+            sumMat = sumMat + (1-sum(alpha)) * controller.vertices(:, :, end); % last element
+            constraints = [0<=alpha, sum(alpha) <= 1, sumMat == T];       
+            options = sdpsettings('solver', 'sdpt3');
+            options.verbose = 0; % mute the solver
+            solver = optimizer(constraints, [], options, T, alpha);
+            
+            % this problem is supposed to be feasible: T_feas is in the polytope
+            T_feas = [0.9 0.1; 0.9 0.1];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas);
+            this.verifyTrue(errorcode == 0);            
+                 
+            % this problem is supposed to be feasible: each vertex is in
+            % the polytope
+            for j=1:expectedNumVertices                
+                [~, errorcode] = solver(controller.vertices(:, :, j));
+                this.verifyTrue(errorcode == 0);
+            end
+         
+            % now check for the infeasible T            
+            T_infeas = Utility.calculateDelayTransitionMatrix([0.6 0.4]); % last entry is larger then delta
+            [~, errorcode] = solver(T_infeas);
+            this.verifyTrue(errorcode == 1); % supposed to be infeasible
+            
+            % another sanity check: randomly generate convex combination of
+            % vertices and check structure of resulting transition matrix
+            weights = randfixedsum(expectedNumVertices, MSSControllerTest.numConvexCombinations, 1, 0, 1);
+            
+            for j=1:MSSControllerTest.numConvexCombinations                
+                T_res = sum(controller.vertices .* reshape(weights(:, j), 1, 1, expectedNumVertices), 3);           
+                % check if last entry is less than or equal to specified delta
+                this.verifyLessThanOrEqual(T_res(2, 2), this.controllerDelta);   
+            end
+        end
+%%
+%%
         %% testPolytopeSeqTwo
         function testPolytopeSeqTwo(this)
             seqLenth = 2;
             expectedNumVertices = 6; % this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is 2
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -229,10 +295,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -345,11 +409,113 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             end            
         end
 
+        %% testPolytopeSeqTwoCorrelatedDelays
+        function testPolytopeSeqTwoCorrelatedDelays(this)
+            seqLenth = 2;
+            expectedNumVertices = 2 * seqLenth * factorial(seqLenth + 1); % this is the expected number of vertices of the transition matrix polytope
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, true);
+            
+            % check the transition matrix polytope if sequence length is 1
+            expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
+            this.verifySize(controller.vertices, expectedSize);            
+            % all vertices are different and valid transition matrices
+            for i=1:expectedNumVertices
+                this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1]', 'AbsTol', 1e-15);
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
+                end
+            end
+            
+            % check if some particular vertices are present
+            P1 = [0, 1, 0;                  
+                  0, 0, 1;
+                  0, 1-this.controllerDelta, this.controllerDelta];
+            P2 = [0, 1, 0;                  
+                  0, 0, 1;
+                  1, 0, 0];
+            P3 = [1, 0, 0;                  
+                  0, 0, 1;
+                  0.8, 0, 0.2];
+            this.verifyEqual(sum(ismembertol(P1, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            this.verifyEqual(sum(ismembertol(P2, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            this.verifyEqual(sum(ismembertol(P3, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            
+            % check for a hessenberg transition matrix          
+            % use yalmip to solve the problem
+            alpha = sdpvar(1, expectedNumVertices-1);            
+            T = sdpvar(seqLenth + 1, seqLenth + 1, 'full'); % parameter
+            sumMat = 0;
+            for i=1:expectedNumVertices -1
+                sumMat = sumMat + alpha(i) * controller.vertices(:, :, i); 
+            end
+            sumMat = sumMat + (1-sum(alpha)) * controller.vertices(:, :, end); % last element
+            constraints = [0<=alpha, sum(alpha) <= 1, sumMat == T];       
+            options = sdpsettings('solver', 'sdpt3');
+            options.verbose = 0; % mute the solver
+            solver = optimizer(constraints, [], options, T, alpha);
+            
+            % this problem is supposed to be feasible: T_feas is in the polytope
+            T_feas = [0.43 0.57 0; 0.15 0.08 0.77; 0.19 0.8 0.01];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas);
+            this.verifyTrue(errorcode == 0);            
+            
+             % this problem is supposed to be feasible: T_feas2 is in the polytope
+             % white delays are a special case of correlated delays
+            T_feas2 = [0.1 0.9 0; 0.1 0.7 0.2; 0.1 0.7 0.2];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas2);
+            this.verifyTrue(errorcode == 0);
+            
+            % corner case: Pr[delay = 0] = 1
+            T_feas3 = [1 0 0;
+                       1 0 0;
+                       1 0 0];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas3);            
+            this.verifyTrue(errorcode == 0);
+            
+            % corner case: Pr[delay = 1] = 1
+            T_feas4 = [0 1 0;
+                       0 1 0;
+                       0 1 0];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas4);            
+            this.verifyTrue(errorcode == 0);
+            
+            % this problem is supposed to be feasible: each vertex is in
+            % the polytope
+            for j=1:expectedNumVertices                
+                [~, errorcode] = solver(controller.vertices(:, :, j));
+                this.verifyTrue(errorcode == 0);
+            end
+            
+            % now check for the infeasible T            
+            T_infeas = [0.07 0.93 0; 0.2 0.5 0.3; 0.16 0.19 0.65]; % last entry is larger then delta
+            [~, errorcode] = solver(T_infeas);
+            this.verifyTrue(errorcode == 1); % supposed to be infeasible
+            
+            % another sanity check: randomly generate convex combination of
+            % vertices and check structure of resulting transition matrix
+            weights = randfixedsum(expectedNumVertices, MSSControllerTest.numConvexCombinations, 1, 0, 1);
+            
+            for j=1:MSSControllerTest.numConvexCombinations                
+                T_res = sum(controller.vertices .* reshape(weights(:, j), 1, 1, expectedNumVertices), 3);
+                % validate the Hessenberg structure
+                this.verifyEqual(T_res(1, end), 0);                
+                % check if last entry is less than or equal to specified delta
+                this.verifyLessThanOrEqual(T_res(end, end), this.controllerDelta);
+                % check the row sums
+                this.verifyEqual(sum(T_res, 2), [1 1 1]', 'AbsTol', 1e-15);
+            end
+        end
+%%
+%%
         %% testPolytopeSeqThree
         function testPolytopeSeqThree(this)
             seqLenth = 3;
             expectedNumVertices = 12; % this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  3
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -357,10 +523,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -507,11 +671,139 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             
         end
         
+        
+        %% testPolytopeSeqThreeCorrelatedDelays
+        function testPolytopeSeqThreeCorrelatedDelays(this)
+            seqLenth = 3;
+            expectedNumVertices = 2 * seqLenth * factorial(seqLenth + 1); % 144, this is the expected number of vertices of the transition matrix polytope
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, true);
+            
+            % check the transition matrix polytope if sequence length is 1
+            expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
+            this.verifySize(controller.vertices, expectedSize);            
+            % all vertices are different and valid transition matrices
+            for i=1:expectedNumVertices
+                this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1 1]', 'AbsTol', 1e-14);
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
+                end
+            end
+            
+            % check if some particular vertices are present
+            P1 = [0, 1, 0, 0;                  
+                  0, 0, 1, 0;
+                  0, 0, 0, 1
+                  0, 0, 1-this.controllerDelta, this.controllerDelta];
+            P2 = [0, 1, 0, 0;                  
+                  0, 0, 1, 0;
+                  0, 0, 1, 0
+                  0, 1-this.controllerDelta, 0, this.controllerDelta];
+            P3 = [0, 1, 0, 0;                  
+                  0, 0, 1, 0;
+                  0, 0, 0, 1
+                  1-this.controllerDelta, 0, 0, this.controllerDelta];
+            this.verifyEqual(sum(ismembertol(P1, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            this.verifyEqual(sum(ismembertol(P2, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            this.verifyEqual(sum(ismembertol(P3, controller.vertices, 1e-15), 'all'), (seqLenth + 1)^2);
+            
+            % check for a hessenberg transition matrix          
+            % use yalmip to solve the problem
+            alpha = sdpvar(1, expectedNumVertices-1);            
+            T = sdpvar(seqLenth + 1, seqLenth + 1, 'full'); % parameter
+            sumMat = 0;
+            for i=1:expectedNumVertices -1
+                sumMat = sumMat + alpha(i) * controller.vertices(:, :, i); 
+            end
+            sumMat = sumMat + (1-sum(alpha)) * controller.vertices(:, :, end); % last element
+            constraints = [0<=alpha, sum(alpha) <= 1, sumMat == T];       
+            options = sdpsettings('solver', 'sdpt3');
+            options.verbose = 0; % mute the solver
+            solver = optimizer(constraints, [], options, T, alpha);
+            
+            % this problem is supposed to be feasible: T_feas is in the polytope
+            T_feas = [0.4294 0.5706 0 0; 
+                      0.0657 0.0374 0.8969 0; 
+                      0.1225 0.1913 0.1993 0.4869
+                      0.1216 0.4885 0.2497 0.1402];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas);
+            this.verifyTrue(errorcode == 0);            
+            
+            % this problem is supposed to be feasible: T_feas2 is in the polytope
+            % white delays are a special case of correlated delays
+            T_feas2 = [0 1 0 0; 
+                       0 0.1 0.9 0;
+                       0 0.1 0.7 0.2
+                       0 0.1 0.7 0.2];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas2);
+            this.verifyTrue(errorcode == 0);
+            
+           % corner case: Pr[delay = 0] = 1
+            T_feas3 = [1 0 0 0;
+                       1 0 0 0;
+                       1 0 0 0;
+                       1 0 0 0];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas3);            
+            this.verifyTrue(errorcode == 0);
+            
+            % corner case: Pr[delay = 1] = 1
+            T_feas4 = [0 1 0 0;
+                       0 1 0 0;
+                       0 1 0 0;
+                       0 1 0 0];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas4);            
+            this.verifyTrue(errorcode == 0);
+            
+            % corner case: Pr[delay = 2] = 1
+            T_feas5 = [0 1 0 0;
+                       0 0 1 0;
+                       0 0 1 0;
+                       0 0 1 0];
+            % spanned by the vertices
+            [~, errorcode] = solver(T_feas5);            
+            this.verifyTrue(errorcode == 0);
+            
+            % this problem is supposed to be feasible: each vertex is in
+            % the polytope
+            for j=1:expectedNumVertices                
+                [~, errorcode] = solver(controller.vertices(:, :, j));
+                this.verifyTrue(errorcode == 0);
+            end
+            
+            % now check for the infeasible T
+            % last entry is larger then delta
+            T_infeas = [0.4294 0.5706 0 0; 
+                        0.0657 0.0374 0.8969 0; 
+                        0.1225 0.1913 0.1993 0.4869
+                        0.1216 0.1885 0.1497 0.5402]; 
+            [~, errorcode] = solver(T_infeas);
+            this.verifyTrue(errorcode == 1); % supposed to be infeasible
+            
+            % another sanity check: randomly generate convex combination of
+            % vertices and check structure of resulting transition matrix
+            weights = randfixedsum(expectedNumVertices, MSSControllerTest.numConvexCombinations, 1, 0, 1);
+            
+            for j=1:MSSControllerTest.numConvexCombinations                
+                T_res = sum(controller.vertices .* reshape(weights(:, j), 1, 1, expectedNumVertices), 3);
+                % validate the Hessenberg structure
+                this.verifyEqual(T_res(1, end), 0);
+                this.verifyEqual(T_res(1, end-1:end), [0 0]); 
+                % check if last entry is less than or equal to specified delta
+                this.verifyLessThanOrEqual(T_res(end, end), this.controllerDelta);
+                % check the row sums
+                this.verifyEqual(sum(T_res, 2), [1 1 1 1]', 'AbsTol', 1e-14);
+            end
+        end
+%%
+%%
         %% testPolytopeSeqFour
         function testPolytopeSeqFour(this)
             seqLenth = 4;
             expectedNumVertices = 20; % this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  4
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -519,10 +811,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1 1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -698,7 +988,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         function testPolytopeSeqFive(this)
             seqLenth = 5;
             expectedNumVertices = 30; % this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  5
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -706,10 +996,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1 1 1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -916,7 +1204,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         function testPolytopeSeqSix(this)
             seqLenth = 6;
             expectedNumVertices = 42; % 6^2+6 this is the expected number of vertices of the transition matrix polytope
-            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta);
+            controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  5
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
@@ -924,10 +1212,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % all vertices are different and valid transition matrices
             for i=1:expectedNumVertices
                 this.verifyEqual(sum(controller.vertices(:, :, i), 2), [1 1 1 1 1 1 1]');
-                for j=1:expectedNumVertices
-                    if j ~= i
-                        this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));
-                    end
+                for j=i+1:expectedNumVertices                    
+                    this.verifyNotEqual(controller.vertices(:, :, j), controller.vertices(:, :, i));                    
                 end
             end
             
@@ -1157,8 +1443,72 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         end
 %%
 %%
+        %% testChangeCaDelayProbs
+        function testChangeCaDelayProbs(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            
+            L_old = this.controllerUnderTest.L;
+            
+            % new delay probs yield a new controller delta and thus new vertices
+            newDelayProbs = [0 0.25 0.5 0.2 0.05];         
+            expectedNewControllerDelta = newDelayProbs(end) + newDelayProbs(end-1);
+            
+            this.controllerUnderTest.changeCaDelayProbs(newDelayProbs);
+            
+            actualNewControllerDelta = this.controllerUnderTest.controllerDelta;            
+            this.verifyEqual(actualNewControllerDelta, expectedNewControllerDelta);
+            
+            % perform a sanity check: given state is origin, so computed control sequence should be also the zero vector
+            % due to the underlying linear control law
+            zeroState = Gaussian(zeros(this.dimX, 1), eye(this.dimX));
+            % this call triggers the recomputation of the gain
+            this.controllerUnderTest.computeControlSequence(zeroState);
+           
+            actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
+            L_new = this.controllerUnderTest.L;
+            
+            this.verifyEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
+            
+            % gain should have changed
+            this.verifyNotEqual(L_new, L_old);
+            
+            % sanity check: change eta portion of state, so that augmented
+            % state is no longer zero
+            newEta = ones(this.dimEta, 1);
+            this.controllerUnderTest.setEtaState(newEta);
+            actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
+            
+            this.verifyNotEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
+        end
+        
+        %% testChangeCaDelayProbsSameDelta
+        function testChangeCaDelayProbsSameDelta(this)
+           this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
+            
+            L_old = this.controllerUnderTest.L;
+            
+            % new delay probs but no new controller delta and no new vertices
+            newDelayProbs = [0 0.2 0.6 0.2];         
+            expectedNewControllerDelta = this.controllerDelta;
+            
+            this.controllerUnderTest.changeCaDelayProbs(newDelayProbs);
+            
+            actualNewControllerDelta = this.controllerUnderTest.controllerDelta;            
+            this.verifyEqual(actualNewControllerDelta, expectedNewControllerDelta);                        
+            
+            % this call triggers the recomputation of the gain
+            this.controllerUnderTest.computeControlSequence(Gaussian(zeros(this.dimX, 1), eye(this.dimX)));            
+            L_new = this.controllerUnderTest.L;
+            
+            % no change expected
+            this.verifyEqual(L_new, L_old, 'AbsTol', 1e-8);
+        end
+%%
+%%
         %% testChangeModelParametersInvalidSystemMatrix
         function testChangeModelParametersInvalidSystemMatrix(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
             expectedErrId = 'Validator:ValidateSystemMatrix:InvalidDimensions';
             
             invalidA = eye(4); % wrong dimension
@@ -1176,6 +1526,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         
         %% testChangeModelParametersInvalidInputMatrix
         function testChangeModelParametersInvalidInputMatrix(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
             expectedErrId = 'Validator:ValidateInputMatrix:InvalidInputMatrixDims';
             
             invalidB = ones(2,2); % wrong dimension
@@ -1189,7 +1541,9 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         end
         
         %% testChangeModelParameters
-        function testChangeModelParameters(this)            
+        function testChangeModelParameters(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
             L_old = this.controllerUnderTest.L;
             
             % change A and B
@@ -1223,6 +1577,8 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         
         %% testChangeModelParametersNewWIgnored
         function testChangeModelParametersNewWIgnored(this)
+            this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
+            
             L_old = this.controllerUnderTest.L;           
             
             % pass a new noise covariance, has no effect
@@ -1271,7 +1627,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             import matlab.unittest.constraints.IsGreaterThanOrEqualTo
             
             useLmiLab = true;
-            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, useLmiLab);
+            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, false, useLmiLab);
             
             [maxRho, isMss] = controller.isMeanSquareStable();
             
@@ -1305,7 +1661,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % due to the underlying linear control law
             zeroState = Gaussian(zeros(this.dimX, 1), eye(this.dimX));
             useLmiLab = true;
-            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, useLmiLab);
+            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, false, false, useLmiLab);
             
             actualSequence = controller.computeControlSequence(zeroState);
             
@@ -1334,7 +1690,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testDoControlSequenceComputationLmiLab
         function testDoControlSequenceComputationLmiLab(this)
             useLmiLab = true;
-            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, useLmiLab);
+            controller = MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, false, false, useLmiLab);
             
             state = Gaussian(this.initialPlantState, eye(this.dimX));
             actualSequence = controller.computeControlSequence(state);

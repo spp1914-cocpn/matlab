@@ -376,8 +376,16 @@ classdef LinearlyConstrainedPredictiveController ...
                 
                 %eta_k+1=F*eta_k
                 this.etaState = this.F(:, :, 1) * this.etaState;
-            else 
-                inputSequence = reshape(inputs(:, 1:this.sequenceLength), this.sequenceLength * this.dimPlantInput, 1);
+            else
+                
+                numEls = min(this.sequenceLength, this.horizonLength);
+                inputSequence = reshape(inputs(:, 1:numEls), numEls * this.dimPlantInput, 1);
+                if numEls < this.sequenceLength
+                    % take care of the corner case: horizon length < sequence length
+                    % if so, repeat last entry
+                    addInputs = repmat(inputs(:, end), 1, this.sequenceLength - numEls);
+                    inputSequence = [inputSequence; addInputs(:)];
+                end
                 
                 %eta_k+1=F*eta_k+G*U_k
                 this.etaState = this.F(:, :, 1) * this.etaState + this.G * inputSequence;

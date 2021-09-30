@@ -73,8 +73,7 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
         //const dcolvec mean = join_cols(stateMeans.col(i), eta);
         mat::const_row_iterator row = transitionMatrix.begin_row(i);        
         dmat weightedCostate = zeros<dmat>(dimAugState, dimAugState);
-        for (uword r = 0; r < numModes; ++r, ++row) {
-            //part2 += (*row) * modeProbs.at(i) * augB.slice(i).t() * costate.slice(r) * augA.slice(i) * mean; 
+        for (uword r = 0; r < numModes; ++r, ++row) {            
             weightedCostate += (*row) * costate.slice(r);
         }
         part2 += modeProbs.at(i) * augB.slice(i).t() * weightedCostate * statePart;

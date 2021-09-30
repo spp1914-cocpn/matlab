@@ -1,16 +1,18 @@
-prefix = 'cloud-scenario-control-only6';
+class ='cloud-scenario';
+prefix = 'with-cross';
 simTime = 100; % in seconds
-numRepetitions = 100;
+numRepetitions = 20%100;
 numNcs = 1; % one real ncs and plenty of mocks
 
-
+names = {'seq2', 'seq3', 'seq4', 'seq6'}; % indicate the sequence length in use
 types = {'-mpc', '-lqr'}; % indicate the controller in use
-type = types{1};
+name = names{2};
+type = types{2};
 %type='';
 %name = 'control-increase-mpc';
-%scenarioName = [prefix type '-' name];
-scenarioName = [prefix type];
-filePrefix = ['matlab/Evaluation/qoc/' prefix '/' scenarioName];
+scenarioName = [class '-' prefix type '-' name];
+%scenarioName = [prefix type];
+filePrefix = ['matlab/Evaluation/qoc/' class '/' prefix '/' scenarioName];
 if contains(scenarioName, 'mpc')    
     translatorPath = 'libncs_matlab/matlab/config/translators/mpc/hamming/translator_inverted_pendulum_short_mpc_hamming_10sec.mat';
 elseif contains(scenarioName, 'robust')
@@ -47,24 +49,6 @@ allDelays = allDelays(~isnan(allDelays));
 
 clear actDelays data
 
-% read all measurement delays
-actMeasDelays = datastore([filePrefix, '-actual-delay-meas.csv'], 'ReadVariableNames', false);
-allVariableNames = actMeasDelays.VariableNames;
-actMeasDelays.SelectedVariableNames = allVariableNames(1);
-data = readall(actMeasDelays);
-actMeasDelayTimes = cell2mat(cellfun(@str2double, table2array(data(~any(ismissing(data), 2), :)), 'UniformOutput', false));
-actMeasDelayTimes = actMeasDelayTimes(~isnan(actMeasDelayTimes));
-actMeasDelays.SelectedVariableNames = allVariableNames(2);
-data = readall(actMeasDelays);
-actMeasPacketDelays =  table2array(data(2:numel(actMeasDelayTimes)+1, :))* 1000; % in milliseconds
-
-actMeasDelays.SelectedVariableNames = allVariableNames(2:4:end);
-data = readall(actMeasDelays);
-allMeasDelays = cell2mat(table2cell(data));
-allMeasDelays = allMeasDelays(~isnan(allMeasDelays));
-
-clear actMeasDelays data
-
 % read the control period
 controlPeriods = readtable([filePrefix '-control-period.csv'], 'ReadVariableNames', false);
 controlPeriodTimes = cell2mat(cellfun(@str2double, table2array(controlPeriods(2:end, 1)), 'UniformOutput', false));
@@ -73,26 +57,26 @@ ncsPeriods = table2array(controlPeriods(2:numel(controlPeriodTimes)+1, 2));
 
 clear controlPeriods
 
-% % % % % % % % read the observed packet delays
-% % % % % % % % first read the times (index is odd number, starting add 1)
-% % % % % % % delays = datastore([filePrefix, '-observed-delay.csv'], 'ReadVariableNames', false);
-% % % % % % % allVariableNames = delays.VariableNames;
-% % % % % % % delays.SelectedVariableNames = allVariableNames(1);   
-% % % % % % % data = readall(delays);
-% % % % % % % delayTimes = cell2mat(cellfun(@str2double, table2array(data(~any(ismissing(data), 2), :)), 'UniformOutput', false));
-% % % % % % % delayTimes = delayTimes(~isnan(delayTimes));
-% % % % % % % 
-% % % % % % % delays.SelectedVariableNames = allVariableNames([2:2:length(delays.VariableNames)]);
-% % % % % % % data = readall(delays);
-% % % % % % % packetDelays =  table2array(data(2:numel(delayTimes)+1, :))* 1000; % in milliseconds
-% % % % % % % 
-% % % % % % % packetDelaysTimesteps = zeros(size(packetDelays, 1), numRepetitions);
-% % % % % % % for j=1:size(packetDelays, 1)
-% % % % % % %     idx = find(controlPeriodTimes(controlPeriodTimes <= delayTimes(j)), 1, 'last');
-% % % % % % %     packetDelaysTimesteps(j, :) = packetDelays(j, :) / 1000 / ncsPeriods(idx);
-% % % % % % % end
-% % % % % % % 
-% % % % % % % clear delays
+% read the observed packet delays
+% first read the times (index is odd number, starting add 1)
+delays = datastore([filePrefix, '-observed-delay.csv'], 'ReadVariableNames', false);
+allVariableNames = delays.VariableNames;
+delays.SelectedVariableNames = allVariableNames(1);   
+data = readall(delays);
+delayTimes = cell2mat(cellfun(@str2double, table2array(data(~any(ismissing(data), 2), :)), 'UniformOutput', false));
+delayTimes = delayTimes(~isnan(delayTimes));
+
+delays.SelectedVariableNames = allVariableNames([2:2:length(delays.VariableNames)]);
+data = readall(delays);
+packetDelays =  table2array(data(2:numel(delayTimes)+1, :))* 1000; % in milliseconds
+
+packetDelaysTimesteps = zeros(size(packetDelays, 1), numRepetitions);
+for j=1:size(packetDelays, 1)
+    idx = find(controlPeriodTimes(controlPeriodTimes <= delayTimes(j)), 1, 'last');
+    packetDelaysTimesteps(j, :) = packetDelays(j, :) / 1000 / ncsPeriods(idx);
+end
+
+clear delays
 
 states = datastore([filePrefix '-controller-state-1.csv'], 'ReadVariableNames', false);
 allVariableNames = states.VariableNames;
@@ -132,10 +116,8 @@ assert(size(ncsStates, 2) == numRepetitions);
 % compute the error norm directly, per time step and run
 
 ncsErrorNorms = zeros(numel(ncsTimes), numRepetitions);
-ncsQocs = zeros(numel(ncsTimes), numRepetitions);
 for r=1:numRepetitions
     ncsErrorNorms(:, r) = vecnorm(squeeze(ncsStates(:, r, :)), 2, 2);
-    ncsQocs(:, r) = translatorData.translator.translateControlError(ncsErrorNorms(:, r));
 end
 
 ncsMeanErrors = mean(ncsErrorNorms, 2, 'omitnan');
@@ -144,7 +126,8 @@ ncsUpperQuantiles = quantile(ncsErrorNorms, 0.9, 2);
 ncsLowerQuantiles = quantile(ncsErrorNorms, 0.1, 2);
 ncsErrorVars = var(ncsErrorNorms, 0, 2, 'omitnan');
 
-% translate into qoc (could be improved -> first compute QoC, then take the mean)
+% translate into qoc (could be improved -> first compute QoC, then take the
+% mean)
 ncsMeanQocs = translatorData.translator.translateControlError(ncsMeanErrors);
 ncsMedianQocs = translatorData.translator.translateControlError(ncsMedianErrors);
 ncsUpperQuantilesQoc = translatorData.translator.translateControlError(ncsUpperQuantiles);
@@ -163,7 +146,7 @@ plot(ncsTimes, ncsMedianErrors, 'LineWidth', 2);
 
 xlim([0 simTime]);
 xticks([0:10:simTime]);
-ylim([0 0.0015]);    
+ylim([0 0.002]);    
 legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Median', 'interpreter', 'latex', 'Location', 'southwest'); 
 ylabel('Control Error');    
 hold off;
@@ -229,8 +212,8 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run, 0-50s)');
 hold on;
-histogram(actPacketDelays(actDelayTimes < 50), 0:2:20, 'Normalization', 'probability');
-ylabel('Probability');
+histogram(actPacketDelays(actDelayTimes < 50), 0:2:20);
+ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
 
@@ -238,8 +221,8 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run, 50-100s)');
 hold on;
-histogram(actPacketDelays(actDelayTimes >= 50), 0:2:20, 'Normalization', 'probability');
-ylabel('Probability');
+histogram(actPacketDelays(actDelayTimes >= 50), 0:2:20);
+ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
 
@@ -247,8 +230,8 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run)');
 hold on;
-histogram(actPacketDelays, 0:2:20, 'Normalization', 'probability');
-ylabel('Probability');
+histogram(actPacketDelays, 0:2:20);
+ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
 
@@ -256,51 +239,26 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (All runs)');
 hold on;
-histogram(allDelays * 1000, 0:2:20, 'Normalization', 'probability');
-ylabel('Probability');
+histogram(allDelays * 1000, 0:2:20);
+ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
 
-% and plot the actual measurement packet delays during single run
+% plot a histogram of all observed packet delays in all runs
 figure('Name', scenarioName, 'NumberTitle','off');
-title('Actual Measurement Packet Delays (Single Run)');
-
+title('Observed Packet Delays - Histogram (Single run)');
 hold on;
-plot(actMeasDelayTimes, actMeasPacketDelays, 'LineWidth', 2);
-xlim([0 simTime]);
-xticks([0:10:simTime]);    
-ylim([0 20]);
-yticks([0:2:20]);
-ylabel('Packet Delay (in milliseconds)');
-xlabel('Simulation Time (in seconds)');
-hold off;
-
-
-% plot a histogram of all actual measurement packet delays in all runs
-figure('Name', scenarioName, 'NumberTitle','off');
-title('Actual Measurement Packet Delays - Histogram (All runs)');
-hold on;
-histogram(allMeasDelays * 1000, 0:2:20, 'Normalization', 'probability');
+histogram(packetDelaysTimesteps(:, 1), 0:1:6, 'Normalization', 'probability');
 ylabel('Probability');
-xlabel('Packet Delay (in milliseconds)');
+xlabel('Observed Delay (in time steps)');
 hold off;
 
 
-% % % % % % % % plot a histogram of all observed packet delays in all runs
-% % % % % % % figure('Name', scenarioName, 'NumberTitle','off');
-% % % % % % % title('Observed Packet Delays - Histogram (Single run)');
-% % % % % % % hold on;
-% % % % % % % histogram(packetDelaysTimesteps(:, 1), 0:1:6, 'Normalization', 'probability');
-% % % % % % % ylabel('Probability');
-% % % % % % % xlabel('Observed Delay (in time steps)');
-% % % % % % % hold off;
-% % % % % % % 
-% % % % % % % 
-% % % % % % % % plot a histogram of all observed packet delays in all runs
-% % % % % % % figure('Name', scenarioName, 'NumberTitle','off');
-% % % % % % % title('Observed Packet Delays - Histogram (All runs)');
-% % % % % % % hold on;
-% % % % % % % histogram(packetDelaysTimesteps, 0:1:6, 'Normalization', 'probability');
-% % % % % % % ylabel('Probability');
-% % % % % % % xlabel('Observed Delay (in time steps)');
-% % % % % % % hold off;
+% plot a histogram of all observed packet delays in all runs
+figure('Name', scenarioName, 'NumberTitle','off');
+title('Observed Packet Delays - Histogram (All runs)');
+hold on;
+histogram(packetDelaysTimesteps, 0:1:6, 'Normalization', 'probability');
+ylabel('Probability');
+xlabel('Observed Delay (in time steps)');
+hold off;

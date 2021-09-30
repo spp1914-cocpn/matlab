@@ -255,7 +255,9 @@ classdef DoubleInvertedPendulumTest < matlab.unittest.TestCase
                 this.friction1, this.friction2);
             
             this.verifyEqual(pendulum.samplingInterval, 1/1000);
-       
+            
+            % by default, mex is used
+            this.verifyTrue(pendulum.useMexImplementation);
         end       
 %%
 %%
@@ -384,9 +386,31 @@ classdef DoubleInvertedPendulumTest < matlab.unittest.TestCase
         end
 %%
 %%
-        %% testNonlinearDynamicsNoiseFree
-        function testNonlinearDynamicsNoiseFree(this)            
+        %% testIsValidState
+        function testIsValidState(this)
+            validState = [0 0 0 0 0 0]';
+            validState2 = [-5 deg2rad(45) 0 0 0 0];
+            validState3 = [0 deg2rad(45) 0 0 0 0]';
+            invalidState = [0 0 deg2rad(100) 0 0 0];
+            invalidState2 = [-5.1 0 deg2rad(45) 0 0 0]';
+            invalidState3 = [5.5 deg2rad(180+2) 0 0 0 0]';
+            invalidState4 = [0 0 0 0 0 -inf];
+            invalidState5 = [5 nan deg2rad(45) 1e10 1e12 1e13];
+            this.verifyTrue(this.pendulumUnderTest.isValidState(validState));
+            this.verifyTrue(this.pendulumUnderTest.isValidState(validState2));
+            this.verifyTrue(this.pendulumUnderTest.isValidState(validState3));
+            this.verifyFalse(this.pendulumUnderTest.isValidState(invalidState));
+            this.verifyFalse(this.pendulumUnderTest.isValidState(invalidState2));
+            this.verifyFalse(this.pendulumUnderTest.isValidState(invalidState3));
+            this.verifyFalse(this.pendulumUnderTest.isValidState(invalidState4));
+            this.verifyFalse(this.pendulumUnderTest.isValidState(invalidState5));
+        end
+%%
+%%
+        %% testNonlinearDynamicsNoiseFreeMex
+        function testNonlinearDynamicsNoiseFreeMex(this)            
             this.assertEqual(this.pendulumUnderTest.samplingInterval, this.samplingInterval);            
+            this.assertTrue(this.pendulumUnderTest.useMexImplementation);
             
             % noise-free
             actualState = this.pendulumUnderTest.simulate(this.upwardEquilibrium);
@@ -414,11 +438,48 @@ classdef DoubleInvertedPendulumTest < matlab.unittest.TestCase
             expectedState = this.integrateDynamics(initialState, input, 0, 0, 0);
             this.verifyEqual(actualState, expectedState, 'AbsTol', 1e-8);
         end
+        
+        %% testNonlinearDynamicsNoiseFreeNoMex
+        function testNonlinearDynamicsNoiseFreeNoMex(this)
+            pendulum = DoubleInvertedPendulum(this.massCart, this.massPendulum1, ...
+                this.massPendulum2, this.length1, this.length2, this.friction, ...
+                this.friction1, this.friction2, this.samplingInterval, false);
+            
+            this.assertEqual(pendulum.samplingInterval, this.samplingInterval);            
+            this.assertFalse(pendulum.useMexImplementation);
+            
+            % noise-free
+            actualState = pendulum.simulate(this.upwardEquilibrium);
+            this.verifyEqual(actualState, this.upwardEquilibrium, 'AbsTol', 1e-8);
+            
+            actualState = pendulum.simulate(this.downwardEquilibrium);
+            this.verifyEqual(actualState, this.downwardEquilibrium, 'AbsTol', 1e-8);
+            
+            % now test with an initial disturbance of 2 for the upper pendulum degrees, but without noise
+            % and an input of 0.1 N
+            input = 0.1;
+            initialState = this.upwardEquilibrium + [0 0 deg2rad(2) 0 0 0]';
+            pendulum.setSystemInput(input);
+            actualState = pendulum.simulate(initialState);
+          
+            expectedState = this.integrateDynamics(initialState, input, 0, 0, 0);
+            this.verifyEqual(actualState, expectedState, 'AbsTol', 1e-8);
+            
+            % finally, for a given initial state != 0
+            input = 0.1;
+            initialState = [0.1 deg2rad(-20) deg2rad(12) -0.25 deg2rad(2) deg2rad(-15)]';
+            pendulum.setSystemInput(input);
+            actualState = pendulum.simulate(initialState);
+            
+            expectedState = this.integrateDynamics(initialState, input, 0, 0, 0);
+            this.verifyEqual(actualState, expectedState, 'AbsTol', 1e-8);
+        end
 %%
 %%
-        %% testNonlinearDynamicsWithNoise
-        function testNonlinearDynamicsWithNoise(this)
+        %% testNonlinearDynamicsWithNoiseMex
+        function testNonlinearDynamicsWithNoiseMex(this)
             this.assertEqual(this.pendulumUnderTest.samplingInterval, this.samplingInterval);  
+            this.assertTrue(this.pendulumUnderTest.useMexImplementation);
             
             % sanity check first: add process noise
             this.pendulumUnderTest.setNoise(Gaussian([0 0 0]', eye(3)));
@@ -432,6 +493,32 @@ classdef DoubleInvertedPendulumTest < matlab.unittest.TestCase
             mixture = DiracMixture([0.01, -0.12, 0.02]', 1);
             this.pendulumUnderTest.setNoise(mixture);
             actualState = this.pendulumUnderTest.simulate(this.upwardEquilibrium);
+            % compute the expected state, driven by noise
+            expectedState = this.integrateDynamics(this.upwardEquilibrium, 0, 0.01, -0.12, 0.02);
+            this.verifyEqual(actualState, expectedState, 'AbsTol', 1e-8);
+        end
+        
+        %% testNonlinearDynamicsWithNoiseNoMex
+        function testNonlinearDynamicsWithNoiseNoMex(this)
+             pendulum = DoubleInvertedPendulum(this.massCart, this.massPendulum1, ...
+                this.massPendulum2, this.length1, this.length2, this.friction, ...
+                this.friction1, this.friction2, this.samplingInterval, false);
+            
+            this.assertEqual(pendulum.samplingInterval, this.samplingInterval);            
+            this.assertFalse(pendulum.useMexImplementation);
+            
+            % sanity check first: add process noise
+            pendulum.setNoise(Gaussian([0 0 0]', eye(3)));
+            actualState = pendulum.simulate(this.upwardEquilibrium);
+            this.verifyNotEqual(actualState, this.upwardEquilibrium); % due to noise
+            
+            actualState = pendulum.simulate(this.downwardEquilibrium);
+            this.verifyNotEqual(actualState, this.downwardEquilibrium); 
+            
+            % now use a "deterministic noise": Dirac mixture with only one component
+            mixture = DiracMixture([0.01, -0.12, 0.02]', 1);
+            pendulum.setNoise(mixture);
+            actualState = pendulum.simulate(this.upwardEquilibrium);
             % compute the expected state, driven by noise
             expectedState = this.integrateDynamics(this.upwardEquilibrium, 0, 0.01, -0.12, 0.02);
             this.verifyEqual(actualState, expectedState, 'AbsTol', 1e-8);

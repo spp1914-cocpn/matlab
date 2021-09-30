@@ -2,7 +2,7 @@
 *
 *    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
 *
-*    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+*    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
 *
 *                        Institute for Anthropomatics and Robotics
 *                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -129,9 +129,9 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
         
         dcube QAKA = augQ;
         dcube RBKB = augR;
-        dcube BKA(augB.n_cols, dimAugState, numModes);
+        dcube BKA(augB.n_cols, dimAugState, numModes, fill::none);
         dcube APQ_tilde = Q_tilde;
-        dcube BPR_tilde(augB.n_cols, numConstraints, numModes); 
+        dcube BPR_tilde(augB.n_cols, numConstraints, numModes, fill::none); 
         
         #ifdef _OPENMP
         #pragma omp parallel for

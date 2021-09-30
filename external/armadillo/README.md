@@ -171,11 +171,6 @@ For example, for GCC and Clang compilers use -O2 or -O3
   
   - Options to the cmake installer:
   
-    - On Linux, to enable the detection of FlexiBLAS, 
-      use the additional ALLOW_FLEXIBLAS_LINUX option when running cmake:
-
-      cmake -DALLOW_FLEXIBLAS_LINUX=ON .
-
     - On macOS, to enable the detection of OpenBLAS, 
       use the additional ALLOW_OPENBLAS_MACOS option when running cmake:
 

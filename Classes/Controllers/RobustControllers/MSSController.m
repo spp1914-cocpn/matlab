@@ -35,9 +35,7 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
     %    You should have received a copy of the GNU General Public License
     %    along with this program.  If not, see <http://www.gnu.org/licenses/>.
     
-    properties (SetAccess = immutable, GetAccess = private)
-        controllerDelta(1,1) double {mustBeNonnegative, mustBeLessThan(controllerDelta, 1)};
-        
+    properties (SetAccess = immutable, GetAccess = private)       
         F;
         G;
         dimEta;
@@ -50,16 +48,18 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
         % matrices corresponding to the dynamics of the augmented system (polytopic MJLS)
         augA;
         augB;
-        recomputeGain = false;
+        recomputeGain = false;        
     end
        
     properties (SetAccess = private, GetAccess = ?MSSControllerTest)
         vertices; % vertices of the transition matrix polytope (called P in the paper)
         % the computed controller gain
         L;
+        controllerDelta(1,1) double {mustBeNonnegative, mustBeLessThan(controllerDelta, 1)};
     end
     
     properties (SetAccess = immutable, GetAccess = public)
+        assumeCorrelatedDelays (1,1) logical = false;
         useLmiLab(1,1) logical=false; 
         % by default, we do not use Matlab's internal solver LMI Lab from the
         % Robust Control Toolbox, but instead solve the feasibility problem
@@ -123,7 +123,7 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
     
     methods (Access = public)
         %% MSSController
-        function this = MSSController(A, B, sequenceLength, delta, useLmiLab)
+        function this = MSSController(A, B, sequenceLength, delta, lazyInitGain, assumeCorrDelays, useLmiLab)
             % Class constructor.
             %
             % Parameters:
@@ -140,6 +140,21 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             %   >> delta (Nonnegative scalar in [0,1))
             %      Upper bound for the last entry p_k,(N+1)(N+1) of all possible transition matrices P_k 
             %      of the augmented dynamical sytem (polytopic MJLS).
+            %
+            %   >> lazyInitGain (Flag, i.e., a logical scalar)
+            %      Flag to indicate whether the computation of controller gain L shall be
+            %      done during object instantiation, i.e., during this
+            %      constructor call (lazyInitGain = false), or shall be deferred until the the first control sequence is to be computed (lazyInitGain = true).
+            %
+            %   >> assumeCorrDelays (Flag, i.e., a logical scalar)
+            %      Flag to indicate whether the vertices of the transition
+            %      matrix polytope shall be computed under the assumption
+            %      of Markovian delays and losses (with time-invariant
+            %      transition probalities), or whether a white process
+            %      shall be assumed (assumeCorrDelays = false).
+            %      In the former case, the polytope has 2*(N+1)*(N+2)!
+            %      vertices, in the latter case it has only (N+1)²+(N+1)
+            %      vertices, with N+1 the sequence length.
             %
             %   >> useLmiLab (Flag, i.e., a logical scalar, optional)
             %      Flag to indicate whether Matlab's LMI Lab shall be used 
@@ -188,8 +203,9 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             % initially, the buffer is empty
             this.etaState = zeros(this.dimEta, 1);
             this.controllerDelta = delta;
-
-            if nargin > 4
+            this.assumeCorrelatedDelays = assumeCorrDelays;
+            
+            if nargin > 6
                 this.useLmiLab = useLmiLab;
             elseif exist('sdpt3', 'file') ~= 2
                 % SDPT3 seems not to be on the path, fall back to internal
@@ -197,15 +213,30 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
                 warning('MSSController:SolverNotFound', ...
                     MSSController.messages('solverNotFound'));
                 this.useLmiLab = true;
-            end            
+            end       
+            
             
             this.initTransitionMatrixPolytope();
-            this.computeAndSetGain();
+            if lazyInitGain
+                this.recomputeGain = true;
+            else
+                this.computeAndSetGain();
+            end
         end
         
         %% changeCaDelayProbs
-        function changeCaDelayProbs(~, ~)
-            % dummy implementation
+        function changeCaDelayProbs(this, newCaDelayProbs)
+            % first truncate to sequence length and
+            % then check if last entry equals current controller delta
+            % if not, recompute gain
+            newProbs = Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1);
+            if newProbs(end) ~= this.controllerDelta
+                this.controllerDelta = newProbs(end);
+                % the vertices of the polytope change (number of vertices remains)
+                this.initTransitionMatrixPolytope();
+                % remember to recompute gain L
+                this.recomputeGain = true;
+            end
         end
         
          %% changeModelParameters
@@ -742,9 +773,66 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             end           
         end
         
+        
+        
         %% initTransitionMatrixPolytope
         function initTransitionMatrixPolytope(this)
-            % for the case of white delays: exploit the Hessenberg
+            if this.assumeCorrelatedDelays
+                % we use the multi-simplex approach since we cannot exploit
+                % any dependencies between the transition probailities
+                % we only know that possible matrices are lower Hessenberg
+                % matrices and that last entry is bounded from above by
+                % delta
+                % hence, general structure of P_k is:
+                %
+                % [? ? 0 0 0
+                %  ? ? ? 0 0
+                %  ? ? ? ? 0
+                %  ? ? ? ? ?
+                %  ? ? ? ? [0,delta]]
+                %
+                % where ? means that the corresponding entry is arbitrary
+                % and only known to lie in [0,1]
+
+                numModes = this.sequenceLength + 1;
+                numVertices = 2 * this.sequenceLength * factorial(numModes);
+                vertsPerRow = cell(1, numModes);
+                idxPerRow = cell(1, numModes);
+                for j=1:this.sequenceLength
+                    % j+1 vertices for the i-th row
+                    % first row: 1-simplex, so 2 vertices
+                    % second row: 2-simplex, so 3 vertices, and so forth
+                    vertsPerRow{j} = eye(j+1, numModes);
+                    idxPerRow{j} = 1:j+1;
+                end
+                % for the last row, we have 2*sequenceLength vertices
+                % sequenceLength many with 1 at position i
+                % sequenceLength many with 1-delta at position i and delta
+                % at last position
+                vertsPerRow{numModes} = [  eye(this.sequenceLength, numModes);
+                                           [(1-this.controllerDelta) * eye(this.sequenceLength), repmat(this.controllerDelta, this.sequenceLength, 1)]
+                                ];
+                idxPerRow{numModes} = 1:2*this.sequenceLength;
+                
+                % simply enumerate all vertices by combining their
+                % respective indices
+                [T{1:numModes}] = ndgrid(idxPerRow{:});
+                idx = cell2mat(cellfun(@(Ti) Ti(:), T, 'UniformOutput', false));
+                
+                this.vertices = zeros(numModes, numModes, numVertices);
+                for j = 1:numVertices
+                    for i=1:numModes
+                        this.vertices(i, :, j) = vertsPerRow{i}(idx(j, i), :);
+                    end
+                end
+            else
+                this.computePolytopeWhiteDelays();
+            end
+        end
+
+        %% computePolytopeWhiteDelays
+        function computePolytopeWhiteDelays(this)
+           % for the case of white delays: exploit the Hessenberg
             % structure and the element interdependencies
             % assume delta is [0,1]
             %numModes = this.sequenceLength + 1;

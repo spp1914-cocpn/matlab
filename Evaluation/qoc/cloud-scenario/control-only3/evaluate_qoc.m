@@ -1,18 +1,18 @@
-prefix = 'cloud-scenario-with-cross';
+class ='cloud-scenario';
+prefix = 'control-only3';
 simTime = 100; % in seconds
-numRepetitions = 20%100;
+numRepetitions = 100;
 numNcs = 1; % one real ncs and plenty of mocks
-
 
 names = {'seq2', 'seq3', 'seq4', 'seq6'}; % indicate the sequence length in use
 types = {'-mpc', '-lqr'}; % indicate the controller in use
-name = names{2};
-type = types{2};
+name = names{1};
+type = types{1};
 %type='';
 %name = 'control-increase-mpc';
-scenarioName = [prefix type '-' name];
+scenarioName = [class '-' prefix type '-' name];
 %scenarioName = [prefix type];
-filePrefix = ['matlab/Evaluation/qoc/' prefix '/' scenarioName];
+filePrefix = ['matlab/Evaluation/qoc/' class '/' prefix '/' scenarioName];
 if contains(scenarioName, 'mpc')    
     translatorPath = 'libncs_matlab/matlab/config/translators/mpc/hamming/translator_inverted_pendulum_short_mpc_hamming_10sec.mat';
 elseif contains(scenarioName, 'robust')
@@ -146,7 +146,7 @@ plot(ncsTimes, ncsMedianErrors, 'LineWidth', 2);
 
 xlim([0 simTime]);
 xticks([0:10:simTime]);
-ylim([0 0.002]);    
+ylim([0 0.0015]);    
 legend('$Q_{0.9}$ - $Q_{0.1}$', 'Mean', 'Median', 'interpreter', 'latex', 'Location', 'southwest'); 
 ylabel('Control Error');    
 hold off;
@@ -188,8 +188,8 @@ hold on;
 plot(actDelayTimes, actPacketDelays, 'LineWidth', 2);
 xlim([0 simTime]);
 xticks([0:10:simTime]);    
-ylim([0 20]);
-yticks([0:2:20]);
+ylim([0 25]);
+yticks([0:5:25]);
 ylabel('Packet Delay (in milliseconds)');
 xlabel('Simulation Time (in seconds)');
 hold off;
@@ -202,8 +202,8 @@ hold on;
 scatter(actDelayTimes((actDelayTimes >= 50)), actPacketDelays(actDelayTimes >= 50), 'LineWidth', 2);
 xlim([50 simTime]);
 xticks([50:10:simTime]);
-ylim([0 20]);
-yticks([0:2:20]);
+ylim([0 30]);
+yticks([0:5:30]);
 ylabel('Packet Delay (in milliseconds)');
 xlabel('Simulation Time (in seconds)');
 hold off;
@@ -212,7 +212,7 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run, 0-50s)');
 hold on;
-histogram(actPacketDelays(actDelayTimes < 50), 0:2:20);
+histogram(actPacketDelays(actDelayTimes < 50), 0:5:30);
 ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
@@ -221,7 +221,7 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run, 50-100s)');
 hold on;
-histogram(actPacketDelays(actDelayTimes >= 50), 0:2:20);
+histogram(actPacketDelays(actDelayTimes >= 50), 0:5:30);
 ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
@@ -230,7 +230,7 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (Single Run)');
 hold on;
-histogram(actPacketDelays, 0:2:20);
+histogram(actPacketDelays, 0:5:30);
 ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;
@@ -239,7 +239,7 @@ hold off;
 figure('Name', scenarioName, 'NumberTitle','off');
 title('Actual Packet Delays - Histogram (All runs)');
 hold on;
-histogram(allDelays * 1000, 0:2:20);
+histogram(allDelays * 1000, 0:5:30);
 ylabel('Count');
 xlabel('Packet Delay (in milliseconds)');
 hold off;

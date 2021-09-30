@@ -164,11 +164,47 @@ classdef JumpLinearSystemModelTest < matlab.unittest.TestCase
             this.verifySize(actualInputs, [1 this.numModes]);
             arrayfun(@(i) this.verifyEqual(actualInputs(i), inputs(i)), 1:this.numModes);
         end
+%%
+%%
+        %% testSetSystemParametersForModeInvalidMode
+        function testSetSystemParametersForModeInvalidMode(this)
+            newSysMatrix = this.A1 + this.A2;
+            newSysInputMatrix = this.B1 + this.B2;
+            newSysNoiseCov = this.W1 + this.W2;
+            
+            expectedErrId = 'JumpLinearSystemModel:InvalidMode';
+            
+            % first, mode is negative
+            this.verifyError(@() this.modelUnderTest.setSystemParametersForMode(newSysMatrix, newSysInputMatrix, newSysNoiseCov, this.negativeNumModes), expectedErrId);
+            % now mode is fractional
+            this.verifyError(@() this.modelUnderTest.setSystemParametersForMode(newSysMatrix, newSysInputMatrix, newSysNoiseCov, this.fractionaNumModes), expectedErrId);
+            % now mode is out of bounds
+            this.verifyError(@() this.modelUnderTest.setSystemParametersForMode(newSysMatrix, newSysInputMatrix, newSysNoiseCov, this.numModes + 1), expectedErrId);
+        end
         
+        %% testSetSystemParametersForMode
+        function testSetSystemParametersForMode(this)
+            expectedNewSysMatrix = this.A1 + this.A2;
+            expectedNewSysInputMatrix = this.B1 + this.B2;
+            expectedNewSysNoiseCov = this.W1 + this.W2;
+            mode = 1;            
+            
+            this.modelUnderTest.setSystemParametersForMode(expectedNewSysMatrix, expectedNewSysInputMatrix, expectedNewSysNoiseCov, mode)            
+            
+            actualNewSysInputMatrix = this.modelUnderTest.modeSystemModels{mode}.inputMatrix;
+            actualNewSysMatrix = this.modelUnderTest.modeSystemModels{mode}.sysMatrix;
+            [~,actualNewSysNoiseCov] = this.modelUnderTest.modeSystemModels{mode}.noise.getMeanAndCov();            
+            
+            this.verifyEqual(actualNewSysMatrix, expectedNewSysMatrix);
+            this.verifyEqual(actualNewSysInputMatrix, expectedNewSysInputMatrix);
+            this.verifyEqual(actualNewSysNoiseCov, expectedNewSysNoiseCov);
+        end
+%%
+%%
         %% testSetSystemMatrixForModeInvalidMode
         function testSetSystemMatrixForModeInvalidMode(this)
             newSysMatrix = this.A1 + this.A2;
-            
+                        
             expectedErrId = 'JumpLinearSystemModel:InvalidMode';
             
             % first, mode is negative

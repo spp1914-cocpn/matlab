@@ -1,8 +1,8 @@
-prefix = 'cloud-scenario-control-only5';
+class ='cloud-scenario';
+prefix = 'control-only5';
 simTime = 100; % in seconds
 numRepetitions = 100;
 numNcs = 1; % one real ncs and plenty of mocks
-
 
 names = {'seq2', 'seq3', 'seq4', 'seq6'}; % indicate the sequence length in use
 types = {'-mpc', '-lqr'}; % indicate the controller in use
@@ -10,9 +10,9 @@ name = names{2};
 type = types{2};
 %type='';
 %name = 'control-increase-mpc';
-scenarioName = [prefix type '-' name];
+scenarioName = [class '-' prefix type '-' name];
 %scenarioName = [prefix type];
-filePrefix = ['matlab/Evaluation/qoc/' prefix '/' scenarioName];
+filePrefix = ['matlab/Evaluation/qoc/' class '/' prefix '/' scenarioName];
 if contains(scenarioName, 'mpc')    
     translatorPath = 'libncs_matlab/matlab/config/translators/mpc/hamming/translator_inverted_pendulum_short_mpc_hamming_10sec.mat';
 elseif contains(scenarioName, 'robust')

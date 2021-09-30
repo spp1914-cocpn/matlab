@@ -31,15 +31,24 @@ class Col : public Mat<eT>
   static constexpr bool is_row  = false;
   static constexpr bool is_xvec = false;
   
-  inline          Col();
-  inline          Col(const Col<eT>& X);
+  inline Col();
+  inline Col(const Col<eT>& X);
+  
   inline explicit Col(const uword n_elem);
   inline explicit Col(const uword in_rows, const uword in_cols);
   inline explicit Col(const SizeMat& s);
   
+  template<bool do_zeros> inline explicit Col(const uword n_elem,                       const arma_initmode_indicator<do_zeros>&);
+  template<bool do_zeros> inline explicit Col(const uword in_rows, const uword in_cols, const arma_initmode_indicator<do_zeros>&);
+  template<bool do_zeros> inline explicit Col(const SizeMat& s,                         const arma_initmode_indicator<do_zeros>&);
+  
   template<typename fill_type> inline Col(const uword n_elem,                       const fill::fill_class<fill_type>& f);
   template<typename fill_type> inline Col(const uword in_rows, const uword in_cols, const fill::fill_class<fill_type>& f);
   template<typename fill_type> inline Col(const SizeMat& s,                         const fill::fill_class<fill_type>& f);
+  
+  inline Col(const uword N,                            const fill::scalar_holder<eT> f);
+  inline Col(const uword in_rows, const uword in_cols, const fill::scalar_holder<eT> f);
+  inline Col(const SizeMat& s,                         const fill::scalar_holder<eT> f);
   
   inline            Col(const char*        text);
   inline Col& operator=(const char*        text);
@@ -195,6 +204,7 @@ class Col<eT>::fixed : public Col<eT>
   arma_inline fixed(const fixed<fixed_n_elem>& X);
        inline fixed(const subview_cube<eT>& X);
   
+                                     inline fixed(const fill::scalar_holder<eT> f);
   template<typename fill_type>       inline fixed(const fill::fill_class<fill_type>& f);
   template<typename T1>              inline fixed(const Base<eT,T1>& A);
   template<typename T1, typename T2> inline fixed(const Base<pod_type,T1>& A, const Base<pod_type,T2>& B);

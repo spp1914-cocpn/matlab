@@ -20,9 +20,9 @@
 
 
 #define ARMA_VERSION_MAJOR 10
-#define ARMA_VERSION_MINOR 4
-#define ARMA_VERSION_PATCH 0
-#define ARMA_VERSION_NAME  "Pressure Cooker"
+#define ARMA_VERSION_MINOR 6
+#define ARMA_VERSION_PATCH 1
+#define ARMA_VERSION_NAME  "Keep Calm"
 
 
 
