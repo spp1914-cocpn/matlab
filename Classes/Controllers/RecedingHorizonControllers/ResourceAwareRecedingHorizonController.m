@@ -5,11 +5,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
     % are sent out by the actuator upon reception of applicable control
     % inputs.
     %
-    % Literature: 
-    %   Florian Rosenthal, Fabio Broghammer, Benjamin Noack, and Uwe D. Hanebeck,
-    %   Resource-Aware Sequence-Based MPC using Simulated Annealing,
-    %   submitted to IEEE Control System Letters
-    %
+    % Literature:
     %   Fabio Broghammer, 
     %   Ereignisgesteuerte Folgeregelung über verlustbehaftete Netzwerke mit Anwendung auf holonome Roboter (in German), 
     %   Master thesis, Karlsruhe Institute of Technology (KIT), 
@@ -202,7 +198,6 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             %
             %   >> V (Square matrix)
             %      The covariance matrix of the measurement noise.
-            %            
             %
             %   >> x0 (Vector)
             %      The controller's initial estimate of the plant state.
@@ -233,7 +228,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             %      and return a valid transmission schedule E_0 of length <length>.
             %            
             %   >> startScheduleFunction (Function handle)
-            %      Function used by the controller during to, at time k, generate an
+            %      Function used by the controller to, at time k, generate an
             %      intial solution candidate E_k for simulated annealing, 
             %      given the solution E_{k-1} from the previous time step k-1.
             %      This function must accept one argument, <eventSchedule>,
@@ -335,8 +330,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             % computed (dependent on transmission history/schedule)
             this.augA = repmat(blkdiag(this.A, this.F), 1, 1, this.horizonLength); % diagonal is time-invariant
             this.augB = repmat([zeros(dimX, size(this.G, 2)); this.G], 1, 1, this.horizonLength); % G is time-invariant 
-            
-            %this.Q = Q;
+                        
             % for stability: use stabilizing solution of DARE as terminal
             % weighting -> only exists in case (A,B) stabilizable + the
             % associated symplectic matrix has no eigenvalues on the unit
@@ -686,7 +680,6 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
                         break
                     end
                 end
-
             end          
         end
         
@@ -746,10 +739,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             dimInputSeq = size(this.G, 2);
             
             inputProbs = this.calculateInputProbabilitiesForSchedule(this.horizonLength, eventSchedule, this.sequenceLength);
-            
-            % augmented cost matrices (Q_tilde, R_tilde and O_tilde in the paper)            
-            augR = zeros(dimInputSeq, dimInputSeq, this.horizonLength);
-                        
+                                    
             % covariance part C_{k+horizon}^p            
             rollAugS = zeros(dimInputSeq * this.horizonLength); % as defined in appendix A.2.2
             rollAugT = zeros(dimEta * this.horizonLength); % as defined in appendix A.2.2            
@@ -760,6 +750,8 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             % rollout matrix O (cross term O_hat in cost function, eq. (3.19) in thesis)
             % consists of matrices O_tilde penalizing the cross-terms
             rollAugO = zeros(dimAugState * (this.horizonLength + 1), dimInputSeq * this.horizonLength);
+            % rollout remaining cost matrices Q_hat and R_hat (eq. (3.19) in thesis)
+            rollAugR = zeros(dimInputSeq * this.horizonLength);
             for k = 1:this.horizonLength
                 % H_k and J_k according to eq. (9) in the paper 
                 expectedH = sum(reshape(inputProbs(:, k), 1, 1, []) .* this.H, 3);
@@ -776,15 +768,15 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
                 % ensure symmetry               
                 this.augQ(this.dimPlantState + 1:end, this.dimPlantState + 1:end, k) ...
                     = (HRH + HRH') / 2;
-                
-                % augR (R_tilde in the thesis, eq. (3.14))
-                augR(:, :, k) = expectedJ' * this.R * expectedJ;
-                % ensure symmetry
-                augR(:, :, k) = (augR(:, :, k) + augR(:, :, k)') / 2;
-               
+                                
                 startIdx = (k - 1) * dimInputSeq + 1;
                 endIdx = k * dimInputSeq;
                 
+                % augR (R_tilde in the thesis, eq. (3.14))                
+                augR = expectedJ' * this.R * expectedJ;
+                % place on diagonal and ensure symmetry               
+                rollAugR(startIdx:endIdx, startIdx:endIdx) = (augR + augR') / 2;
+                                
                 % O_tilde in the thesis, eq. (3.14)
                 %augO = [zeros(this.dimPlantState, dimInputSeq); expectedH' * this.R * expectedJ];
                 rollAugO((k - 1) * dimAugState + 1:k * dimAugState, startIdx:endIdx) ...
@@ -822,7 +814,6 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
                 if k > 1
                     entry = this.augA(:, :, k - 1) * entry;
                 end
-
                 rollAugA((k - 1) * dimAugState + 1:k * dimAugState, :) = entry;
             end
                         
@@ -841,8 +832,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             
             % rollout remaining cost matrices Q_hat and R_hat (eq. (3.19) in thesis)
             rollAugQ = Utility.createBlockdiagonalMatrix(this.augQ);
-            rollAugR = Utility.createBlockdiagonalMatrix(augR);
-                        
+              
             Z_dyn = rollAugB' * rollAugQ * rollAugB + rollAugR + 2 * rollAugB' * rollAugO; % Z_k^Dyn in eq. (3.19)
             % Z_dyn is not symmetric due to last addend; but we can use its symmetric part w.l.o.g. (Lemma 3.1 in thesis) 
             Z_dyn = 0.5 * (Z_dyn + Z_dyn');
@@ -871,12 +861,12 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             % possible, as there are no constraints)
             % resulting cost is half the cost as quadprog uses 0.5*x'*H*x +f'*x
             % but we want to solve x'*H*x+2*f'*x with H=Z_k and f'=f_k
-            %[inputSequences, cost] = quadprog(Z_k, f_k, [], [], [], [], [], [], [], this.quadprogOptions);
-            [inputSequences, cost] = quadprog(Z_k, f_k, [], [], [], [], [], [], []); % for mosek
+            [inputSequences, cost] = quadprog(Z_k, f_k, [], [], [], [], [], [], [], this.quadprogOptions);
+            %[inputSequences, cost] = quadprog(Z_k, f_k, [], [], [], [], [], [], []); % for mosek
             
-            % analytical solution
+            % analytical solution in the absence of input constraints: use pinv or lsqminnorm
 %             sequences = -pinv(Z_k) * f_k';
-%             cost2 =  sequences' * Z_k * sequences + 2*f_k*sequences;% + c_k
+%             cost2 =  sequences' * Z_k * sequences + 2*f_k*sequences +c_k;
             
             cost = 2 * cost + c_k + this.sendingCostFunction(eventSchedule, this.eventHistory); % add c_k and transmission cost
             inputSeq = inputSequences(1:dimInputSeq);
@@ -946,7 +936,6 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
             %   << eventTriggeredTransitionMatrix (Matrix of size <sequenceLength>+1 x <sequenceLength>+1)
             %      The event triggered transition matrix
 
-            %delayMatrix = -1 * ones(this.sequenceLength + 1, this.sequenceLength);
             delayMatrix = zeros(this.sequenceLength + 1, this.sequenceLength);
             
             events = flip(events); % so first element is e_k, last element is e_{k-N}, where N is sequence length - 1
@@ -1279,8 +1268,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
         
         %% incorporateDelayedModeMeasurements
         function currentMode = incorporateDelayedModeMeasurements(this, applicableModes, applicableModeDelays)
-            currentMode = [];
-            numModes = this.sequenceLength + 1;
+            currentMode = [];            
             if ~isempty(applicableModeDelays)
                 [contained, idx] = ismember(0, applicableModeDelays);
                 if contained
@@ -1289,6 +1277,7 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
                 else
                     indices = 1:numel(applicableModeDelays);
                 end
+                numModes = this.sequenceLength + 1;
                 for i = indices
                     % delay of j time steps-> we now the input at time k-j
                     % so we can update the mode probs at that time to unit vector with 1 at position corresponding to that input, 
@@ -1322,7 +1311,125 @@ classdef ResourceAwareRecedingHorizonController < SequenceBasedTrackingControlle
                 end
             end
         end
+    end
+    
+    methods (Access = public, Static)
+        %% standardGetStartSchedule
+        function startSchedule = standardGetStartSchedule(lastSchedule)
+            % Default implementation to, at time k, generate an initial solution candidate E_k (i.e., a transmission schedule) 
+            % for simulated annealing, given the schedule E_{k-1} from the previous time step k-1.
+            %
+            % Parameters:
+            %   >> lastSchedule (Binary vector)
+            %      The event schedule  E_{k-1} from the previous time step k-1.
+            %
+            % Returns:
+            %   >> startSchedule (Binary vector)
+            %      An initial solution candidate E_k which is a perturbed
+            %      version of E_{k-1}: Its first L-1 elements are given by the last L-1 elements
+            %      of E_{k-1}, and its last element is either 0 or 1 with
+            %      equal probability, with L the length of the schedule.
+            
+            % get the start schedule for SA at the current time step
+            startSchedule = [lastSchedule(2:end) randi(2) - 1];
+        end
         
-    end   
+         %% standardGetStartScheduleFixedNumberOfOnes
+        function startSchedule = standardGetStartScheduleFixedNumberOfOnes(lastSchedule)
+            % Default implementation to, at time k, generate an initial solution candidate E_k (i.e., a transmission schedule) 
+            % for simulated annealing, given the schedule E_{k-1} from the
+            % previous time step k-1, with the same number of ones as E_{k-1}.
+            %
+            % Parameters:
+            %   >> lastSchedule (Binary vector)
+            %      The event schedule  E_{k-1} from the previous time step k-1.
+            %
+            % Returns:
+            %   >> startSchedule (Binary vector)
+            %      An initial solution candidate E_k, which is a shifted
+            %      version of E_{k-1}: Its first L-1 elements are given by the last L-1 elements
+            %      of E_{k-1}, and its last element is the first element of E_{k-1}, with L the length of the schedule.
+            %      In particular, the number of ones in the schedule is maintained.
+            
+            % get the start schedule for SA at the current time step
+            % number of '1s' must stay the same
+            startSchedule = [lastSchedule(2:end) lastSchedule(1)];
+        end
+        
+        %% getInitialScheduleFixedNumberOnes
+        function initialSchedule = getInitialScheduleFixedNumberOnes(numberOfOnes, length)
+            % Default implementation to create initial schedules E_0
+            % (prior to the very first invocation of simulated annealing)
+            % with a fixed number of randomly placed ones. 
+            %
+            % Parameters:
+            %   >> numberOfOnes (Nonnegative integer)
+            %      The desired number of ones in the schedule of length <length>.
+            %
+            %   >> length (Nonnegative integer)
+            %      The desired schedule length, must be >= <numberOfOnes>.
+            %
+            % Returns:
+            %   >> initialSchedule (Binary vector)
+            %      A schedule E_0 with <length> elements, consisting of
+            %      <numberOfOnes> ones and <length>-<numberOfOnes> zeros.
+            
+            initialSchedule = zeros(1, length);
+            initialSchedule(randsample(length, numberOfOnes)) = 1;
+        end       
+        
+        %% standardGetNeighborFixedNumberOfOnes
+        function neighbor = standardGetNeighborFixedNumberOfOnes(schedule)      
+            % Standard getNeighbor implementation for schedules with a
+            % fixed numer of ones.
+            % This function randomly swaps the position of a '1' in the given schedule
+            % with the position of a '0'.
+            % This function does nothing if no zeros or no ones are present
+            % in the given schedule.            
+            %
+            % Parameters:
+            %   >> schedule (Binary vector)
+            %      The current schedule.
+            %
+            % Returns:
+            %   >> neighbor (Binary vector)
+            %      The given schedule with the positions of a randomly
+            %      chosen '0-1' pair swapped, i.e. the number of ones is
+            %      the maintained.
+            
+            neighbor = schedule;
+            % randomly move one of the '1s' to another position
+            idxOnes = find(neighbor);
+            if isempty(idxOnes) || length(idxOnes) == length(neighbor)
+                % no '1s' in schedule, must be all zero
+                % all '1s' in schedule
+                return
+            end    
+
+            idxZeros = setdiff(1:length(neighbor), idxOnes);
+
+            neighbor(randsample(idxOnes, 1)) = 0;
+            neighbor(randsample(idxZeros, 1)) = 1;
+        end
+        
+         %% standardGetNeighbor
+        function neighbor = standardGetNeighbor(schedule)
+            % Default getNeighbor implementation for simulated annealing
+            % This function randomly flips a bit in the given schedule.
+            %
+            % Parameters:
+            %   >> schedule (Binary vector)
+            %      The current schedule.
+            %
+            % Returns:
+            %   >> neighbor (Binary vector)
+            %      The given schedule with a randomly flipped bit.            
+            
+            neighbor = schedule;
+            idx = randi(length(schedule));
+            
+            neighbor(idx) = ~neighbor(idx);
+        end
+    end
 end
 

@@ -190,7 +190,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController & ModelPara
             
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
             
-            [dimAugState, this.F, this.G, this.augA, this.augB, this.Q_tilde, augR] = ...
+            [~, this.F, this.G, this.augA, this.augB, this.Q_tilde, augR] = ...
                 Utility.performModelAugmentation(sequenceLength, dimX, dimU, A, B, Q, R);
             % augmented state consists of x_k and eta_k
             % augR (R_tilde in the paper) is zero for all modes but the first
@@ -481,7 +481,7 @@ classdef IMMBasedRecedingHorizonController < SequenceBasedController & ModelPara
                     part1 = part1 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, this.augB), 3);
                     part2 = part2 + sum(reshape(weights(:, r), 1, 1, this.numModes) .* mtimesx(BP, statePart), 3);
                 end                
-                inputSequence = -pinv(part1) * part2;            
+                inputSequence = lsqminnorm((part1 + part1') / 2, -part2);
             end
          end
         

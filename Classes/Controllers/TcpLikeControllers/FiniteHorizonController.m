@@ -27,7 +27,7 @@ classdef FiniteHorizonController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -427,8 +427,13 @@ classdef FiniteHorizonController < SequenceBasedController
             % algorithm: requires objective to be 1/2x'Hx+f'x
             H = -this.S_0(:, :, initialMode);
             f = this.constraintBounds(:) - transpose(initialState' * this.P_0(:, :, initialMode));
-            
-            lambda_opt = quadprog(H, f, [], [], [], [], zeros(numel(this.constraintBounds), 1), []);
+            if any(H, 'all')
+                % H is nonzero
+                lambda_opt = quadprog(H, f, [], [], [], [], zeros(numel(this.constraintBounds), 1), []);
+            else
+                % H is zero, which renders the problem to solve linear
+                lambda_opt = linprog(f, [], [], [], [], zeros(numel(this.constraintBounds), 1), []);
+            end
         end
          
     end

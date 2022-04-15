@@ -110,7 +110,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             rmpath('matlab/external/sdpt3/');
             this.assertFalse(exist('sdpt3', 'file') == 2);
               
-            this.verifyWarning(@() MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, true, false), ...
+            this.verifyWarning(@() MSSController(this.A, this.B, this.sequenceLength, this.controllerDelta, true, false, false), ...
                 expectedWarnId);
             
             %restore
@@ -123,15 +123,32 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             % vertices of transition matrix polytope are computed corrected
             this.verifyFalse(this.controllerUnderTest.useLmiLab); % false by default
             this.verifyFalse(this.controllerUnderTest.assumeCorrelatedDelays); % false by default
-                        
+            % check if gains struct is properly setup
+            this.verifyTrue(isstruct(this.controllerUnderTest.gains));
+            this.verifySize(this.controllerUnderTest.gains, [1 1]);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'A'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).A, this.A);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'B'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).B, this.B);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'L'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).L, this.controllerUnderTest.getControllerGain());
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'delta'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).delta, this.controllerDelta);
+            
             % finally check if flag is set according to given param
             controller = MSSController(this.A, this.B, 2, this.controllerDelta, false, true, true);
             this.verifyTrue(controller.useLmiLab);
             this.verifyTrue(controller.assumeCorrelatedDelays);
             
             % gain is not completely zero and has correct dimensions
-            this.verifySize(controller.L, [2, 2])
-            this.verifyNotEqual(controller.L, zeros(2,2))
+            this.verifySize(controller.getControllerGain(), [2, 2])
+            this.verifyNotEqual(controller.getControllerGain(), zeros(2,2))
+            
+            lazyInitGain = true;
+            controller = MSSController(this.A, this.B, 2, this.controllerDelta, lazyInitGain, false);
+            % side effect: controller gain not yet computed
+            this.verifyEmpty(controller.getControllerGain());
+            this.verifyEmpty(controller.gains);
         end
 %%
 %%
@@ -286,7 +303,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testPolytopeSeqTwo
         function testPolytopeSeqTwo(this)
             seqLenth = 2;
-            expectedNumVertices = 6; % this is the expected number of vertices of the transition matrix polytope
+            expectedNumVertices = 4; % this is the expected number of vertices of the transition matrix polytope
             controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is 2
@@ -514,7 +531,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testPolytopeSeqThree
         function testPolytopeSeqThree(this)
             seqLenth = 3;
-            expectedNumVertices = 12; % this is the expected number of vertices of the transition matrix polytope
+            expectedNumVertices = 6; % this is the expected number of vertices of the transition matrix polytope
             controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  3
@@ -533,23 +550,13 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                   0, 0, 1, 0;
                   0, 0, 1-this.controllerDelta, this.controllerDelta;
                   0, 0, 1-this.controllerDelta, this.controllerDelta];
-            P2 = [1-this.controllerDelta, this.controllerDelta, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0];
-            P3 = [this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                  this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 1-this.controllerDelta, 0];
-            P4 = [0, 1, 0, 0;
+            P2 = [0, 1, 0, 0;
                   0, 1-this.controllerDelta, this.controllerDelta, 0;
                   0, 1-this.controllerDelta, this.controllerDelta, 0;
                   0, 1-this.controllerDelta, this.controllerDelta, 0];
                         
             this.verifyEqual(sum(ismember(P1, controller.vertices), 'all'), (seqLenth + 1)^2);
             this.verifyEqual(sum(ismember(P2, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P3, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P4, controller.vertices), 'all'), (seqLenth + 1)^2);
             
             % check for a hessenberg transition matrix          
             % use yalmip to solve the problem
@@ -802,7 +809,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testPolytopeSeqFour
         function testPolytopeSeqFour(this)
             seqLenth = 4;
-            expectedNumVertices = 20; % this is the expected number of vertices of the transition matrix polytope
+            expectedNumVertices = 8; % this is the expected number of vertices of the transition matrix polytope
             controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  4
@@ -822,17 +829,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                   0, 0, 0, 1, 0
                   0, 0, 0, 1-this.controllerDelta, this.controllerDelta;
                   0, 0, 0, 1-this.controllerDelta, this.controllerDelta];
-            P2 = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                  this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                  this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 0, 1-this.controllerDelta, 0];
-            P3 = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0];
-            P4 = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
+            P2 = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
                   1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
                   1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
                   1-this.controllerDelta, 0,0,0, this.controllerDelta;
@@ -840,8 +837,6 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                         
             this.verifyEqual(sum(ismember(P1, controller.vertices), 'all'), (seqLenth + 1)^2);
             this.verifyEqual(sum(ismember(P2, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P3, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P4, controller.vertices), 'all'), (seqLenth + 1)^2);
             
             % check for a hessenberg transition matrix          
             % use yalmip to solve the problem
@@ -987,7 +982,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testPolytopeSeqFive
         function testPolytopeSeqFive(this)
             seqLenth = 5;
-            expectedNumVertices = 30; % this is the expected number of vertices of the transition matrix polytope
+            expectedNumVertices = 10; % this is the expected number of vertices of the transition matrix polytope
             controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
             % check the transition matrix polytope if sequence length is  5
@@ -1008,38 +1003,24 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                   0, 0, 0, 0, 1, 0;
                   0, 0, 0, 0, 1-this.controllerDelta, this.controllerDelta;
                   0, 0, 0, 0, 1-this.controllerDelta, this.controllerDelta];
-            P2 = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                  this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                  this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0;
-                  this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0;
-                  this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0];
-            P3 = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0];
-            P4 = [0, 1, 0, 0, 0, 0;
+            P2 = [0, 1, 0, 0, 0, 0;
                   0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
                   0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
                   0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0];
-            P5 = [0, 1, 0, 0, 0, 0;
+                  0, 1-this.controllerDelta, 0, 0, 0, this.controllerDelta;
+                  0, 1-this.controllerDelta, 0, 0, 0, this.controllerDelta];
+            P3 = [0, 1, 0, 0, 0, 0;
                   0, 0, 1, 0, 0, 0;
                   0, 0, 0, 1, 0, 0;
                   0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                  0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                  0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0];
+                  0, 0, 0, 1-this.controllerDelta, 0, this.controllerDelta;
+                  0, 0, 0, 1-this.controllerDelta, 0, this.controllerDelta];
               
               
             this.verifyEqual(sum(ismember(P1, controller.vertices), 'all'), (seqLenth + 1)^2);
             this.verifyEqual(sum(ismember(P2, controller.vertices), 'all'), (seqLenth + 1)^2);
             this.verifyEqual(sum(ismember(P3, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P4, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P5, controller.vertices), 'all'), (seqLenth + 1)^2);
-            
+               
             % check for a hessenberg transition matrix          
             % use yalmip to solve the problem
             alpha = sdpvar(1, expectedNumVertices-1);            
@@ -1203,10 +1184,10 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         %% testPolytopeSeqSix
         function testPolytopeSeqSix(this)
             seqLenth = 6;
-            expectedNumVertices = 42; % 6^2+6 this is the expected number of vertices of the transition matrix polytope
+            expectedNumVertices = 12; % 2*6 this is the expected number of vertices of the transition matrix polytope
             controller = MSSController(this.A, this.B, seqLenth, this.controllerDelta, true, false);
             
-            % check the transition matrix polytope if sequence length is  5
+            % check the transition matrix polytope if sequence length is  6
             expectedSize = [seqLenth + 1 seqLenth + 1 expectedNumVertices];
             this.verifySize(controller.vertices, expectedSize);            
             % all vertices are different and valid transition matrices
@@ -1217,49 +1198,16 @@ classdef MSSControllerTest < matlab.unittest.TestCase
                 end
             end
             
-            % check if some particular vertices are present
+            % check if a particular vertex is present
             P1 = [0, 1, 0, 0, 0, 0, 0;
                   0, 0, 1, 0, 0, 0, 0;
                   0, 0, 0, 1, 0, 0, 0;
                   0, 0, 0, 0, 1, 0, 0;
                   0, 0, 0, 0, 0, 1, 0;
                   0, 0, 0, 0, 0, 1-this.controllerDelta, this.controllerDelta;
-                  0, 0, 0, 0, 0, 1-this.controllerDelta, this.controllerDelta];
-            P2 = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0;
-                  this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0, 0];
-            P3 = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0;
-                  1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0, 0];
-            P4 = [0, 1, 0, 0, 0, 0, 0;
-                  0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                  0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                  0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0];
-            P5 = [0, 1, 0, 0, 0, 0, 0;
-                  0, 0, 1, 0, 0, 0, 0;
-                  0, 0, 0, 1, 0, 0, 0;
-                  0, 0, 0, 0, 1, 0, 0;
-                  0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                  0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                  0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0];
+                  0, 0, 0, 0, 0, 1-this.controllerDelta, this.controllerDelta];              
               
-              
-            this.verifyEqual(sum(ismember(P1, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P2, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P3, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P4, controller.vertices), 'all'), (seqLenth + 1)^2);
-            this.verifyEqual(sum(ismember(P5, controller.vertices), 'all'), (seqLenth + 1)^2);
+            this.verifyEqual(sum(ismember(P1, controller.vertices), 'all'), (seqLenth + 1)^2); 
 %             
             % check for a hessenberg transition matrix          
             % use yalmip to solve the problem
@@ -1447,7 +1395,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         function testChangeCaDelayProbs(this)
             this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
             
-            L_old = this.controllerUnderTest.L;
+            L_old = this.controllerUnderTest.getControllerGain();
             
             % new delay probs yield a new controller delta and thus new vertices
             newDelayProbs = [0 0.25 0.5 0.2 0.05];         
@@ -1465,7 +1413,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.computeControlSequence(zeroState);
            
             actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
-            L_new = this.controllerUnderTest.L;
+            L_new = this.controllerUnderTest.getControllerGain();
             
             this.verifyEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
             
@@ -1479,13 +1427,30 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
             
             this.verifyNotEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
+            
+            % check if gains struct is properly updated
+            this.verifyTrue(isstruct(this.controllerUnderTest.gains));
+            this.verifySize(this.controllerUnderTest.gains, [1 2]);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'A'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).A, this.A);
+            this.verifyEqual(this.controllerUnderTest.gains(2).A, this.A); % A did not change
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'B'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).B, this.B);
+            this.verifyEqual(this.controllerUnderTest.gains(2).B, this.B); % B did not change
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'L'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).L, L_old);
+            this.verifyEqual(this.controllerUnderTest.gains(2).L, L_new);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'delta'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).delta, this.controllerDelta);
+            this.verifyEqual(this.controllerUnderTest.gains(2).delta, expectedNewControllerDelta);
+            
         end
         
         %% testChangeCaDelayProbsSameDelta
         function testChangeCaDelayProbsSameDelta(this)
            this.assertTrue(isa(this.controllerUnderTest, 'CaDelayProbsChangeable'));
             
-            L_old = this.controllerUnderTest.L;
+            L_old = this.controllerUnderTest.getControllerGain();
             
             % new delay probs but no new controller delta and no new vertices
             newDelayProbs = [0 0.2 0.6 0.2];         
@@ -1498,10 +1463,22 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             
             % this call triggers the recomputation of the gain
             this.controllerUnderTest.computeControlSequence(Gaussian(zeros(this.dimX, 1), eye(this.dimX)));            
-            L_new = this.controllerUnderTest.L;
+            L_new = this.controllerUnderTest.getControllerGain();
             
             % no change expected
             this.verifyEqual(L_new, L_old, 'AbsTol', 1e-8);
+                        
+            % accordingly, gains struct should be the same as before
+            this.verifyTrue(isstruct(this.controllerUnderTest.gains));
+            this.verifySize(this.controllerUnderTest.gains, [1 1]);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'A'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).A, this.A);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'B'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).B, this.B);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'L'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).L, L_old);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'delta'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).delta, this.controllerDelta);            
         end
 %%
 %%
@@ -1544,7 +1521,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
         function testChangeModelParameters(this)
             this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
             
-            L_old = this.controllerUnderTest.L;
+            L_old = this.controllerUnderTest.getControllerGain();
             
             % change A and B
             newA = -this.A;
@@ -1559,7 +1536,7 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             this.controllerUnderTest.computeControlSequence(zeroState);
            
             actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
-            L_new = this.controllerUnderTest.L;
+            L_new = this.controllerUnderTest.getControllerGain();
             
             this.verifyEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
             
@@ -1573,24 +1550,53 @@ classdef MSSControllerTest < matlab.unittest.TestCase
             actualSequence = this.controllerUnderTest.computeControlSequence(zeroState);
             
             this.verifyNotEqual(actualSequence, zeros(this.dimU * this.sequenceLength, 1));
+                        
+            % check if gains struct is properly updated
+            this.verifyTrue(isstruct(this.controllerUnderTest.gains));
+            this.verifySize(this.controllerUnderTest.gains, [1 2]);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'A'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).A, this.A);
+            this.verifyEqual(this.controllerUnderTest.gains(2).A, newA); 
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'B'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).B, this.B);
+            this.verifyEqual(this.controllerUnderTest.gains(2).B, newB);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'L'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).L, L_old);
+            this.verifyEqual(this.controllerUnderTest.gains(2).L, L_new); % changed
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'delta'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).delta, this.controllerDelta);
+            this.verifyEqual(this.controllerUnderTest.gains(2).delta, this.controllerDelta); % did not change   
         end
         
         %% testChangeModelParametersNewWIgnored
         function testChangeModelParametersNewWIgnored(this)
             this.assertTrue(isa(this.controllerUnderTest, 'ModelParamsChangeable'));
             
-            L_old = this.controllerUnderTest.L;           
+            L_old = this.controllerUnderTest.getControllerGain();           
             
             % pass a new noise covariance, has no effect
             newW = eye(this.dimX);
                         
             this.controllerUnderTest.changeModelParameters(this.A, this.B, newW);
             % this call triggers the recomputation of the gain
+            % but existing gain should be reused
             this.controllerUnderTest.computeControlSequence(Gaussian(zeros(this.dimX, 1), eye(this.dimX)));            
-            L_new = this.controllerUnderTest.L;
+            L_new = this.controllerUnderTest.getControllerGain();
+                        
+            this.verifyEqual(L_new, L_old);
             
+            % accordingly, gains struct should be the same as before
+            this.verifyTrue(isstruct(this.controllerUnderTest.gains));
+            this.verifySize(this.controllerUnderTest.gains, [1 1]);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'A'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).A, this.A);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'B'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).B, this.B);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'L'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).L, L_old);
+            this.verifyTrue(isfield(this.controllerUnderTest.gains, 'delta'));
+            this.verifyEqual(this.controllerUnderTest.gains(1).delta, this.controllerDelta);
             
-            this.verifyEqual(L_new, L_old, 'AbsTol', 1e-8);
         end
 %%
 %%

@@ -15,7 +15,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -66,10 +66,16 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         augC;
     end
     
-     properties (Access = private)
+    properties (Access = private)
         lastNumUsedMeas = 0;
         lastNumDiscardedMeas = 0;
-     end
+    end
+    
+    properties (SetAccess = immutable, GetAccess = public)
+        useMexImplementation(1,1) logical = true; 
+        % by default, we use the C++ (mex) implementation for computation of controller gains
+        % this is usually faster, but can produce slightly different results
+    end
     
     properties (GetAccess = public, Dependent)
         maxMeasurementDelay;
@@ -83,8 +89,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
     
     methods (Access = public)
         %% InfiniteHorizonUdpLikeController
-        function this = InfiniteHorizonUdpLikeController(A, B, C, Q, R, caDelayProb, scDelayProb, ...
-                sequenceLength, maxMeasDelay, W, V, v_mean)
+        function this = InfiniteHorizonUdpLikeController(A, B, C, Q, R, caModeTransitionMatrix, scDelayProb, ...
+                sequenceLength, maxMeasDelay, W, V, v_mean, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -103,9 +109,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             %   >> R (Positive definite matrix)
             %      The input weighting matrix in the controller's underlying cost function.
             %
-            %   >> caDelayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> caModeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> scDelayProb (Nonnegative vector)
             %      The vector describing the delay distribution of the
@@ -125,9 +130,16 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             %   >> V (Square Matrix)
             %      The covariance matrix of the measurement noise.
             %
-            %   >> v_mean (Vector, optional)
+            %   >> v_mean (Vector)
             %      The mean of the measurement noise.
-            %      If left out, the noise is assumed to be zero mean.
+            %      I the empty matrix is passed, v_mean = 0 is assumed.
+            %
+            %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
+            %      Flag to indicate whether the C++ (mex) implementation
+            %      shall be used for the computation of the controller
+            %      gains which is usually considerably faster than the Matlab
+            %      implementation. 
+            %      If left out, the default value true is used.
             %
             % Returns:
             %   << this (InfiniteHorizonUdpLikeController)
@@ -157,7 +169,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             % check the noise covs
             Validator.validateSysNoiseCovarianceMatrix(W, dimX);
             this.measNoiseCovSqrt = Validator.validateMeasNoiseCovarianceMatrix(V, this.dimMeas);
-            if nargin < 12 || isempty(v_mean)
+            if  isempty(v_mean)
                 this.measNoiseMean = zeros(this.dimMeas, 1);
             else
                 assert(Checks.isVec(v_mean, this.dimMeas), ...
@@ -167,7 +179,11 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 this.measNoiseMean = v_mean(:);
             end         
             
-            Validator.validateDiscreteProbabilityDistribution(caDelayProb);
+            if nargin > 12
+                this.useMexImplementation = useMexImplementation;
+            end
+            
+            Validator.validateTransitionMatrix(caModeTransitionMatrix, sequenceLength + 1);            
             Validator.validateDiscreteProbabilityDistribution(scDelayProb);   
             
             % initially, there is no measurement available (modelled by
@@ -176,11 +192,9 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 Utils.drawGaussianRndSamples(this.measNoiseMean, this.measNoiseCovSqrt, this.measBufferLength); 
             this.augmentedMeasurement = noiseSamples(:);
             this.availableMeasurements = zeros(1, this.measBufferLength);            
-                   
-            transitionMatrix = Utility.calculateDelayTransitionMatrix( ...
-                Utility.truncateDiscreteProbabilityDistribution(caDelayProb, sequenceLength + 1));
+
             % we need the stationary distribution of the Markov chain
-            this.stationaryModeDistribution = Utility.computeStationaryDistribution(transitionMatrix);
+            this.stationaryModeDistribution = Utility.computeStationaryDistribution(caModeTransitionMatrix);
             
             % augmented state consists of x_k, psi_k and eta_k
             dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
@@ -196,7 +210,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             [this.augC, probC] = this.computeAugmentedMeasMatrices(C, ...
                 Utility.truncateDiscreteProbabilityDistribution(scDelayProb, this.measBufferLength + 1));
             [this.L, this.K] = this.computeControllerGains(W, V, augA, augB, probC, expAugQ, expAugR);
-        end
+        end             
         
         %% reset
         function reset(this)
@@ -229,7 +243,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             
             [x0, ~] = state.getMeanAndCov();
             this.sysState = [x0; zeros(this.dimState - this.dimPlantState, 1)];
-        end
+        end       
         
         %% getControllerPlantState
         function plantState = getControllerPlantState(this)
@@ -240,6 +254,24 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             %      The controller's current estimate of the plant state.
             %
             plantState = this.sysState(1:this.dimPlantState);
+        end
+        
+        %% getControllerGains
+        function [K, L] = getControllerGains(this)
+            % Get the parameters/gains of the linear, mode-independent control law.
+            %
+            % Returns:
+            %   << K (Matrix)
+            %      The observer gain K.
+            %
+            %   << L (Matrix)
+            %      The controller gain L.
+            %      In contrast to the paper, the control sequence U_k is
+            %      given as U_k = L*state_k, so the gain returned is the
+            %      negative of the gain computed in the paper.
+            %
+            K = this.K;
+            L = this.L;
         end
         
         %% getLastComputationMeasurementData
@@ -327,7 +359,14 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
         %% computeControllerGains
         function [L,K] = computeControllerGains(this, W, V, augA, augB, probC, expAugQ, expAugR)
             augW = blkdiag(W, zeros(this.dimState - this.dimPlantState));
-            augV = Utils.blockDiag(V, this.measBufferLength);
+            augV = Utils.blockDiag(V, this.measBufferLength); % sparse
+            
+            if this.useMexImplementation                
+                 [L, K] = mex_InfiniteHorizonUdpLikeController(augA, augB, probC, expAugQ, expAugR, augW, augV, ...
+                    this.expAugA, this.expAugB, this.stationaryModeDistribution, this.augC);                 
+                return
+            end          
+    
             numCombinations = 2 ^ this.measBufferLength;
             numModes = this.sequenceLength + 1;
             
@@ -346,8 +385,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
             UnderbarPsi_old = inf(this.dimState);
             
             maxIterNum = 10000;
-            convergenceDiff = 1e-10;
-            
+            convergenceDiff = 1e-10;            
             k = 1;
             while (k <= maxIterNum) && (sum(sum(abs(OverbarPsi_old - OverbarPsi))) > convergenceDiff ...
                     || sum(sum(abs(UnderbarPsi_old - UnderbarPsi))) > convergenceDiff)
@@ -374,7 +412,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 OverbarPsi = -part2 + KVK + augW;
                 OverbarLambda = LRL + expAugQ - part3;
                 UnderbarLambda = LRL;
-
+                
                 Lambda_sum = OverbarLambda_old + UnderbarLambda_old;
 
                 % two separate terms required for L
@@ -384,16 +422,18 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 L1 = Bexp_Lambda * this.expAugB + expAugR + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
                     .* mtimesx(B_lambda_Sum, augB), 3);  % should be symmetric
                 L2 = Bexp_Lambda * this.expAugA + sum(reshape(this.stationaryModeDistribution, 1, 1, numModes) ...
-                    .* mtimesx(B_lambda_Sum, augA) , 3);   
+                    .* mtimesx(B_lambda_Sum, augA) , 3);
                 L = pinv((L1 + L1') / 2) * L2;
-                
+                %L = lsqminnorm((L1+L1')/2, L2);
+                              
                 % two separate terms required for K
                 PsiC = mtimesx(OverbarPsi_old, this.augC, 'T');
                 CPsiC = mtimesx(this.augC, PsiC); % should be symmetric                
                 % expectation with respect to C
                 K2 = this.expAugA * sum(reshape(probC, 1, 1, numCombinations) .* PsiC, 3);
-                K1 = augV + sum(reshape(probC, 1, 1, numCombinations) .* CPsiC, 3); % should be symmetric  
+                K1 = augV + sum(reshape(probC, 1, 1, numCombinations) .* CPsiC, 3); % should be symmetric                 
                 K = K2 * pinv((K1 + K1') / 2);                
+                %K = lsqminnorm((K1 + K1') / 2, K2')';
  
                 K_C = mtimesx(K_old, this.augC); % KC for all i
                 
@@ -406,7 +446,7 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 Aexp_KCUnderbarLambdaAexp_KC = mtimesx(Aexp_KC, 'T', mtimesx(UnderbarLambda_old, Aexp_KC)); % should be symmetric
                 BexpL_KCUnderbarLambdaBexpL_KC = mtimesx(BexpL_KC, 'T', mtimesx(UnderbarLambda_old, BexpL_KC)); % should be symmetric
                                 
-                partSum = sum(reshape(probC, 1, 1, numCombinations) .* (Aexp_KCUnderbarLambdaAexp_KC - BexpL_KCUnderbarLambdaBexpL_KC), 3);               
+                partSum = sum(reshape(probC, 1, 1, numCombinations) .* (Aexp_KCUnderbarLambdaAexp_KC - BexpL_KCUnderbarLambdaBexpL_KC), 3);
                 UnderbarLambda = UnderbarLambda + (partSum + partSum') / 2;
                 
                 BL = mtimesx(augB, L_old); % BL for all modes i
@@ -441,8 +481,8 @@ classdef InfiniteHorizonUdpLikeController < SequenceBasedController
                 % end compute next iterates
                 k = k + 1;
             end
-            L = -L;
-        end
+            L = -L; 
+          end
         
         %% computeAugmentedMeasMatrices
         function [augC, probC] = computeAugmentedMeasMatrices(this, C, scDelayProbs)

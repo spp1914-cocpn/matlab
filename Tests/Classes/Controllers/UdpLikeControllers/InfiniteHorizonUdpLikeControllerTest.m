@@ -5,7 +5,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2019  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -73,7 +73,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         %% initController
         function initController(this)                 
             this.controllerUnderTest = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.v_mean);
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, this.v_mean, false);
         end
     end
     
@@ -265,13 +265,13 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
              
              invalidSysMatrix = eye(this.dimX, this.dimX + 1); % not square
              this.verifyError(@() InfiniteHorizonUdpLikeController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
              
              invalidSysMatrix = eye(this.dimX, this.dimX); % square but not finite
              invalidSysMatrix(1, end) = inf;
              this.verifyError(@() InfiniteHorizonUdpLikeController(invalidSysMatrix, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -281,13 +281,13 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidInputMatrix = eye(this.dimX +1, this.dimU); % invalid dims
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
              
             invalidInputMatrix = eye(this.dimX, this.dimU); % correct dims, but not finite
             invalidInputMatrix(1, end) = nan;
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, invalidInputMatrix, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -298,30 +298,30 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
   
             invalidQ = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX + 1); % matrix is square, but of wrong dimension
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidQ = eye(this.dimX); % correct dims, but inf
             invalidQ(end, end) = inf;
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             expectedErrId = 'Validator:ValidateCostMatrices:InvalidQMatrixPSD';
             invalidQ = eye(this.dimX); % Q is not symmetric
             invalidQ(1, end) = 1;
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidQ = -eye(this.dimX); % Q is not psd
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, invalidQ, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             % now test for the R matrix
@@ -329,18 +329,18 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidR = eye(this.dimU + 1, this.dimU); % not square
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidR = eye(this.dimU); % correct dims, but inf
             invalidR(1,1) = inf;
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidR = ones(this.dimU); % R is not pd
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, invalidR, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -350,13 +350,13 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidMeasMatrix = eye(this.dimY, this.dimX + 1); % invalid dims
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
              
             invalidMeasMatrix = eye(this.dimY, this.dimX); % correct dims, but not finite
             invalidMeasMatrix(1, end) = nan;
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, invalidMeasMatrix, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -366,22 +366,22 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidMaxMeasDelay = [1 2]; % not a scalar
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = -1; % negative scalar
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = 1.5; % not an integer
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidMaxMeasDelay = inf; % not finite
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, invalidMaxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -391,12 +391,12 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidW = eye(this.dimX + 1, this.dimX); % not square
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, []), ...
                 expectedErrId);
                        
             invalidW = ones(this.dimU); % W is not pd
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, invalidW, this.V, []), ...
                 expectedErrId); 
         end
         
@@ -406,12 +406,12 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidV = eye(this.dimY + 1, this.dimY); % not square
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, []), ...
                 expectedErrId);
                        
             invalidV = ones(this.dimY); % V is not pd
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, invalidV, []), ...
                 expectedErrId);
         end
         
@@ -421,38 +421,45 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidNoiseMean = this; % not a vector
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean, false), ...
                 expectedErrId);
             
             invalidNoiseMean = ones(this.dimY + 2, 1); % invalid dims
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean, false), ...
                 expectedErrId);       
             
             tmp = {1};
             invalidNoiseMean = repmat(tmp, 1, this.dimY); % not a numeric vector
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean), ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, invalidNoiseMean, false), ...
                 expectedErrId); 
         end
         
-        %% testInfiniteHorizonUdpLikeControllerInvalidCaDelayProbs
+        %% testInfiniteHorizonUdpLikeControllerInvalidCaModeTransitionMatrix
         function testInfiniteHorizonUdpLikeControllerInvalidCaDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = blkdiag(1, this.modeTransitionMatrix);% invalid dimensions
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0 0.1 0.8 0.2];% not a matrix
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                invalidDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
+                expectedErrId);
+            
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
+            this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                invalidModeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
         
@@ -462,17 +469,17 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
             
             invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
                      
             invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
             this.verifyError(@() InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V), ...
+                this.modeTransitionMatrix, invalidDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, []), ...
                 expectedErrId);
         end
 %%
@@ -480,13 +487,14 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
         %% testInfiniteHorizonUdpLikeController
         function testInfiniteHorizonUdpLikeController(this)
             controller = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
-                this.caDelayProbs, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V);
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, this.W, this.V, [], false);
             
             expectedControllerPlantState = zeros(this.dimX, 1);
             this.verifyEqual(controller.getControllerPlantState(), expectedControllerPlantState);
             this.verifyEqual(controller.maxMeasurementDelay, this.maxMeasDelay);
             this.verifyEqual(controller.sequenceLength, this.sequenceLength);
             this.verifyFalse(controller.requiresExternalStateEstimate); % does not require a filter or state feedback
+            this.verifyFalse(controller.useMexImplementation);
         end
 %%
 %%
@@ -521,6 +529,36 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             this.controllerUnderTest.setControllerPlantState(initialState);
             this.verifyEqual(this.controllerUnderTest.getControllerPlantState(), x0);
+        end
+%%
+%%
+        %% testGetControllerGains
+        function testGetControllerGains(this)
+            % here, we have computed -L!
+            K_expected = this.K;
+            L_expected = -this.L;
+            
+            [K_actual, L_actual] = this.controllerUnderTest. getControllerGains();
+            
+            this.verifyEqual(K_actual, K_expected, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);            
+            this.verifyEqual(L_actual, L_expected, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
+        end
+        
+        %% testGetControllerGainsMex
+        function testGetControllerGainsMex(this)
+            % here, we have computed -L!
+            K_expected = this.K;
+            L_expected = -this.L;
+            
+            mexController = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.v_mean, true);
+            this.assertTrue(mexController.useMexImplementation);
+                        
+            [K_actual, L_actual] = mexController.getControllerGains();
+            
+            this.verifyEqual(K_actual, K_expected, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);            
+            this.verifyEqual(L_actual, L_expected, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
         end
 %%
 %%
@@ -594,9 +632,42 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             % two measurements available for the controller
             actualInputSequence = this.controllerUnderTest.computeControlSequence([firstMeas secondMeas], [0 1]);
             
-            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', 1e-10);
+            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
             % the controller state should have changed due to update
             this.verifyNotEqual(this.controllerUnderTest.getControllerPlantState(), expectedNewState(1:this.dimX));
+        end
+        
+        %% testControlSequenceMex
+        function testControlSequenceMex(this)
+            state = 2 * ones(this.dimX, 1);
+            stateDistribution = Gaussian(state, eye(this.dimX));
+            
+            mexController = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.v_mean, true);
+            this.assertTrue(mexController.useMexImplementation);
+            
+            % set an non-zero state
+            mexController.setControllerPlantState(stateDistribution);
+            this.assertEqual(mexController.getControllerPlantState(), state);
+                                    
+            augmentedState = [state; zeros(this.dimX, 1)];
+            % create two measurements
+            firstMeas = ones(this.dimY, 1);
+            secondMeas = 1.3 * ones(this.dimY, 1); % delayed by 1 step
+            
+            augmentedMeas = [firstMeas; secondMeas];
+            innovation = augmentedMeas - this.augC(:, :, 4) * augmentedState;
+            % now the expected input and new state
+            expectedInputs = -this.L * augmentedState;
+            expectedNewState = this.expAugA * augmentedState  + this.K * innovation + this.expAugB * expectedInputs;
+            
+            % two measurements available for the controller
+            actualInputSequence = mexController.computeControlSequence([firstMeas secondMeas], [0 1]);
+            
+            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
+            % the controller state should have changed due to update
+            this.verifyNotEqual(mexController.getControllerPlantState(), expectedNewState(1:this.dimX));
         end
         
         %% testControlSequenceNoMeasurements
@@ -615,16 +686,41 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
                         
             % no measurements available for the controller
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
-            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', 1e-10);
+            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
             % the controller state should have changed due to prediction
             this.verifyNotEqual(this.controllerUnderTest.getControllerPlantState(), state);
         end
 
+        %% testControlSequenceNoMeasurementsMex
+        function testControlSequenceNoMeasurementsMex(this)
+            state = 2 * ones(this.dimX, 1);
+            stateDistribution = Gaussian(state, eye(this.dimX));
+            
+            mexController = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.v_mean, true);
+            this.assertTrue(mexController.useMexImplementation);
+            
+            % set an non-zero state
+            mexController.setControllerPlantState(stateDistribution);
+            this.assertEqual(mexController.getControllerPlantState(), state);
+         
+            augmentedState = [state; zeros(this.dimX, 1)];
+            
+            % now the expected input and new state
+            expectedInputs = -this.L * augmentedState;
+                        
+            % no measurements available for the controller
+            actualInputSequence = mexController.computeControlSequence();
+            this.verifyEqual(actualInputSequence, expectedInputs, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
+            % the controller state should have changed due to prediction
+            this.verifyNotEqual(mexController.getControllerPlantState(), state);
+        end
+        
         %% testComputeControlSequenceZeroStateNoMeasurements
         function testComputeControlSequenceZeroStateNoMeasurements(this)
             zeroState = zeros(this.dimX, 1);
-            % the initial state is the origin, and we have a linear control
-            % law
+            % the initial state is the origin, and we have a linear control law
             expectedInputSequence = zeros(this.dimU * this.sequenceLength, 1);
             
             actualInputSequence = this.controllerUnderTest.computeControlSequence();
@@ -632,6 +728,25 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             this.verifyEqual(actualInputSequence, expectedInputSequence);
             % the controller state should have changed
             this.verifyNotEqual(this.controllerUnderTest.getControllerPlantState(), zeroState);
+        end
+        
+        %% testComputeControlSequenceZeroStateNoMeasurementsMex
+        function testComputeControlSequenceZeroStateNoMeasurementsMex(this)
+            zeroState = zeros(this.dimX, 1);
+            
+            mexController = InfiniteHorizonUdpLikeController(this.A, this.B, this.C, this.Q, this.R, ...
+                this.modeTransitionMatrix, this.scDelayProbs, this.sequenceLength, this.maxMeasDelay, ...
+                this.W, this.V, this.v_mean, true);
+            this.assertTrue(mexController.useMexImplementation);
+            
+            % the initial state is the origin, and we have a linear control law
+            expectedInputSequence = zeros(this.dimU * this.sequenceLength, 1);
+            
+            actualInputSequence = mexController.computeControlSequence();
+            
+            this.verifyEqual(actualInputSequence, expectedInputSequence);
+            % the controller state should have changed
+            this.verifyNotEqual(mexController.getControllerPlantState(), zeroState);
         end
         
         %% testComputeControlSequenceInvalidMeasurements
@@ -737,7 +852,7 @@ classdef InfiniteHorizonUdpLikeControllerTest < matlab.unittest.TestCase
             
             actualCosts = this.controllerUnderTest.computeCosts(states, inputs);
             
-            this.verifyEqual(actualCosts, expectedCosts, 'AbsTol', NominalPredictiveControllerTest.absTol);
+            this.verifyEqual(actualCosts, expectedCosts, 'AbsTol', InfiniteHorizonUdpLikeControllerTest.absTol);
         end
     end
 end

@@ -62,7 +62,18 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
     
     properties (SetAccess = immutable, GetAccess = public)
         horizonLength double {Validator.validateHorizonLength(horizonLength)} = 1;
-                        
+        
+        %      Flag to indicate whether the initial controller gains,
+        %      computed 1) during object construction and 2) if (A,B)
+        %      or W change due to a call of changeModelParameters()
+        %      shall be chosen as the time-invariant gains computed by the InfiniteHorizonUdpLikeController.
+        %      However, these do not always exist.
+        %      In such a case, or, if false is passed here, in situation 1) we fall back to random
+        %      gains, and in situation 2), we reuse the existing gains instead.
+        %
+        %      Note: Initial gains can always be set manually using setInitialControllerGains().
+        useInfHorizonInitGains = false;
+        
         useMexImplementation(1,1) logical = true; 
         % by default, we use the C++ (mex) implementation for computation of controller gains
         % this is usually faster, but can produce slightly different results
@@ -77,6 +88,11 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
         % gains
         % can be adapted (decreased) to reduce computation time
         maxNumIterations(1,1) double = RecedingHorizonUdpLikeController.defaultMaxNumIterations;
+    end
+    
+    properties (Access = private)
+        A;
+        B;
     end
     
     properties (SetAccess = private, GetAccess = ?RecedingHorizonUdpLikeControllerTest)
@@ -146,8 +162,8 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
     
     methods (Access = public)
         %% RecedingHorizonUdpLikeController
-        function this = RecedingHorizonUdpLikeController(A, B, C, Q, R, caModeTransitionMatrix, scDelayProb, ...
-                sequenceLength, maxMeasDelay, W, V, horizonLength, x0, x0Cov, useMexImplementation)
+        function this = RecedingHorizonUdpLikeController(A, B, C, Q, R, caModeTransitionMatrix, scDelayModel, ...
+                sequenceLength, maxMeasDelay, W, V, horizonLength, x0, x0Cov, useInfHorizonInitGains, useMexImplementation)
             % Class constructor.
             %
             % Parameters:
@@ -173,9 +189,11 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             %   >> caModeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
             %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
-            %   >> scDelayProb (Nonnegative vector)
-            %      The vector describing the delay distribution of the
-            %      SC-network.
+            %   >> scDelayModel (Nonnegative vector or stachastic matrix , i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      Either a vector describing the delay distribution of the
+            %      SC-network, or, a transition matrix in case the delays
+            %      are modeled by a Markov chain with state space {0, 1, ..., M+1},
+            %      where M is the maximum delay specified by the parameter <maxMeasDelay>.
             %
             %   >> sequenceLength (Positive integer)
             %      The length of the input sequence (i.e., the number of
@@ -200,6 +218,17 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             %   >> x0Cov (Positive definite matrix)
             %      The covariance matrix denoting the uncertainty of the controller's initial estimate.
             %
+            %   >> useInfHorizonInitGains (Flag, i.e., a logical scalar)
+            %      Flag to indicate whether the initial controller gains,
+            %      computed 1) during object construction and 2) if (A,B)
+            %      or W change due to a call of changeModelParameters()
+            %      shall be chosen as the time-invariant gains computed by the InfiniteHorizonUdpLikeController.
+            %      However, these do not always exist.
+            %      In such a case, or, if false is passed here, in situation 1) we fall back to random
+            %      gains, and in situation 2), we reuse the existing gains instead.
+            %
+            %      Note: Initial gains can always be set manually using setInitialControllerGains().
+            %
             %   >> useMexImplementation (Flag, i.e., a logical scalar, optional)
             %      Flag to indicate whether the C++ (mex) implementation
             %      shall be used for the computation of the controller
@@ -213,9 +242,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             
             Validator.validateSystemMatrix(A);
             dimX = size(A,1);
-            Validator.validateInputMatrix(B, dimX);
+            Validator.validateInputMatrix(B, dimX);            
             dimU = size(B, 2);
             this = this@SequenceBasedController(dimX, dimU, sequenceLength, false);
+            
+            this.A = A;
+            this.B = B;
             
             % Q, R
             Validator.validateCostMatrices(Q, R, dimX, dimU);
@@ -225,16 +257,43 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             numCaModes = sequenceLength + 1;
             Validator.validateTransitionMatrix(caModeTransitionMatrix, numCaModes);
             this.transitionMatrixCa = caModeTransitionMatrix;
-
-            Validator.validateDiscreteProbabilityDistribution(scDelayProb);
-            
-            Validator.validateMeasurementMatrix(C, dimX);
-            this.dimMeas = size(C, 1);
+                       
             assert(Checks.isNonNegativeScalar(maxMeasDelay) && mod(maxMeasDelay, 1) == 0, ...
                 'RecedingHorizonUdpLikeController:InvalidMaxMeasDelay', ...
                 ['** Input parameter <maxMeasDelay> (maximum measurement',...
-                'delay (M)) must be a nonnegative integer **']);              
-                         
+                'delay (M)) must be a nonnegative integer **']);      
+            this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
+            
+            % model for measurement delays: either a vector specifiyng a
+            % probability disrtibution
+            if isvector(scDelayModel) && isnumeric(scDelayModel)                
+                Validator.validateDiscreteProbabilityDistribution(scDelayModel);
+                
+                % fix the number of elements of the delay probs: M+2
+                normalizedScDelayProbs = Utility.normalizeProbabilities(Utility.truncateDiscreteProbabilityDistribution(scDelayModel, maxMeasDelay + 2), ...
+                    RecedingHorizonUdpLikeController.probBoundDelaysSc);
+                this.scDelayTransitionMatrix = repmat(reshape(normalizedScDelayProbs, 1, []), numel(normalizedScDelayProbs), 1);                
+                
+                this.measDelayProbs = repmat(normalizedScDelayProbs(:), 1, this.measBufferLength);               
+            elseif ismatrix(scDelayModel) && isnumeric(scDelayModel)
+                Validator.validateTransitionMatrix(scDelayModel, maxMeasDelay + 2);
+                this.scDelayTransitionMatrix = Utility.normalizeTransitionMatrix(scDelayModel, RecedingHorizonUdpLikeController.probBoundDelaysSc);
+                
+                % initial guess: we don't know anything about the measurement delays
+                this.measDelayProbs = zeros(maxMeasDelay + 2, this.measBufferLength) + 1/(maxMeasDelay + 2);
+            else
+                 error('RecedingHorizonUdpLikeController:InvalidScDelayModel', ...
+                    ['** InputParameter <scDelayModel> must either be a nonnegative vector whose elements sum up to 1 ' ...
+                    'or must be a matrix which %d-by-%d-dimensional and stochastic, i.e. each entry must be in [0,1] ' ...
+                    'and all rows must sum up to 1 **', maxMeasDelay + 2, maxMeasDelay + 2]);
+            end
+            
+            this.transitionMatrixCaHistory = repmat(this.transitionMatrixCa, 1, 1, this.maxMeasurementDelay);
+            this.transitionMatrixScHistory = repmat(this.scDelayTransitionMatrix, 1, 1, this.maxMeasurementDelay);
+                        
+            Validator.validateMeasurementMatrix(C, dimX);
+            this.dimMeas = size(C, 1);
+                                             
             % check the noise covs
             Validator.validateSysNoiseCovarianceMatrix(W, dimX);
             Validator.validateMeasNoiseCovarianceMatrix(V, this.dimMeas);       
@@ -247,11 +306,13 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
                 'RecedingHorizonUdpLikeController:InvalidX0Cov', ...
                 '** Input parameter <x0Cov> (initial covariance) must be positive definite and %d-by%d-dimensional **', dimX, dimX);
 
-            if nargin > 14
+            this.useInfHorizonInitGains = useInfHorizonInitGains;
+            
+            if nargin > 15
                 this.useMexImplementation = useMexImplementation;
             end
             
-            this.measBufferLength = maxMeasDelay + 1; % maxMeasDelay + 1 is buffer length
+            
             this.dimEta = dimU * (sequenceLength * (sequenceLength - 1) / 2);
             % augmented state consists of x_k, x_k-1, ..., x_k-M and eta_k
             this.dimAugState = dimX * this.measBufferLength + this.dimEta;
@@ -288,11 +349,10 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
                 [~,~,~,~,this.augA, this.augB] = Utility.createAugmentedPlantModel(sequenceLength, A, B);
             end
 
-            this.initAugmentedCostMatrices(numCaModes, H, A, B);
+            this.initAugmentedCostMatrices(numCaModes, H);
 
             this.setControllerPlantStateInternal(x0(:), x0Cov);
             
-            this.transitionMatrixCaHistory = repmat(this.transitionMatrixCa, 1, 1, this.maxMeasurementDelay);
             
             % measurement availability is the second mode of the system
             % gamma_k+j|k-i = 1: measurement y_{k-i} can be processed at time k+j (i.e., it arrives at time k+j, thus has a delay of j+i time steps)
@@ -302,13 +362,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             % 2^M+1, with M the maxMeasurement delay to be maintained at
             % time k: gamma_k|k, gamma_k|k-1, ..., gamma_k|k-M
             this.measAvailabilityStates = de2bi(0:2^this.measBufferLength-1);
-            
-            % fix the number of elements of the delay probs: M+2
-            normalizedScDelayProbs = Utility.normalizeProbabilities(Utility.truncateDiscreteProbabilityDistribution(scDelayProb, maxMeasDelay + 2), ...
-                RecedingHorizonUdpLikeController.probBoundDelaysSc);
-            this.scDelayTransitionMatrix = repmat(reshape(normalizedScDelayProbs, 1, []), numel(normalizedScDelayProbs), 1);
-            this.transitionMatrixScHistory = repmat(this.scDelayTransitionMatrix, 1, 1, this.maxMeasurementDelay);
-            
+                       
             % extract the corresponding indices
             allIdx = 1:2^this.measBufferLength;
             this.measAvailabilityIdx = cell(this.measBufferLength, 2^this.measBufferLength);
@@ -319,14 +373,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
                     zeroIdx = [zeroIdx, i:2^k:2^this.measBufferLength];
                 end
                 k = k + 1;
-                [this.measAvailabilityIdx{j,zeroIdx}] = deal([1:j-1, j+1:numel(normalizedScDelayProbs)]);
+                [this.measAvailabilityIdx{j,zeroIdx}] = deal([1:j-1, j+1:(maxMeasDelay + 2)]);
                 [this.measAvailabilityIdx{j, setdiff(allIdx, zeroIdx)}] = deal(j);
             end           
-            % initial guess: we don't know anything about the measurement delays
-            this.measDelayProbs = zeros(numel(normalizedScDelayProbs), this.measBufferLength) + 1/numel(normalizedScDelayProbs);
-
+            
             this.initAugmentedMeasMatrices(C);
-            this.initControllerGains();
+            this.initControllerGains(false);
         end
         
         %% setInitialControllerGains
@@ -369,7 +421,10 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             newMat = Utility.calculateDelayTransitionMatrix(...
                 Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
             if ~isequal(newMat, this.transitionMatrixCa)
-                this.transitionMatrixCa = newMat;               
+                this.transitionMatrixCa = newMat;
+                
+                % update the controller gains, new initial guess
+                %this.initControllerGains(true);
             end            
         end
         
@@ -391,7 +446,10 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             newMat = repmat(reshape(normalizedScDelayProbs, 1, []), numel(normalizedScDelayProbs), 1);            
             if ~isequal(newMat, this.scDelayTransitionMatrix)
                 this.scDelayTransitionMatrix = newMat;
-            end            
+                
+                % update the controller gains, new initial guess
+                %this.initControllerGains(true);
+            end           
         end
         
         %% changeModelParameters
@@ -399,6 +457,9 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             Validator.validateSystemMatrix(newA, this.dimPlantState);
             Validator.validateInputMatrix(newB, this.dimPlantState, this.dimPlantInput);
             Validator.validateSysNoiseCovarianceMatrix(newW, this.dimPlantState);
+            
+            this.A = newA;
+            this.B = newB;
             
             % and the augmented plant noise cov changes
             this.augW(1:this.dimPlantState, 1:this.dimPlantState) = newW;           
@@ -420,7 +481,9 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             this.augB(1:this.dimPlantState, :, 1) = newB * J(:, :, 1); 
             % terminal state weighting Q_K has to be adapted,
             % dynamics-dependent
-            this.computeAndSetTerminalAugQ(newA, newB);
+            this.computeAndSetTerminalAugQ();
+            
+            %this.initControllerGains(true);
         end
         
         %% setControllerPlantState
@@ -470,7 +533,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             if nargin == 1 || isempty(measurements)
                 applicableMeas = [];
                 applicableDelays = [];
-            else
+            else              
                 this.checkMeasurementsAndDelays(measurements, measurementDelays);
                 [applicableMeas, applicableDelays] = this.getApplicableMeasurements(measurements, measurementDelays);
             end
@@ -489,6 +552,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             % construct the augmented measurement, absence of measurement = 0 w.l.o.g.
             augmentedMeas = zeros(this.dimAugmentedMeas, 1);
             newMeasMode = zeros(1, this.measBufferLength); % row vector (gamma_k)
+            
             for j=this.maxMeasurementDelay:-1:0
                 % check if measurement y_{k-j} is available
                 [avail, idx]= ismember(j, applicableDelays);
@@ -518,8 +582,7 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
             end           
             % get S_exp=E[S(gamma_k+n)|I_k] for the whole horizon based on the current available information I_k
             Sexp = this.computeExpectedMeasAvailabilityMatrices(newMeasMode);
-            % integrate the mode observation to update the ca mode theta_k, if
-            % present
+            % integrate the mode observation to update the ca mode theta_k, if present            
             if ~isempty(mostRecentMode) && modeDelay < this.lastModeObservationDelay                
                 % simply extract the corresponding row as mode
                 % probabilities are unit vector
@@ -529,17 +592,14 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
                 end                
                 this.modeCa = probMat(mostRecentMode, :)';                
                 this.lastModeObservationDelay = modeDelay;
-            end
-            
+            end            
             numCaModes = this.sequenceLength + 1;
             
             if this.useMexImplementation
-                [this.K, this.L, iternum] ...
+                [this.K, this.L, iternum, Aexp, Bexp] ...
                     = mex_RecedingHorizonUdpLikeController(this.augA, this.augB, this.augQ, this.transitionMatrixCa, ...
                         this.augW, this.augV, this.augmentedMeasMatrix, Sexp, this.JRJ, this.K, this.L, ...
-                        this.augStateCov, this.augStateSecondMoment, this.terminalAugQ, this.modeCa, this.maxNumIterations);
-                Aexp =  sum(reshape(this.modeCa, 1, 1, numCaModes) .* this.augA, 3);
-                Bexp =  sum(reshape(this.modeCa, 1, 1, numCaModes) .* this.augB, 3);
+                        this.augStateCov, this.augStateSecondMoment, this.terminalAugQ, this.modeCa, this.maxNumIterations);                
             else
                 % predict the ca mode probs over the horizon from theta_k to theta_{k+K}
                 modeProbsCa = zeros(numCaModes, this.horizonLength + 1);
@@ -595,12 +655,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
                     % first time step
                     costs = oldCostsToGo(1);
                     if abs(oldCosts - costs) < RecedingHorizonUdpLikeController.convergenceDiff
-                        %fprintf('Converged after %d iterations, current costs (bound): %f\n', iternum, costs);                        
                         break;
                     else
                         oldCosts = costs;                        
                     end                
                 end
+                fprintf('** RecedingHorizonUdpLikeController: %d iterations, current costs (bound): %f **\n', iternum, costs);
             end
             
             inputSequence = this.doControlSequenceComputation();            
@@ -629,18 +689,12 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
 
             this.transitionMatrixScHistory = cat(3, this.scDelayTransitionMatrix, ...
                 this.transitionMatrixScHistory(:, :, 1:end-1));
-
+            
             this.lastNumIterations = iternum;
             
             % shift the current gains
-%             this.M = circshift(this.M, -1, 3);
-%             this.L = circshift(this.L, -1, 3);
-%             this.K = circshift(this.K, -1, 3);
-            
-            % and fill with a random matrix
-%             this.M(:, :, end) = rand(this.dimAugState)-.5;
-%             this.K(:, :, end) = rand(this.dimAugState,this.dimAugmentedMeas)-.5;
-%             this.L(:, :, end) = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState)-.5;
+            this.L = circshift(this.L, -1, 3);
+            this.K = circshift(this.K, -1, 3);
                         
             if nargin == 1
                 this.lastNumUsedMeas = 0;
@@ -673,14 +727,61 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
         end
     end
     
-    methods (Access = private)
+    methods (Access = private)        
         %% initControllerGains
-        function initControllerGains(this)
-            % simple initialization procedure: pick initial gains randomly    
-            this.K = rand(this.dimAugState, this.dimAugmentedMeas, this.horizonLength);
-            this.L = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState, this.horizonLength);            
+        function initControllerGains(this, reinit)            
+            if ~this.useInfHorizonInitGains
+                if ~reinit
+                    % use random gains
+                    this.initControllerGainsRandom();
+                end
+                return
+            end
+            
+            initialK = [];
+            initialL = [];
+            
+            C = full(this.augmentedMeasMatrix(1:this.dimMeas, 1:this.dimPlantState));
+            W = this.augW(1:this.dimPlantState, 1:this.dimPlantState);
+            V = this.augV(1:this.dimMeas, 1:this.dimMeas);
+            % use stationary distribution of measurement delays            
+            stationaryScDelayProbs = Utility.computeStationaryDistribution(this.scDelayTransitionMatrix);
+            disp('** RecedingHorizonUdpLikeController: Computing initial control laws (first guess) **');
+            try
+                % we use the stabilizing control law from the UDP-like controller as initial guess, if these exist
+                [initialK, initialL] = InfiniteHorizonUdpLikeController(this.A, this.B, C, this.Q, this.R, ...
+                    this.transitionMatrixCa , stationaryScDelayProbs, this.sequenceLength, this.maxMeasurementDelay, ...
+                    W, V, zeros(this.dimMeas, 1), this.useMexImplementation).getControllerGains();
+            catch ex
+                % an error occurred during the computation of the gains
+                % error can indicate that the control law from the UDP-like controller does not exist
+                % fall back to previous gains, if existing
+                if reinit
+                    warning('RecedingHorizonUdpLikeController:InitControllerGains:InitialGains', ...
+                    '** An error occurred during the computation of the initial gains:\n\n%s\n\nExisting gains will be used as initial guess instead **', ...
+                    ex.getReport('basic', 'hyperlinks', 'off'));
+                else
+                    % otherwise: use random gains
+                    warning('RecedingHorizonUdpLikeController:InitControllerGains:InitialGains', ...
+                    '** An error occurred during the computation of the initial gains:\n\n%s\n\nRandom gains will be used as initial guess instead **', ...
+                    ex.getReport('basic', 'hyperlinks', 'off'));
+                    % fall back to random gains    
+                    this.initControllerGainsRandom();
+                end                
+                return               
+             end
+            disp('** RecedingHorizonUdpLikeController: Done computing initial control laws (first guess) **');
+            this.K = repmat(initialK, 1,1, this.horizonLength);
+            this.L = repmat(initialL, 1,1, this.horizonLength);         
         end
         
+        %% initControllerGainsRandom
+        function initControllerGainsRandom(this)
+            disp('** RecedingHorizonUdpLikeController: Selecting random initial control laws (first guess) **');
+            % simple initialization procedure: pick initial gains randomly    
+            this.K = rand(this.dimAugState, this.dimAugmentedMeas, this.horizonLength);
+            this.L = rand(this.dimPlantInput * this.sequenceLength, this.dimAugState, this.horizonLength); 
+        end
         
         %% initAugmentedMeasMatrices
         function initAugmentedMeasMatrices(this, C)
@@ -704,14 +805,14 @@ classdef RecedingHorizonUdpLikeController < SequenceBasedController & ModelParam
         end       
         
         %% initAugmentedCostMatrices        
-        function initAugmentedCostMatrices(this, numCaModes, H, A, B)
-            this.computeAndSetTerminalAugQ(A, B);            
+        function initAugmentedCostMatrices(this, numCaModes, H)
+            this.computeAndSetTerminalAugQ();            
             this.computeAndSetAugQ(numCaModes, H);
         end
         
         %% computeAndSetTerminalAugQ
-        function computeAndSetTerminalAugQ(this, A, B)
-            [terminalQ, ~, ~, info] = idare(A, B, this.Q, this.R);
+        function computeAndSetTerminalAugQ(this)
+            [terminalQ, ~, ~, info] = idare(this.A, this.B, this.Q, this.R);
             if info.Report > 1
                 % either report == 2: The solution is not finite
                 % or report == 3: No solution found since the symplectic

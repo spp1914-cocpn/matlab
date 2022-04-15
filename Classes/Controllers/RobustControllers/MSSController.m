@@ -48,14 +48,19 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
         % matrices corresponding to the dynamics of the augmented system (polytopic MJLS)
         augA;
         augB;
-        recomputeGain = false;        
+        % the computed controller gain
+        L;
+        recomputeGain = false;
     end
        
     properties (SetAccess = private, GetAccess = ?MSSControllerTest)
         vertices; % vertices of the transition matrix polytope (called P in the paper)
-        % the computed controller gain
-        L;
         controllerDelta(1,1) double {mustBeNonnegative, mustBeLessThan(controllerDelta, 1)};
+        
+        % store already computed gains for (A,B) and delta
+        % structure array
+        % structure has fields A, B, L, and delta
+        gains;
     end
     
     properties (SetAccess = immutable, GetAccess = public)
@@ -69,6 +74,7 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
     
     properties (Access = private, Constant)
         SDPT3_MAXIT = 75; % default value is 50
+        DELTA_CHAR = char(hex2dec('03b4')); % the greek letter delta (lower case)
         
         messages = containers.Map({
             'solverNotFound';
@@ -93,7 +99,8 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             'solverReportedError';
             'solverUnexpected';
             'solutionFeasible';
-            'solutionInfeasible'
+            'solutionInfeasible';
+            'previouslyComputedGainAvail'
             }, ...
             {'** External solver (SDPT3) not found, falling back to internal solver (LMI Lab) **';
              '** Setting up feasibility problem **';
@@ -117,7 +124,8 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
              '** External solver (SDPT3) reported an error: %s **';
              '** External solver (SDPT3) reported an unexpected return code: %s **';
              '** Found solution seems to be feasible, consider calling isMeanSquareStable() **';
-             '** Found solution seems to be infeasible, consider calling isMeanSquareStable() **'
+             '** Found solution seems to be infeasible, consider calling isMeanSquareStable() **';
+             ['** Use previously computed gain (L) for (A,B) and ' MSSController.DELTA_CHAR '=%d **']
             });  
     end
     
@@ -134,17 +142,17 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             %      The input matrix of the plant.
             %            
             %   >> sequenceLength (Positive integer)
-            %      The length of the input sequence (i.e., the number of
+            %      N, the length of the input sequence (i.e., the number of
             %      control inputs) to be computed by the controller.
             %
             %   >> delta (Nonnegative scalar in [0,1))
-            %      Upper bound for the last entry p_k,(N+1)(N+1) of all possible transition matrices P_k 
+            %      Upper bound for the last entry p_k,(N)(N) of all possible transition matrices P_k 
             %      of the augmented dynamical sytem (polytopic MJLS).
             %
             %   >> lazyInitGain (Flag, i.e., a logical scalar)
             %      Flag to indicate whether the computation of controller gain L shall be
             %      done during object instantiation, i.e., during this
-            %      constructor call (lazyInitGain = false), or shall be deferred until the the first control sequence is to be computed (lazyInitGain = true).
+            %      constructor call (lazyInitGain = false), or shall be deferred until the first control sequence is to be computed (lazyInitGain = true).
             %
             %   >> assumeCorrDelays (Flag, i.e., a logical scalar)
             %      Flag to indicate whether the vertices of the transition
@@ -152,9 +160,9 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             %      of Markovian delays and losses (with time-invariant
             %      transition probalities), or whether a white process
             %      shall be assumed (assumeCorrDelays = false).
-            %      In the former case, the polytope has 2*(N+1)*(N+2)!
-            %      vertices, in the latter case it has only (N+1)²+(N+1)
-            %      vertices, with N+1 the sequence length.
+            %      In the former case, the polytope has 2*N*(N+1)!
+            %      vertices, in the latter case it has only 2*N
+            %      vertices, with N the sequence length.
             %
             %   >> useLmiLab (Flag, i.e., a logical scalar, optional)
             %      Flag to indicate whether Matlab's LMI Lab shall be used 
@@ -207,14 +215,14 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             
             if nargin > 6
                 this.useLmiLab = useLmiLab;
-            elseif exist('sdpt3', 'file') ~= 2
+            end
+            if ~this.useLmiLab && exist('sdpt3', 'file') ~= 2
                 % SDPT3 seems not to be on the path, fall back to internal
                 % solver lmilab
                 warning('MSSController:SolverNotFound', ...
                     MSSController.messages('solverNotFound'));
                 this.useLmiLab = true;
-            end       
-            
+            end
             
             this.initTransitionMatrixPolytope();
             if lazyInitGain
@@ -261,7 +269,23 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             
             this.recomputeGain = true;
         end
-            
+        
+        %% getControllerGain
+        function L = getControllerGain(this)
+            % Get the parameter/gain of the linear, mode-independent control law.
+            %
+            % Returns:
+            %
+            %   << L (Matrix, might be empty)
+            %      The controller gain L, such that U_k = L*state_k.
+            %      The empty matrix is returned in case computation of gain 
+            %      is deferred until the first control sequence U_0 is to be
+            %      computed and this method is called prior to first
+            %      invocation of computeControlSequence().
+            %          
+            L = this.L;
+        end
+        
         
         %% reset
         function reset(this)
@@ -335,8 +359,11 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
             for r=1:size(this.vertices, 3)
                 lambda = kron(this.vertices(:, :, r)', I) * stackedA;
                 maxRho = max(max(abs(eig(lambda))), maxRho);
+                if maxRho >= 1
+                    break
+                end
             end
-            disp(MSSController.messages('doneComputeBound'));            
+            disp(MSSController.messages('doneComputeBound'));
             if maxRho >= 1
                 % 1 <= maxRho <= JSR(A_L) -> closed loop dynamics not MSS
                 % (Theorem 8)
@@ -794,8 +821,7 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
                 % where ? means that the corresponding entry is arbitrary
                 % and only known to lie in [0,1]
 
-                numModes = this.sequenceLength + 1;
-                numVertices = 2 * this.sequenceLength * factorial(numModes);
+                numModes = this.sequenceLength + 1;                
                 vertsPerRow = cell(1, numModes);
                 idxPerRow = cell(1, numModes);
                 for j=1:this.sequenceLength
@@ -805,20 +831,27 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
                     vertsPerRow{j} = eye(j+1, numModes);
                     idxPerRow{j} = 1:j+1;
                 end
-                % for the last row, we have 2*sequenceLength vertices
-                % sequenceLength many with 1 at position i
-                % sequenceLength many with 1-delta at position i and delta
-                % at last position
-                vertsPerRow{numModes} = [  eye(this.sequenceLength, numModes);
-                                           [(1-this.controllerDelta) * eye(this.sequenceLength), repmat(this.controllerDelta, this.sequenceLength, 1)]
-                                ];
-                idxPerRow{numModes} = 1:2*this.sequenceLength;
-                
+                if this.controllerDelta == 0
+                    numVertices = this.sequenceLength * factorial(numModes);
+                    % for the last row, we have sequenceLength many vertices with 1 at position i
+                    vertsPerRow{numModes} = eye(this.sequenceLength, numModes);
+                    idxPerRow{numModes} = 1:this.sequenceLength;
+                else
+                    numVertices = 2 * this.sequenceLength * factorial(numModes); % 2*N*(N+1)! vertices
+                    % for the last row, we have 2*sequenceLength vertices
+                    % sequenceLength many with 1 at position i
+                    % sequenceLength many with 1-delta at position i and delta
+                    % at last position
+                    vertsPerRow{numModes} = [  eye(this.sequenceLength, numModes);
+                                               [(1-this.controllerDelta) * eye(this.sequenceLength), repmat(this.controllerDelta, this.sequenceLength, 1)]
+                                    ];
+                    idxPerRow{numModes} = 1:2*this.sequenceLength;
+                end
+               
+                [T{1:numModes}] = ndgrid(idxPerRow{:});
+                idx = cell2mat(cellfun(@(Ti) Ti(:), T, 'UniformOutput', false));                
                 % simply enumerate all vertices by combining their
                 % respective indices
-                [T{1:numModes}] = ndgrid(idxPerRow{:});
-                idx = cell2mat(cellfun(@(Ti) Ti(:), T, 'UniformOutput', false));
-                
                 this.vertices = zeros(numModes, numModes, numVertices);
                 for j = 1:numVertices
                     for i=1:numModes
@@ -826,7 +859,7 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
                     end
                 end
             else
-                this.computePolytopeWhiteDelays();
+                this.computePolytopeWhiteDelays();                
             end
         end
 
@@ -835,93 +868,53 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
            % for the case of white delays: exploit the Hessenberg
             % structure and the element interdependencies
             % assume delta is [0,1]
-            %numModes = this.sequenceLength + 1;
-            
+                
             switch this.sequenceLength
                 case 1 % sequence length is 1
-                    % 2 vertices (N^2+1)
+                    % 2 vertices
                     this.vertices(:, :, 2) = [1-this.controllerDelta, this.controllerDelta;
                                               1-this.controllerDelta, this.controllerDelta];
                     this.vertices(:,:, 1) = [1, 0;
                                              1, 0];
                 case 2 % sequence length is 2
                     % 4=2+1+1 vertices
-                    % + 2 for corner case of delay probs Pr[delay = 0] = 1
-                    % and Pr[delay = 1] = 1
-                    this.vertices(:, :, 6) = [1 0 0;
+                    % including 2 for corner case of delay probs Pr[delay = 0] = 1 and Pr[delay = 1] = 1
+                    this.vertices(:, :, 4) = [1 0 0;
                                               1 0 0;
                                               1 0 0];
-                    this.vertices(:, :, 5) = [0 1 0;
+                    this.vertices(:, :, 3) = [0 1 0;
                                               0 1 0;
-                                              0 1 0];
-                    this.vertices(:, :, 4) = [this.controllerDelta, 1-this.controllerDelta, 0;
-                                              this.controllerDelta, 1-this.controllerDelta, 0;
-                                              this.controllerDelta, 1-this.controllerDelta, 0];                    
-                    this.vertices(:, :, 3) = [1-this.controllerDelta, this.controllerDelta, 0;
-                                              1-this.controllerDelta, this.controllerDelta, 0;
-                                              1-this.controllerDelta, this.controllerDelta, 0];
+                                              0 1 0];                    
                     this.vertices(:, :, 2) = [1-this.controllerDelta, this.controllerDelta, 0;
                                               1-this.controllerDelta, 0, this.controllerDelta;
                                               1-this.controllerDelta, 0, this.controllerDelta];
                     this.vertices(:, :, 1) = [0, 1, 0;
                                               0, 1-this.controllerDelta, this.controllerDelta;
                                               0, 1-this.controllerDelta, this.controllerDelta];
-                case 3 % sequence length is 3, 12 vertices
+                case 3 % sequence length is 3, 6 vertices
                     this.initTransitionMatrixPolytopeSeq3(); 
-                case 4 % sequence length is 4, 20 vertices
+                case 4 % sequence length is 4, 8 vertices
                     this.initTransitionMatrixPolytopeSeq4();
-                case 5 % sequence length is 5, 30 vertices
+                case 5 % sequence length is 5, 10 vertices
                     this.initTransitionMatrixPolytopeSeq5();
                 otherwise
-                    % general case: we have N+N*(N-1)=N² vertices, where N is the sequence length
-                    % because each matrix in the polytope is uniquely defined by its last row
-                    % likewise, the vertices are
-                    % additionally, we must consider the N corner cases
-                    % with "deterministic delays"
-                    % Pr[delay = 0] = 1, Pr[delay = 1] = 1, Pr[delay = 2] =
-                    % 1, Pr[delay = 3] = 1, ..., Pr[delay = N-1] = 1
-                    % they are also vertices of the polytope
-                    numCombinations = this.sequenceLength ^ 2;
-                    numVertices = numCombinations + this.sequenceLength;
-                    % to construct the first N^2 vertices, use that delta can be on
-                    % any position in the last row
-                    % and any other entry, apart from the very last, can be 1-delta
-                    % which gives us N^2 possible combinations, since each
-                    % row has (N+1)-elements
-                    combinations = zeros(numCombinations, this.sequenceLength +1);
-                    combinations(1:numCombinations-1, :) =  kron(diag(repmat(this.controllerDelta, this.sequenceLength + 1, 1)), ones(this.sequenceLength-1, 1));
-                    % one more for the last entry
-                    combinations(numCombinations, :) = combinations(numCombinations-1, :);
-                    currIdx = 2;
-                    for j=1:numCombinations
-                        if combinations(j, currIdx) == this.controllerDelta
-                            currIdx = currIdx + 1;
-                        end                        
-                        combinations(j, currIdx) = 1 - this.controllerDelta;
-                        currIdx = mod(currIdx, this.sequenceLength) + 1;                        
-                    end
-                    this.vertices = zeros(this.sequenceLength + 1, this.sequenceLength + 1, numVertices);
-                    for j=1:numCombinations
-                        this.vertices(end, :, j) = combinations(j, :); 
-                        for i=1:this.sequenceLength
-                            this.vertices(i:end-1, i, j) = this.vertices(end, i, j);
-                            this.vertices(i, i+1, j) = 1-sum(this.vertices(i, :, j));
-                        end
-                    end
-                    % finally, add the corner cases
-                    cornerCase = [zeros(1, this.sequenceLength) 1];
-                    for j=1:this.sequenceLength
-                        cornerCase = [cornerCase(end), cornerCase(1:end-1)];
+                    % general case: we have 2*N vertices for the last row
+                    % sequenceLength many with 1 at position i
+                    % sequenceLength many with 1-delta at position i and delta
+                    % at last position
+                    vertsLastRow = [eye(this.sequenceLength, this.sequenceLength + 1);
+                                 [(1-this.controllerDelta) * eye(this.sequenceLength), repmat(this.controllerDelta, this.sequenceLength, 1)]
+                                ];
+                    for j=1:2*this.sequenceLength
+                        sums = cumsum(vertsLastRow(j, :));
+                        this.vertices(:, :, j) = diag(1 - sums(1:end -1), 1);
                         % adapted from Utility.calculateDelayTransitionMatrix
                         % to create transition matrix without normalization
                         % of probabilities
-                        sums = cumsum(cornerCase);
-                        this.vertices(:, :, numCombinations + j) = diag(1 - sums(1:end -1), 1);
-                        % calculate Transition matrix
                         for i=1:this.sequenceLength + 1
-                            this.vertices(i:end, i, numCombinations + j) = cornerCase(i);
-                        end                        
-                    end
+                            this.vertices(i:end, i, j) = vertsLastRow(j, i);
+                        end
+                    end                    
             end
             if this.controllerDelta == 0
                 % remove redundant slices, we have way fewer slices 
@@ -945,54 +938,29 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
 
         %% initTransitionMatrixPolytopeSeq3
         function initTransitionMatrixPolytopeSeq3(this)
-            % 9=3+2+2+2 vertices
-            % + 3 for corner cases of delay probs Pr[delay = 0] = 1
+            % 6 vertices
+            % including 3 for corner cases of delay probs Pr[delay = 0] = 1
             % Pr[delay = 1] = 1 and Pr[delay = 2] = 1            
-            this.vertices(:, :, 12) = [1 0 0 0;
-                                       1 0 0 0;
-                                       1 0 0 0;
-                                       1 0 0 0];           
-            this.vertices(:, :, 11) = [0 1 0 0;
-                                       0 1 0 0;
-                                       0 1 0 0;
-                                       0 1 0 0];
-            this.vertices(:, :, 10) = [0 1 0 0;
-                                       0 0 1 0;
-                                       0 0 1 0;
-                                       0 0 1 0];
+            
+            this.vertices(:, :, 6) = [1 0 0 0;
+                                      1 0 0 0;
+                                      1 0 0 0;
+                                      1 0 0 0];
+            
+            this.vertices(:, :, 5) = [0 1 0 0;
+                                      0 1 0 0;
+                                      0 1 0 0;
+                                      0 1 0 0];
+            
+            this.vertices(:, :, 4) = [0 1 0 0;
+                                     0 0 1 0;
+                                     0 0 1 0;
+                                     0 0 1 0];
             %
-            this.vertices(:, :, 9) = [0, 1, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 8) = [0, 1, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0];
-            this.vertices(:, :, 7) = [this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 6) = [this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0];
-            this.vertices(:, :, 5) = [1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 4) = [1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0];
             this.vertices(:, :, 3) = [1-this.controllerDelta, this.controllerDelta, 0, 0;
                                       1-this.controllerDelta, 0, this.controllerDelta, 0;
                                       1-this.controllerDelta, 0, 0, this.controllerDelta;
                                       1-this.controllerDelta, 0, 0, this.controllerDelta];
-            %
             this.vertices(:, :, 2) = [0, 1, 0, 0;
                                       0, 1-this.controllerDelta, this.controllerDelta, 0;
                                       0, 1-this.controllerDelta, 0, this.controllerDelta;
@@ -1001,100 +969,37 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
                                       0, 0, 1, 0;
                                       0, 0, 1-this.controllerDelta, this.controllerDelta;
                                       0, 0, 1-this.controllerDelta, this.controllerDelta];
+            %
         end
         
         %% initTransitionMatrixPolytopeSeq4
         function initTransitionMatrixPolytopeSeq4(this)
-            % 16=4+3+3+3+3 vertices
-            % + 4 for corner cases of delay probs Pr[delay = 0] = 1
+            % 8
+            % incl. 4 for corner cases of delay probs Pr[delay = 0] = 1
             % Pr[delay = 1] = 1, Pr[delay = 2] = 1 and Pr[delay = 3] = 1
-            % so (N+1)^2 + N+1 in total, where N+1=4 (sequence length)
-            this.vertices(:, :, 20) = [1 0 0 0 0;
-                                        1 0 0 0 0;
-                                        1 0 0 0 0;
-                                        1 0 0 0 0;
-                                        1 0 0 0 0];           
-            this.vertices(:, :, 19) = [0 1 0 0 0;
-                                       0 1 0 0 0;
-                                       0 1 0 0 0;
-                                       0 1 0 0 0;
-                                       0 1 0 0 0];
-            this.vertices(:, :, 18) = [0 1 0 0 0;
-                                       0 0 1 0 0;
-                                       0 0 1 0 0;
-                                       0 0 1 0 0;
-                                       0 0 1 0 0];
-            this.vertices(:, :, 17) = [0 1 0 0 0;
-                                       0 0 1 0 0;
-                                       0 0 0 1 0;
-                                       0 0 0 1 0;
-                                       0 0 0 1 0];
+            % so 2*N in total, where N=4 (sequence length)
+            
+            this.vertices(:, :, 8) = [1 0 0 0 0;
+                                      1 0 0 0 0;
+                                      1 0 0 0 0;
+                                      1 0 0 0 0;
+                                      1 0 0 0 0];           
+            this.vertices(:, :, 7) = [0 1 0 0 0;
+                                      0 1 0 0 0;
+                                      0 1 0 0 0;
+                                      0 1 0 0 0;
+                                      0 1 0 0 0];
             %
-            this.vertices(:, :, 16) = [0, 1, 0, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0, 0];
-            this.vertices(:, :, 15) = [0, 1, 0, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0, 0];
-            %                    
-            this.vertices(:, :, 14) = [0, 1, 0, 0, 0;
-                                      0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                      0, this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                      0, this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                      0, this.controllerDelta, 0, 1-this.controllerDelta, 0];
-            this.vertices(:, :, 13) = [0, 1, 0, 0, 0;
-                                      0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                      0, 1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                      0, 1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                      0, 1-this.controllerDelta, 0, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 12) = [0, 1, 0, 0, 0;
-                                      0, 0, 1, 0, 0;
-                                      0, 0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                      0, 0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                      0, 0, this.controllerDelta, 1-this.controllerDelta, 0];
-            this.vertices(:, :, 11) = [0, 1, 0, 0, 0;
-                                      0, 0, 1, 0, 0;
-                                      0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                      0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                      0, 0, 1-this.controllerDelta, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 10) = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                                      this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                                      this.controllerDelta, 0, 0, 1-this.controllerDelta, 0];
-            this.vertices(:, :, 9) = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                      this.controllerDelta, 0, 1-this.controllerDelta, 0, 0];
-            %
-            this.vertices(:, :, 8) = [this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                      this.controllerDelta, 1-this.controllerDelta, 0, 0, 0];
-            this.vertices(:, :, 7) = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                                      1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                                      1-this.controllerDelta, 0, 0, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 6) = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                      1-this.controllerDelta, 0, this.controllerDelta, 0, 0];                    
-            this.vertices(:, :, 5) = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                      1-this.controllerDelta, this.controllerDelta, 0, 0, 0];
+            this.vertices(:, :, 6) = [0 1 0 0 0;
+                                      0 0 1 0 0;
+                                      0 0 1 0 0;
+                                      0 0 1 0 0;
+                                      0 0 1 0 0];
+            this.vertices(:, :, 5) = [0 1 0 0 0;
+                                      0 0 1 0 0;
+                                      0 0 0 1 0;
+                                      0 0 0 1 0;
+                                      0 0 0 1 0];
             %
             this.vertices(:, :, 4) = [1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
                                       1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
@@ -1121,170 +1026,42 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
         
         %% initTransitionMatrixPolytopeSeq5
         function initTransitionMatrixPolytopeSeq5(this)
-            % 25=5+4+4+4+4+4 vertices
-            % + 5 for corner cases of delay probs Pr[delay = 0] = 1
+            % 10 vertices
+            % incl. 5 for corner cases of delay probs Pr[delay = 0] = 1
             % Pr[delay = 1] = 1, Pr[delay = 2] = 1, Pr[delay = 3] = 1 and Pr[delay = 4] = 1
-            % so (N+1)^2+N+1=30 in total, where N+1=5 (sequence length)
-            this.vertices(:, :, 30) = [1 0 0 0 0 0;
+            % so 2*N in total, where N=5 (sequence length)
+            this.vertices(:, :, 10) = [1 0 0 0 0 0;
                                        1 0 0 0 0 0;
                                        1 0 0 0 0 0;
                                        1 0 0 0 0 0;
                                        1 0 0 0 0 0;
                                        1 0 0 0 0 0];           
-            this.vertices(:, :, 29) = [0 1 0 0 0 0;
+            this.vertices(:, :, 9) = [0 1 0 0 0 0;
                                        0 1 0 0 0 0;
                                        0 1 0 0 0 0;
                                        0 1 0 0 0 0;
                                        0 1 0 0 0 0;
                                        0 1 0 0 0 0];
-            this.vertices(:, :, 28) = [0 1 0 0 0 0;
+            %
+            this.vertices(:, :, 8) = [0 1 0 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 1 0 0 0];
-            this.vertices(:, :, 27) = [0 1 0 0 0 0;
+            this.vertices(:, :, 7) = [0 1 0 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 0 1 0 0;
                                        0 0 0 1 0 0;
                                        0 0 0 1 0 0;
                                        0 0 0 1 0 0];
-            this.vertices(:, :, 26) = [0 1 0 0 0 0;
+            %
+            this.vertices(:, :, 6) = [0 1 0 0 0 0;
                                        0 0 1 0 0 0;
                                        0 0 0 1 0 0;
                                        0 0 0 0 1 0;
                                        0 0 0 0 1 0;
-                                       0 0 0 0 1 0];
-            %
-            this.vertices(:, :, 25) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, 0, 1, 0, 0;
-                                        0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                        0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0;
-                                        0, 0, 0, 1-this.controllerDelta, this.controllerDelta, 0];
-            this.vertices(:, :, 24) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                        0, 0, 1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                        0, 0, 1-this.controllerDelta, 0, this.controllerDelta, 0;
-                                        0, 0, 1-this.controllerDelta, 0, this.controllerDelta, 0];
-            this.vertices(:, :, 23) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                        0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                                        0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0;
-                                        0, 1-this.controllerDelta, 0, 0, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 22) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, 0, 1, 0, 0;
-                                        0, 0, 0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                        0, 0, 0, this.controllerDelta, 1-this.controllerDelta, 0;
-                                        0, 0, 0, this.controllerDelta, 1-this.controllerDelta, 0];
-            this.vertices(:, :, 21) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                        0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                        0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0;
-                                        0, 0, 1-this.controllerDelta, this.controllerDelta, 0, 0];
-            %
-            this.vertices(:, :, 20) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                        0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                        0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0;
-                                        0, 1-this.controllerDelta, 0, this.controllerDelta, 0, 0];                                    
-            this.vertices(:, :, 19) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                        0, 0, this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                        0, 0, this.controllerDelta, 0, 1-this.controllerDelta, 0;
-                                        0, 0, this.controllerDelta, 0, 1-this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 18) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 0, 1, 0, 0, 0;
-                                        0, 0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                        0, 0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                        0, 0, this.controllerDelta, 1-this.controllerDelta, 0, 0;
-                                        0, 0, this.controllerDelta, 1-this.controllerDelta, 0, 0];
-            this.vertices(:, :, 17) = [ 0, 1, 0, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0;
-                                        0, 1-this.controllerDelta, this.controllerDelta, 0, 0, 0];
-            %
-            this.vertices(:, :, 16) = [ 0, 1, 0, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                        0, this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                                        0, this.controllerDelta, 0, 0, 1-this.controllerDelta, 0;
-                                        0, this.controllerDelta, 0, 0, 1-this.controllerDelta, 0];
-            this.vertices(:, :, 15) = [ 0, 1, 0, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                        0, this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                        0, this.controllerDelta, 0, 1-this.controllerDelta, 0, 0;
-                                        0, this.controllerDelta, 0, 1-this.controllerDelta, 0, 0];
-            %
-            this.vertices(:, :, 14) = [ 0, 1, 0, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0;
-                                        0, this.controllerDelta, 1-this.controllerDelta, 0, 0, 0];                                    
-            this.vertices(:, :, 13) = [ this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0;
-                                        this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0;
-                                        this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0;
-                                        this.controllerDelta, 0, 0, 0, 1-this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 12) = [ this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0;
-                                        this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0;
-                                        this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0;
-                                        this.controllerDelta, 0, 0, 1-this.controllerDelta, 0, 0];
-            this.vertices(:, :, 11) = [ this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0;
-                                        this.controllerDelta, 0, 1-this.controllerDelta, 0, 0, 0];
-            %
-            this.vertices(:, :, 10) = [ this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0;
-                                        this.controllerDelta, 1-this.controllerDelta, 0, 0, 0, 0];
-            this.vertices(:, :, 9) = [  1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                                        1-this.controllerDelta, 0, 0, 0, this.controllerDelta, 0;
-                                        1-this.controllerDelta, 0, 0, 0, this.controllerDelta, 0;
-                                        1-this.controllerDelta, 0, 0, 0, this.controllerDelta, 0];
-            %
-            this.vertices(:, :, 8) = [  1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                                        1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                                        1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
-                                        1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0];
-            this.vertices(:, :, 7) = [  1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
-                                        1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0];
-            %
-            this.vertices(:, :, 6) = [  1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
-                                        1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0];
+                                       0 0 0 0 1 0];      
             this.vertices(:, :, 5) = [  1-this.controllerDelta, this.controllerDelta, 0, 0, 0, 0;
                                         1-this.controllerDelta, 0, this.controllerDelta, 0, 0, 0;
                                         1-this.controllerDelta, 0, 0, this.controllerDelta, 0, 0;
@@ -1321,12 +1098,29 @@ classdef MSSController < SequenceBasedController & ModelParamsChangeable & CaDel
         
         %% computeAndSetGain
         function computeAndSetGain(this)
+            currA = this.augA(1:this.dimPlantState, 1:this.dimPlantState, this.sequenceLength + 1); % A
+            currB = this.augB(1:this.dimPlantState, 1:this.dimPlantInput, 1); % B
+            % search, if gains had been computed previously
+            for i=1:numel(this.gains)
+                if this.gains(i).delta == this.controllerDelta && isequal(this.gains(i).A, currA) && isequal(this.gains(i).B, currB)
+                    this.L = this.gains(i).L;
+                    fprintf([MSSController.messages('previouslyComputedGainAvail') '\n'], this.controllerDelta);
+                    return
+                end
+            end
+
             if this.useLmiLab
                 res = this.synthesizeControllerLmiLab();
             else
                 res = this.synthesizeController();
             end
             this.L = res.gain;
+
+            % store information, i.e., append to struct array
+            this.gains(end + 1).A = currA;
+            this.gains(end).B = currB;
+            this.gains(end).L = this.L;
+            this.gains(end).delta = this.controllerDelta;
         end
     end
     

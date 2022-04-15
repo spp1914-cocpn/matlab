@@ -18,7 +18,7 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -48,15 +48,16 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
         H;
     end
     
-    properties (Access = private)
-        caDelayProbs;
+    properties (Access = private)        
         etaState; % eta_k stores inputs from past sequences that are applicable at time k or later, evolves according to eta_k=F*eta_k-1+G*U_k-1
+        modeTransitionMatrix;
+        
         alphas;
     end
     
     methods (Access = public)
         %% ExpectedInputPredictiveController
-        function this = ExpectedInputPredictiveController(A, B, Q, R, sequenceLength, caDelayProbs, setpoint)
+        function this = ExpectedInputPredictiveController(A, B, Q, R, sequenceLength, modeTransitionMatrix, setpoint)
             % Class constructor.
             %
             % Parameters:
@@ -76,9 +77,9 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
             %     The length of the input sequence (i.e., the number of
             %     control inputs) to be computed by the controller.
             %
-            %   >> caDelayProbs (Nonnegative vector with elements suming to 1)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the
+            %      augmented dynamics, derived from the delay probs.     
             %
             %  >> setpoint (Vector, optional)
             %     The set point in the state space that shall be tracked asymptotically instead of the origin.
@@ -95,8 +96,8 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
                 setpoint = [];
             end
             this = this@NominalPredictiveController(A, B, Q, R, sequenceLength, setpoint);
-            Validator.validateDiscreteProbabilityDistribution(caDelayProbs);
-            this.caDelayProbs = Utility.truncateDiscreteProbabilityDistribution(caDelayProbs, sequenceLength + 1);
+            Validator.validateTransitionMatrix(modeTransitionMatrix, this.sequenceLength + 1);
+            this.modeTransitionMatrix = modeTransitionMatrix;
             
             dimEta = this.dimPlantInput * (sequenceLength * (sequenceLength - 1) / 2);
             this.F = zeros(dimEta, dimEta, sequenceLength - 2);
@@ -112,7 +113,10 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
             end
             % initially, no old inputs are present
             this.etaState = zeros(dimEta, 1);
-            this.computeAndSetInputWeights();
+            % so input is default input
+            inputProbs = zeros(this.sequenceLength, 1);
+            inputProbs(end + 1) = 1;
+            this.updateInputProbs(inputProbs);
         end
         
         %% reset
@@ -128,8 +132,11 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
             %  >> newCaDelayProbs (Nonnegative vector)
             %     Vector specifiying the new delay distribution.
             %
-            this.caDelayProbs = Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1);
-            this.computeAndSetInputWeights();
+            newMat = Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
+            if ~isequal(newMat, this.modeTransitionMatrix)
+                this.modeTransitionMatrix = newMat;
+            end
         end
         
         %% changeSequenceLength
@@ -148,10 +155,10 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
         
     end
     
-    methods (Access = private)
-        %% computeAndSetInputWeights
-        function computeAndSetInputWeights(this)
-             % we can compute the weighting factors alpha_k in advance for
+    methods (Access = private)        
+        %% updateInputProbs
+        function updateInputProbs(this, currInputProbs)
+            % we can compute the weighting factors alpha_k in advance for
             % the whole horizon
             % for x_k+1 we have numModes possible inputs (incl. default
             % input) -> expected u_k based on alpha_k|k
@@ -160,32 +167,36 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
             % for x_k+3 we have numModes-2 possible inputs (incl. default
             % input) -> expected u_k+2
             % and so forth
-            % the number of factors thus decreases over the horizon
+            % the number of factors thus decreases over the horizon   
             
-            % use the transition probabilities for convenience, not needed
-            % a straightforward approach directly computes the alphas based
-            % on the delay probabilities
-            P = Utility.calculateDelayTransitionMatrix(this.caDelayProbs);
-            sums = cumsum(this.caDelayProbs);
-            q = cumprod(1 - sums);
-            this.alphas = cell(1, this.sequenceLength);            
-            this.alphas{1} = zeros(this.sequenceLength + 1, 1);
+            % update the alphas, based on received inputs probs/mode probs from filter
+            this.alphas = cell(1, this.sequenceLength);
+            this.alphas{1}  = currInputProbs(:);
             
-            this.alphas{1}(1) = this.caDelayProbs(1); % this is alpha_0,0=p0
-            for j=2:this.sequenceLength + 1
-                this.alphas{1}(j) = q(j-1) * sums(j); % alpha_j,0, e.g. alpha_1,0=(1-p0)*(p0+p1) and alpha_2,0=(1-p0)(1-p0-p1)*(p0+p1+p2)
-            end
-            
+            % open loop prediction
             for k=1:this.sequenceLength - 1
-                this.alphas{k+1} = (P')^k*this.alphas{1};
+                this.alphas{k+1} = (this.modeTransitionMatrix')^k * this.alphas{1};
                 this.alphas{k+1} = this.alphas{k+1}(k+1:end) / sum(this.alphas{k+1}(k+1:end));
             end
-        end
+        end       
     end
     
     methods (Access = protected)        
         %% doControlSequenceComputation
         function inputSequence = doControlSequenceComputation(this, plantState, varargin)
+            if Checks.isClass(plantState, 'GaussianMixture')
+                % filter provides Gaussian mixture
+                % input probs are equal to mode probs
+                [~, ~, modeProbs] = plantState.getComponents();                
+            else                
+                % compute the mode probs directly
+                modeProbs = this.modeTransitionMatrix' * this.alphas{1};
+            end
+            
+            % update input probs for the horizon; needed to compute expected
+            % input
+            this.updateInputProbs(modeProbs);
+            
             % plant state is an estimate of the true state at time k: x_k|k
             inputSequence = doControlSequenceComputation@NominalPredictiveController(this, plantState, varargin);
             %eta_k+1=F*eta_k+G*U_k
@@ -214,7 +225,7 @@ classdef ExpectedInputPredictiveController< NominalPredictiveController & CaDela
                 end
                 expectedInput = computedInput * this.alphas{stage}(1) ...
                         + sum(mtimesx(this.H(:, :, stage+1:end-1), eta) .* reshape(this.alphas{stage}(2:end-1), 1, 1, []), 3);
-            end
+            end            
             % predict the new state for stage j+1 (x_k+j+1|k), based on estimate of current state (x_k+j|k) and
             % expected input u_k+i|k
             newState = this.A * state + this.B * expectedInput;

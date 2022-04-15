@@ -3,6 +3,7 @@ classdef LinearlyConstrainedPredictiveController ...
     % Implementation of a predictive controller (based on a quadratic cost function) for linear networked
     % control systems which can deal with linear state and input
     % constraints of the form a'*x_k <= c, b'*u_k <= d.
+    % Expected inputs are used for the open-loop prediction of the state trajectory.
     % Also, tracking a reference trajectory z_ref according to a
     % performance output z_k = Z*x_k is supported.
     %
@@ -21,7 +22,7 @@ classdef LinearlyConstrainedPredictiveController ...
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2018-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2018-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -56,6 +57,8 @@ classdef LinearlyConstrainedPredictiveController ...
         B;
         etaState;
         alphas;
+        
+        modeTransitionMatrix;
     end
     
     properties (SetAccess = private, GetAccess = protected)
@@ -72,7 +75,7 @@ classdef LinearlyConstrainedPredictiveController ...
     
     methods (Access = public)
         %% LinearlyConstrainedPredictiveController
-        function this = LinearlyConstrainedPredictiveController(A, B, Q, R, sequenceLength, caDelayProbs, ...
+        function this = LinearlyConstrainedPredictiveController(A, B, Q, R, sequenceLength, modeTransitionMatrix, ...
                 stateConstraintWeightings, stateConstraints, inputConstraintWeightings, inputConstraints, Z, refTrajectory)
             % Class constructor.
             %
@@ -96,9 +99,8 @@ classdef LinearlyConstrainedPredictiveController ...
             %      control inputs) to be computed by the controller, which
             %      (by default) equals the prediction horizon employed.
             %
-            %   >> caDelayProbs (Nonnegative vector with elements summing to 1)
-            %      The vector describing the delay distribution of the
-            %      CA-network.
+            %   >> modeTransitionMatrix (Stochastic matrix, i.e. a square matrix with nonnegative entries whose rows sum to 1)
+            %      The transition matrix of the mode theta_k of the augmented dynamics.
             %
             %   >> stateConstraintWeightings (Matrix, dimPlantState-by-s)
             %      The weightings a of the individual
@@ -165,8 +167,9 @@ classdef LinearlyConstrainedPredictiveController ...
             this.B = B;
             this.horizonLength = this.sequenceLength;
             
-            Validator.validateDiscreteProbabilityDistribution(caDelayProbs);
-                        
+            Validator.validateTransitionMatrix(modeTransitionMatrix, this.sequenceLength + 1);
+            this.modeTransitionMatrix = modeTransitionMatrix;
+                                    
             dimEta = this.dimPlantInput * (sequenceLength * (sequenceLength - 1) / 2);
             this.F = zeros(dimEta, dimEta, sequenceLength - 2);
             % we need F, G, H
@@ -179,7 +182,10 @@ classdef LinearlyConstrainedPredictiveController ...
             
             this.etaState = zeros(dimEta, 1);
             
-            this.computeAndSetInputWeights(caDelayProbs);
+            % initially, no inputs at actuator, so input is default input
+            inputProbs = zeros(this.sequenceLength, 1);
+            inputProbs(end + 1) = 1;
+            this.updateInputProbs(inputProbs);
 
             % constraints
             if ~isempty(stateConstraints)
@@ -221,7 +227,11 @@ classdef LinearlyConstrainedPredictiveController ...
             %     Vector specifiying the new delay distribution.
             %
                         
-            this.computeAndSetInputWeights(newCaDelayProbs);
+            newMat = Utility.calculateDelayTransitionMatrix(...
+                Utility.truncateDiscreteProbabilityDistribution(newCaDelayProbs, this.sequenceLength + 1));
+            if ~isequal(newMat, this.modeTransitionMatrix)
+                this.modeTransitionMatrix = newMat;
+            end
         end
         
         %% getStateConstraints
@@ -352,7 +362,21 @@ classdef LinearlyConstrainedPredictiveController ...
                 'LinearlyConstrainedPredictiveController:DoControlSequenceComputation:InvalidTimestep', ...
                 '** Input parameter <timestep> (current time step) must be a positive integer **');
             
-            [stateMean, ~] = state.getMeanAndCov();
+            
+            if Checks.isClass(state, 'GaussianMixture')
+                % filter provides Gaussian mixture
+                % input probs are equal to mode probs
+                [means, covs, modeProbs] = state.getComponents();
+                [stateMean, ~] = Utils.getGMMeanAndCov(means, covs, modeProbs);
+            else
+                [stateMean, ~] = state.getMeanAndCov();
+                % compute the mode probs directly
+                modeProbs = this.modeTransitionMatrix' * this.alphas{1};
+            end
+            
+            % update input probs for the scenario tree and, accordingly, the scenario pobs
+            this.updateInputProbs(modeProbs);
+            
             if ~isempty(this.refTrajectory)
                 % the preview of the reference must cover the whole
                 % optimization horizon
@@ -366,9 +390,10 @@ classdef LinearlyConstrainedPredictiveController ...
                 solverVars = [this.alphas, {this.etaState}, {stateMean}, {zRef}];
             else
                 solverVars = [this.alphas, {this.etaState}, {stateMean}];                
-            end
+            end            
+      
             % return as column vector
-            [inputs, flag] = this.solver(solverVars);            
+            [inputs, flag] = this.solver(solverVars);   
             if flag == 1
                 warning('LinearlyConstrainedPredictiveController:DoControlSequenceComputation:ProblemInfeasible', ...
                     '** Optimization problem seems to be infeasible. Returning zero input **');
@@ -465,15 +490,33 @@ classdef LinearlyConstrainedPredictiveController ...
                 
                 solverVars = [weights, {eta}, {states(:, 1)}, {zRef}];                
                 
-                [K, P, ~] = dlqr(this.A, this.B, this.Z'*this.Q*this.Z, this.R);              
+                [P, ~, ~, info] = idare(this.A, this.B, this.Z'*this.Q*this.Z, this.R);
+                % compute terminal weighting
+                if info.Report > 1
+                    % either report == 2: The solution is not finite
+                    % or report == 3: No solution found since the symplectic
+                    % matrix has eigenvalues on the unit circle
+                    P = this.Q;
+                    warning('LinearlyConstrainedPredictiveController:InvalidPlant', ...
+                        '** (A,B) seems not stabilizable, cannot use stabilizing solution of associated DARE as terminal weighting Q_N **');
+                end  
                 P = this.Z * P *this.Z'; % terminal weighting 
             else
                 % construct for driving states to the origin
                 performance = states;
                 solverVars = [weights, {eta}, {states(:, 1)}];
                 
-                [K, P, ~] = dlqr(this.A, this.B, this.Q, this.R);
-            end           
+                [P, ~, ~, info] = idare(this.A, this.B, this.Q, this.R);
+                % compute terminal weighting
+                if info.Report > 1
+                    % either report == 2: The solution is not finite
+                    % or report == 3: No solution found since the symplectic
+                    % matrix has eigenvalues on the unit circle
+                    P = this.Q;
+                    warning('LinearlyConstrainedPredictiveController:InvalidPlant', ...
+                        '** (A,B) seems not stabilizable, cannot use stabilizing solution of associated DARE as terminal weighting Q_N **');
+                end
+            end
             
             % we first construct the constraints
             constraints = [];            
@@ -491,34 +534,33 @@ classdef LinearlyConstrainedPredictiveController ...
                     for j = stage+1:this.sequenceLength
                         expectedInputs(:, stage) = expectedInputs(:, stage) + this.H(:, :, j) * oldInputs * weights{stage}(i);
                         i = i + 1;
-                    end                    
+                    end
                 elseif stage== this.sequenceLength
                     % either the input to be computed or the zero default input
                     expectedInputs(:, this.sequenceLength) = inputs(:, this.sequenceLength) * weights{this.sequenceLength}(1);
                 else
-                    % switch to unconstrained LQR
-                    inputs(:, stage) = -K * states(:, stage);                 
+                    % no more expected inputs available
                     expectedInputs(:, stage) = inputs(:, stage); % use computed input directly for prediction 
                 end                                
                 % constraints due to nominal system equation
-                constraints = [constraints, states(:, stage + 1) == this.A * states(:, stage) + this.B * expectedInputs(:, stage)];                
+                constraints = [constraints, states(:, stage + 1) == this.A * states(:, stage) + this.B * expectedInputs(:, stage)]; %#ok
                 costs = costs + sum((Rsqrt * inputs(:, stage)) .^2) + performance(:, stage)' * this.Q * performance(:, stage);
             end
             % add the constraints
             for j=1:numel(this.stateConstraints)
-                constraints = [constraints, this.stateConstraintWeightings(:, j)' * states(:, 1:this.sequenceLength+1) <= this.stateConstraints(j)];                
+                constraints = [constraints, this.stateConstraintWeightings(:, j)' * states(:, 1:this.sequenceLength+1) <= this.stateConstraints(j)]; %#ok
             end
             for j=1:numel(this.inputConstraints)
-                constraints = [constraints, this.inputConstraintWeightings(:, j)' * inputs(:, 1:this.sequenceLength) <= this.inputConstraints(j)];                
+                constraints = [constraints, this.inputConstraintWeightings(:, j)' * inputs(:, 1:this.sequenceLength) <= this.inputConstraints(j)]; %#ok
             end      
             options = sdpsettings;
             options.solver = 'quadprog';
             solver = optimizer(constraints, costs, options, solverVars, inputs);            
         end        
-            
-        %% computeAndSetInputWeights
-        function computeAndSetInputWeights(this, caDelayProbs)
-             % we can compute the weighting factors alpha_k in advance for
+        
+        %% updateInputProbs
+        function updateInputProbs(this, currInputProbs)
+            % we can compute the weighting factors alpha_k in advance for
             % the whole horizon
             % for x_k+1 we have numModes possible inputs (incl. default
             % input) -> expected u_k based on alpha_k|k
@@ -527,29 +569,19 @@ classdef LinearlyConstrainedPredictiveController ...
             % for x_k+3 we have numModes-2 possible inputs (incl. default
             % input) -> expected u_k+2
             % and so forth
-            % the number of factors thus decreases over the horizon
+            % the number of factors thus decreases over the horizon   
             
-            probs = Utility.truncateDiscreteProbabilityDistribution(caDelayProbs, this.sequenceLength + 1);
-            % use the transition probabilities for convenience, not needed
-            % a straightforward approach directly computes the alphas based
-            % on the delay probabilities
-            P = Utility.calculateDelayTransitionMatrix(probs);
-            sums = cumsum(probs);
-            q = cumprod(1 - sums);
-            this.alphas = cell(1, this.sequenceLength);            
-            this.alphas{1} = zeros(this.sequenceLength + 1, 1);
+            % update the alphas, based on received inputs probs/mode probs from filter
+            this.alphas = cell(1, this.sequenceLength);
+            this.alphas{1}  = currInputProbs(:);
             
-            this.alphas{1}(1) = probs(1); % this is alpha_0,0=p0
-            for j=2:this.sequenceLength + 1
-                this.alphas{1}(j) = q(j-1) * sums(j); % alpha_j,0, e.g. alpha_1,0=(1-p0)*(p0+p1) and alpha_2,0=(1-p0)(1-p0-p1)*(p0+p1+p2)
-            end
-            
+            % open loop prediction
             for k=1:this.sequenceLength - 1
-                this.alphas{k+1} = (P')^k*this.alphas{1};
+                this.alphas{k+1} = (this.modeTransitionMatrix')^k*this.alphas{1};
                 this.alphas{k+1} = this.alphas{k+1}(k+1:end) / sum(this.alphas{k+1}(k+1:end));
             end
-        end    
-        
+        end
+                
         %% validateStateConstraints
         function validateStateConstraints(this, stateWeightings, stateConstraints)
             assert(Checks.isFixedRowMat(stateWeightings, this.dimPlantState), ...

@@ -79,5 +79,5 @@ void mexFunction(int numOutputs, mxArray* outputArrays[],
         part2 += modeProbs.at(i) * augB.slice(i).t() * weightedCostate * statePart;
         L += modeProbs.at(i) * augB.slice(i).t() * weightedCostate * augB.slice(i);
     }
-    inputSeq = -pinv(L) * part2;
+    inputSeq = solve(symmatu(L), -part2);
 }

@@ -166,9 +166,9 @@ classdef DoubleInvertedPendulum < NonlinearPlant
         %% setNoise
         function setNoise(this, noise)
             % Set the additional noise driving the pendulum.
-            % The noise driving the pendulum consists of two, typically
-            % independent, components: A disturbance force driving the
-            % pendulum rod, which enters at both the pendulum tips, and an
+            % The noise driving the pendulum consists of three, typically
+            % independent, components: Two disturbances driving the
+            % pendulum rod, which enter at either pendulum tip, and an
             % actuation noise acting on the force applied to the cart.
             % Thus, the 3-dimensional joint distribution is passed here
             % with first two components the marginal distribution of the
@@ -201,7 +201,7 @@ classdef DoubleInvertedPendulum < NonlinearPlant
             % with q = [position of the cart; deviation of lower pendulum from upward equilibrium; deviation of upper pendulum from upward equilibrium].            
             % The input u is the force (in newtons) applied to move the cart.
             % The noise w=[w1 w2 w3] is composed of disturbances (torques) acting at the
-            % tips of both pendulum rods (w1 and w2) and a disturbance force (w3) acting on the
+            % tips of both pendulum rods (w1, lower rod and w2, upper rod) and a disturbance force (w3) acting on the
             % cart (additive on u, actuation noise). All three are assumed white
             % and mutually independent, the returned noise covariance W_cont is thus diagonal.
             %

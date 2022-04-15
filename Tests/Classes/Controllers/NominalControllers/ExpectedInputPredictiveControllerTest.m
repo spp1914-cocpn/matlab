@@ -5,7 +5,7 @@ classdef ExpectedInputPredictiveControllerTest < NominalPredictiveControllerTest
     %
     %    For more information, see https://github.com/spp1914-cocpn/cocpn-sim
     %
-    %    Copyright (C) 2017-2020  Florian Rosenthal <florian.rosenthal@kit.edu>
+    %    Copyright (C) 2017-2021  Florian Rosenthal <florian.rosenthal@kit.edu>
     %
     %                        Institute for Anthropomatics and Robotics
     %                        Chair for Intelligent Sensor-Actuator-Systems (ISAS)
@@ -29,6 +29,7 @@ classdef ExpectedInputPredictiveControllerTest < NominalPredictiveControllerTest
     
     properties (Access = private)        
         caDelayProbs;  
+        modeTransitionMatrix;
     end
     
     methods (Access = protected)
@@ -42,14 +43,16 @@ classdef ExpectedInputPredictiveControllerTest < NominalPredictiveControllerTest
         
         %% initControllerUnderTest
         function controller = initControllerUnderTest(this)
-            controller = ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, this.caDelayProbs);
+            controller = ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, this.sequenceLength, this.modeTransitionMatrix);
         end
         
         %% initAdditionalProperties
-        function initAdditionalProperties(this)            
-            this.caDelayProbs = [0 0 1 0 0]; % we have a fixed delay of 2 time steps           
-
+        function initAdditionalProperties(this) 
             this.sequenceLength = 3;
+            
+            this.caDelayProbs = [0 0 1 0 0]; % we have a fixed delay of 2 time steps           
+            this.modeTransitionMatrix = Utility.calculateDelayTransitionMatrix( ...
+                Utility.truncateDiscreteProbabilityDistribution(this.caDelayProbs, this.sequenceLength + 1));           
             
             this.horizonLength = this.sequenceLength;            
         end
@@ -58,29 +61,35 @@ classdef ExpectedInputPredictiveControllerTest < NominalPredictiveControllerTest
         function controller = callBaseCtor(this, varargin)
             if numel(varargin) == 6
                 % a setpoint is passed
-                controller = ExpectedInputPredictiveController(varargin{1:5}, this.caDelayProbs, varargin{end});
+                controller = ExpectedInputPredictiveController(varargin{1:5}, this.modeTransitionMatrix, varargin{end});
             else
-                controller = ExpectedInputPredictiveController(varargin{:}, this.caDelayProbs);
+                controller = ExpectedInputPredictiveController(varargin{:}, this.modeTransitionMatrix);
             end
         end
     end
     
     methods (Test)     
-        %% testExpectedInputPredictiveControllerInvalidCaDelayProbs
-        function testExpectedInputPredictiveControllerInvalidCaDelayProbs(this)
-            expectedErrId = 'Validator:ValidateDiscreteProbabilityDistribution:InvalidProbs';
+        %% testExpectedInputPredictiveControllerInvalidModeTransitionMatrix
+        function testExpectedInputPredictiveControllerInvalidModeTransitionMatrix(this)
+            expectedErrId = 'Validator:ValidateTransitionMatrix:InvalidTransitionMatrixDim';
             
-            invalidDelayProbs = [-0.1 0.1 0.8 0.2]; % negative entry
+            invalidModeTransitionMatrix = this.modeTransitionMatrix(2:end, 2:end);% invalid dimensions
             this.verifyError(@() ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, invalidDelayProbs), expectedErrId);
+                this.sequenceLength, invalidModeTransitionMatrix), expectedErrId);
             
-            invalidDelayProbs = [inf 0.1 0.8 0.2];% inf entry
+            invalidModeTransitionMatrix = [0 0.1 0.8 0.2];% not a matrix
             this.verifyError(@() ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, invalidDelayProbs, this.setpoint), expectedErrId);
+                this.sequenceLength, invalidModeTransitionMatrix, this.setpoint), expectedErrId);
                      
-            invalidDelayProbs = [0.06 0.05 0.8 0.1];% does not sum up to 1
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = 1.1; % does not sum up to 1
             this.verifyError(@() ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, ...
-                this.sequenceLength, invalidDelayProbs, this.setpoint), expectedErrId);
+                this.sequenceLength, invalidModeTransitionMatrix, this.setpoint), expectedErrId);
+            
+            invalidModeTransitionMatrix = this.modeTransitionMatrix;
+            invalidModeTransitionMatrix(1,1) = -invalidModeTransitionMatrix(1,1); % negative entry
+            this.verifyError(@() ExpectedInputPredictiveController(this.A, this.B, this.Q, this.R, ...
+                this.sequenceLength, invalidModeTransitionMatrix, this.setpoint), expectedErrId);
         end
 %%        
 %%

@@ -119,7 +119,7 @@ classdef ResourceAwareRecedingHorizonControllerTest < matlab.unittest.TestCase
         function initAdditionalProperties(this)
             [this.F, this.G, this.H, this.J] = Utility.createActuatorMatrices(this.sequenceLength, this.dimU);
             
-            this.neighborFunc = @(schedule) RecedingHorizonUdpLikeControllerTest.standardGetNeighbor(schedule);
+            this.neighborFunc = @(schedule) ResourceAwareRecedingHorizonController.standardGetNeighborBitFlip;
             this.sendingCostFunc = @(eventSchedule, eventHistory) sum(eventSchedule) * 0;
             this.initScheduleFunc = @(horizon) ones(1, horizon);
             this.startScheduleFunc = @(lastSchedule) [lastSchedule(2:end), randi(2) - 1];
@@ -782,31 +782,49 @@ classdef ResourceAwareRecedingHorizonControllerTest < matlab.unittest.TestCase
             
             this.verifyEqualWithAbsTol(actualCosts, expectedCosts);
         end
-    end
-    
-    methods (Access = private, Static)
-        %% standardGetNeighbor
-        function neighbor = standardGetNeighbor(schedule)
-            % Standard getNeighbor implementation.
-            % This function changes a random bit in the given schedule.
-            %
-            % Parameters:
-            %   >> schedule (Binary vector)
-            %      The current schedule.
-            %
-            % Returns:
-            %   >> neighbor (Binary vector)
-            %      The given schedule with a randomly changed bit.
-            n = length(schedule);
-            randomIndex = randi(n);
-            neighbor = schedule;
-
-            if neighbor(randomIndex) == 1
-                neighbor(randomIndex) = 0;
-            else
-                neighbor(randomIndex) = 1;
-            end
+%%
+%%
+        %% testStandardGetStartSchedule
+        function testStandardGetStartSchedule(this)
+            lastSchedule = [1 0 1 0 1 0];
+            rng(42); % for reproducibility
+            lastEl = randi(2)-1;
+            expectedStartSchedule = [0 1 0 1 0 lastEl];
+            rng(42); 
+            this.verifyEqual(ResourceAwareRecedingHorizonController.standardGetStartSchedule(lastSchedule), expectedStartSchedule);
         end
-    end
+        
+        %% testStandardGetStartScheduleFixedNumberOfOnes
+        function testStandardGetStartScheduleFixedNumberOfOnes(this)
+            lastSchedule = [1 0 1 0 0 0];            
+            expectedStartSchedule = [0 1 0 0 0 1];            
+            this.verifyEqual(ResourceAwareRecedingHorizonController.standardGetStartScheduleFixedNumberOfOnes(lastSchedule), expectedStartSchedule);
+        end      
+        
+        %% testStandardGetNeighbor
+        function testStandardGetNeighbor(this)
+            schedule = [1 0 1 0 0 0];
+            rng(42); % for reproducibility
+            idx = randi(6);            
+            
+            expectedNeighborSchedule = schedule;
+            expectedNeighborSchedule(idx) = ~expectedNeighborSchedule(idx);            
+            rng(42); % for reproducibility
+            this.verifyEqual(ResourceAwareRecedingHorizonController.standardGetNeighbor(schedule), expectedNeighborSchedule);
+        end
+        
+        %% testStandardGetNeighborFixedNumberOfOnes
+        function testStandardGetNeighborFixedNumberOfOnes(this)
+            schedule = [1 0 1 0 0 0];
+            rng(42); % for reproducibility
+            idxOne = randsample([1 3], 1);
+            idxZero = randsample([2 4 5 6], 1);
+            expectedNeighborSchedule = schedule;
+            expectedNeighborSchedule(idxOne) = 0;
+            expectedNeighborSchedule(idxZero) = 1;
+            rng(42); % for reproducibility
+            this.verifyEqual(ResourceAwareRecedingHorizonController.standardGetNeighborFixedNumberOfOnes(schedule), expectedNeighborSchedule);
+        end
+    end   
 end
 

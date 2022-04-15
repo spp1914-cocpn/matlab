@@ -85,11 +85,11 @@ void computeGains(int stage, const Trajectory& trajectory, const Dynamics& dynam
         const dmat noisePart = modeProbsCaPtr[i] * dynamics.getAugV();  
         
         // quadratic term for K_k
-        Psi += kron(Se * (noisePart + dynamics.getAugC() * Xu.slice(i) * dynamics.getAugC().t()) * Se.t(), PlEpsilon.slice(i));        
+        Psi += symmatu(kron(Se * (noisePart + dynamics.getAugC() * Xu.slice(i) * dynamics.getAugC().t()) * Se.t(), PlEpsilon.slice(i)));        
         // quadratic term for L_k
         const dmat diffBTranspose = (dynamics.getAugB(i) - Bexp).t();
-        const dmat partPhi = dynamics.getAugB(i).t() * PuEpsilon.slice(i) * dynamics.getAugB(i) 
-            + diffBTranspose * PlEpsilon.slice(i) * diffBTranspose.t();
+        const dmat partPhi = symmatu(dynamics.getAugB(i).t() * PuEpsilon.slice(i) * dynamics.getAugB(i) 
+            + diffBTranspose * PlEpsilon.slice(i) * diffBTranspose.t());
         Phi += kron(Xl.slice(i), partPhi);
         
         // now come the vectors
@@ -184,14 +184,15 @@ void mexFunction(int numOutputs, mxArray* outputArrays[], int numInputs, const m
     K_new = K_old;
     L_new = L_old;
     
-    dcolvec oldCostToGo(horizonLength);
-    oldCostToGo.fill(datum::inf);
-    double oldCost = datum::inf;
+    dcolvec costToGo(horizonLength);
+    costToGo.fill(datum::inf);
+    double cost = datum::inf;
     
     Trajectory predTrajectory(dynamics, augStateCov_old, augStateSecondMoment_old);
    
     int counter = 0;
     while (counter < maxNumIterations) {
+        
         counter++;
         // forward pass: obtain the second moments for the given sequence of controller gains
         predTrajectory.predictHorizon(K_new, L_new);
@@ -210,9 +211,9 @@ void mexFunction(int numOutputs, mxArray* outputArrays[], int numInputs, const m
             
             const Costate tempCostate = currentCostateEpsilon.computeNew(tempK, tempL, augQ, JRJ);         
 
-            double costToGo = predTrajectory.computeCostToGoForCostate(k, tempCostate);            
-            if (costToGo < oldCostToGo.at(k)) {
-                oldCostToGo(k) = costToGo;
+            double currCostToGo = predTrajectory.computeCostToGoForCostate(k, tempCostate);
+            if (currCostToGo < costToGo(k)) {
+                costToGo(k) = currCostToGo;
                 K_new.slice(k) = tempK;
                 L_new.slice(k) = tempL;      
                 currentCostate = tempCostate;
@@ -221,18 +222,26 @@ void mexFunction(int numOutputs, mxArray* outputArrays[], int numInputs, const m
                 currentCostate = currentCostateEpsilon.computeNew(K_new.slice(k), L_new.slice(k), augQ, JRJ);
             }            
         }
-
-        if (abs(oldCost - oldCostToGo(0)) < CONVERGENCE_DIFF) {
+        
+        const double terminate = abs(cost - costToGo(0)) < CONVERGENCE_DIFF;
+        cost = costToGo(0);
+        if (terminate) {
             break;
-        } else {
-            oldCost = oldCostToGo(0);
-        } 
-          
+        }
+         
         if (utIsInterruptPending()) {        /* check for a Ctrl-C event */
             mexPrintf("Ctrl-C Detected. END\n\n");
             break;
         }
     }
+    mexPrintf("** RecedingHorizonUdpLikeController: %d iterations, current costs (bound): %f **\n", counter, cost);
+    
     outputArrays[2] = mxCreateDoubleScalar(static_cast<double>(counter)); //numIterations
+    outputArrays[3] = mxCreateUninitNumericMatrix(static_cast<size_t>(augA.n_rows),
+            static_cast<size_t>(augA.n_cols), mxDOUBLE_CLASS, mxREAL); // expAugA[0]
+    armaSetPr(outputArrays[3], dynamics.getAexpAt(0));
+    outputArrays[4] = mxCreateUninitNumericMatrix(static_cast<size_t>(augB.n_rows),
+            static_cast<size_t>(augB.n_cols), mxDOUBLE_CLASS, mxREAL); // expAugB[0]
+    armaSetPr(outputArrays[4], dynamics.getBexpAt(0));
 }
 
